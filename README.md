@@ -108,6 +108,8 @@ praxis handle "Prepare a customer follow-up email after today's sync"
 praxis handle "<goal>" --approve-all             # auto-approve held sends (dev only)
 praxis heartbeat --watch "scan for urgent follow-ups"
 praxis remember "Michael prefers concise briefs" --kind preference
+praxis m365                                      # check the M365 broker connection
+praxis handle "Draft a customer follow-up and send it" --m365   # act on real M365 (via broker)
 praxis --help
 ```
 
@@ -116,9 +118,31 @@ praxis --help
 | `praxis tui` | launch the **interactive terminal UI** (menu-driven, stdlib-only) |
 | `praxis handle "<goal>"` | run one full `perceive→…→consolidate` cycle; prints actions, held approvals, reflection |
 | `praxis handle ... --approve-all` | auto-approve consequential actions (dev convenience) |
+| `praxis handle ... --m365` | run against **live Microsoft 365** through the broker |
 | `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
 | `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory |
+| `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Microsoft 365 (via the broker)
+
+Praxis acts on your calendar/mail/files **only through the OpenClaw M365 Access
+Broker** — a separate local control plane that enforces auth, least-privilege
+scopes, an allowlist, approval gates, an injection firewall, and a hash-chained
+audit log. It works against **any tenant you control, including your personal
+M365/Entra tenant** — no work environment required.
+
+```bash
+praxis m365                                                 # verify broker connection
+praxis handle "Prepare a customer follow-up and send it" --m365
+```
+
+Reads & drafts run autonomously; **send/share/delete are held** until you
+approve — at which point Praxis (as host UI) mints the broker's single-use,
+tool-scoped approval token and executes. The agent key alone can never send,
+share, or delete. Full setup (broker start, env vars, going live against your
+tenant) is in **[M365-SETUP.md](M365-SETUP.md)**.
+
 
 ## Tests & CI
 

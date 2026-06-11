@@ -86,7 +86,12 @@ class PraxisAgent:
                 args=step.args, preview=preview, provenance="plan",
             )
             if decision.verdict is Verdict.ALLOW:
-                result = tool.run(**step.args)
+                try:
+                    result = tool.run(**step.args)
+                except Exception as exc:  # tool/broker failure shouldn't crash the cycle
+                    report.actions.append(
+                        f"[{tool.risk.value}] {step.intent} -> ERROR ({exc})")
+                    continue
                 self.memory.note_working(result, provenance=f"action:{tool.name}")
                 report.actions.append(f"[{tool.risk.value}] {step.intent} -> {result}")
             elif decision.verdict is Verdict.NEEDS_APPROVAL:
@@ -114,7 +119,10 @@ class PraxisAgent:
         tool = self.registry.get(pending.tool)
         if not tool:
             return f"tool {pending.tool} missing"
-        result = tool.run(**pending.args)
+        try:
+            result = tool.run(**pending.args)
+        except Exception as exc:
+            return f"approved action failed: {exc}"
         self.memory.add_episodic(f"approved+executed {pending.tool}: {result}",
                                  provenance="user-approval")
         return result
