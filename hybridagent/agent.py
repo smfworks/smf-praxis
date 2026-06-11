@@ -71,6 +71,10 @@ class PraxisAgent:
             goal, self.planner.read_tools_for(goal)
         )
         report.injection_flags = [s.source for s in signals if s.flagged_injection]
+        # Reuse what perception already read so a read tool isn't executed twice
+        # per cycle (which, against the M365 broker, would double real Graph calls).
+        read_cache = {s.source: s.content for s in signals
+                      if not s.source.startswith("memory:")}
 
         # 2. PLAN.
         plan: Plan = self.planner.plan(goal)
@@ -86,12 +90,15 @@ class PraxisAgent:
                 args=step.args, preview=preview, provenance="plan",
             )
             if decision.verdict is Verdict.ALLOW:
-                try:
-                    result = tool.run(**step.args)
-                except Exception as exc:  # tool/broker failure shouldn't crash the cycle
-                    report.actions.append(
-                        f"[{tool.risk.value}] {step.intent} -> ERROR ({exc})")
-                    continue
+                if tool.risk is RiskClass.READ and tool.name in read_cache:
+                    result = read_cache[tool.name]          # reuse perception's read
+                else:
+                    try:
+                        result = tool.run(**step.args)
+                    except Exception as exc:  # tool/broker failure shouldn't crash the cycle
+                        report.actions.append(
+                            f"[{tool.risk.value}] {step.intent} -> ERROR ({exc})")
+                        continue
                 self.memory.note_working(result, provenance=f"action:{tool.name}")
                 report.actions.append(f"[{tool.risk.value}] {step.intent} -> {result}")
             elif decision.verdict is Verdict.NEEDS_APPROVAL:

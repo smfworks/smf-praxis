@@ -52,6 +52,11 @@ class LLMClient:
                 "provider and model (or set PRAXIS_LLM=mock for offline use)."
             )
         provider_id, model = cfg.split_model_ref(model_ref)
+        if not model:
+            raise RuntimeError(
+                f"Malformed model ref {model_ref!r}; expected 'provider/model-id'. "
+                f"Re-run 'praxis onboard'."
+            )
         provider = CATALOG.get(provider_id)
         entry = cfg.provider_entry(provider_id) or {}
         if not provider:
