@@ -13,6 +13,7 @@ If installed via `pip install -e .` the entry point is `praxis`; otherwise run
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from . import PraxisAgent
@@ -36,8 +37,16 @@ def _print_report(agent: PraxisAgent, report) -> None:
     print("memory:", agent.memory.stats())
 
 
+def _make_agent(args: argparse.Namespace):
+    if getattr(args, "m365", False):
+        from .m365_tools import build_m365_agent
+        agent, _client = build_m365_agent()
+        return agent
+    return PraxisAgent()
+
+
 def cmd_handle(args: argparse.Namespace) -> int:
-    agent = PraxisAgent()
+    agent = _make_agent(args)
     report = agent.handle(args.goal)
     if args.approve_all:
         for appr in list(report.pending_approvals):
@@ -48,9 +57,23 @@ def cmd_handle(args: argparse.Namespace) -> int:
 
 
 def cmd_heartbeat(args: argparse.Namespace) -> int:
-    agent = PraxisAgent()
+    agent = _make_agent(args)
     report = agent.heartbeat(args.watch)
     _print_report(agent, report)
+    return 0
+
+
+def cmd_m365(_args: argparse.Namespace) -> int:
+    from .broker_client import BrokerClient
+    client = BrokerClient.from_env()
+    health = client.health()
+    print("broker health:", health)
+    if not health.get("ok"):
+        print("Broker not reachable. Start it with `npm start` in openclaw-m365-broker,")
+        print("and set M365_BROKER_URL / M365_BROKER_KEY (and M365_BROKER_APPROVER_KEY).")
+        return 1
+    print("least-privilege scopes:", health.get("requiredScopes"))
+    print("status:", client.execute("m365_status"))
     return 0
 
 
@@ -96,11 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("goal", help="the goal text")
     ph.add_argument("--approve-all", action="store_true",
                     help="auto-approve held consequential actions (dev only)")
+    ph.add_argument("--m365", action="store_true",
+                    help="use live M365 tools via the broker instead of mock tools")
     ph.set_defaults(func=cmd_handle)
 
     pb = sub.add_parser("heartbeat", help="proactive always-on tick")
     pb.add_argument("--watch", default="scan for urgent follow-ups",
                     help="the watch goal to run")
+    pb.add_argument("--m365", action="store_true",
+                    help="use live M365 tools via the broker instead of mock tools")
     pb.set_defaults(func=cmd_heartbeat)
 
     pm = sub.add_parser("remember", help="store a durable fact/preference")
@@ -125,12 +152,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     pt = sub.add_parser("tui", help="launch the interactive terminal UI")
     pt.set_defaults(func=cmd_tui)
+
+    pm = sub.add_parser("m365", help="check the M365 broker connection + signed-in status")
+    pm.set_defaults(func=cmd_m365)
     return parser
 
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo", "tui"):
+    if command in ("onboard", "demo", "tui", "m365"):
+        return
+    if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return
     if cfg.is_configured() or not sys.stdin.isatty():
         return
