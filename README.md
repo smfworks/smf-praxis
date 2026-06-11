@@ -26,13 +26,61 @@ perceive → plan → govern → act/draft → reflect → consolidate
 - **reflect / consolidate** — distill outcomes into durable facts + reusable
   skills with provenance, then clear working memory (summarize-not-hoard).
 
+## Setup
+
+Requires **Python 3.10+**. No third-party packages are needed to run (offline
+mock LLM); `pytest` is the only dev dependency.
+
+```bash
+# 1. clone
+git clone https://github.com/smfworks/smf-praxis.git
+cd smf-praxis
+
+# 2. (recommended) create a virtual environment
+python -m venv .venv
+# Windows:  .venv\Scripts\activate
+# macOS/Linux:  source .venv/bin/activate
+
+# 3. install (editable) with the `praxis` CLI + dev tools
+pip install -e ".[dev]"
+```
+
+Everything runs offline with a deterministic mock LLM — no API keys required.
+
 ## Quick start
 
 ```bash
-cd hybrid-autonomous-agent
 python demo.py          # offline, mock LLM
-python -m pytest -q     # 11 tests
+pytest -q               # 11 tests
 ```
+
+## CLI
+
+After `pip install -e .` the `praxis` command is available (or run
+`python -m hybridagent.cli ...` without installing):
+
+```bash
+praxis demo                                      # bundled demo
+praxis handle "Prepare a customer follow-up email after today's sync"
+praxis handle "<goal>" --approve-all             # auto-approve held sends (dev only)
+praxis heartbeat --watch "scan for urgent follow-ups"
+praxis remember "Michael prefers concise briefs" --kind preference
+praxis --help
+```
+
+| Command | What it does |
+|---|---|
+| `praxis handle "<goal>"` | run one full `perceive→…→consolidate` cycle; prints actions, held approvals, reflection |
+| `praxis handle ... --approve-all` | auto-approve consequential actions (dev convenience) |
+| `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
+| `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory |
+| `praxis demo` | run the full bundled demo |
+
+## Tests & CI
+
+`pytest -q` runs the 11-test suite. GitHub Actions
+(`.github/workflows/ci.yml`) runs tests on Python 3.10–3.12 plus a demo/CLI
+smoke test on every push and PR to `main`.
 
 ## Minimal usage
 
