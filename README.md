@@ -102,6 +102,7 @@ After `pip install -e .` the `praxis` command is available (or run
 `python -m hybridagent.cli ...` without installing):
 
 ```bash
+praxis tui                                       # interactive full-screen menu UI
 praxis demo                                      # bundled demo
 praxis handle "Prepare a customer follow-up email after today's sync"
 praxis handle "<goal>" --approve-all             # auto-approve held sends (dev only)
@@ -112,6 +113,7 @@ praxis --help
 
 | Command | What it does |
 |---|---|
+| `praxis tui` | launch the **interactive terminal UI** (menu-driven, stdlib-only) |
 | `praxis handle "<goal>"` | run one full `perceive→…→consolidate` cycle; prints actions, held approvals, reflection |
 | `praxis handle ... --approve-all` | auto-approve consequential actions (dev convenience) |
 | `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
