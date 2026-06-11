@@ -141,7 +141,10 @@ def _chat_openai(root: str, model: str, prompt: str, system: str | None,
                [{"role": "user", "content": prompt}]
     data = _post(f"{root}/chat/completions", headers,
                  {"model": model, "messages": messages}, timeout)
-    return data["choices"][0]["message"]["content"]
+    try:
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
 
 
 def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
@@ -157,4 +160,7 @@ def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
     if system:
         payload["system"] = system
     data = _post(f"{root}/messages", headers, payload, timeout)
-    return "".join(block.get("text", "") for block in data.get("content", []))
+    blocks = data.get("content")
+    if not isinstance(blocks, list):
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    return "".join(block.get("text", "") for block in blocks)
