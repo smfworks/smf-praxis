@@ -62,6 +62,11 @@ def cmd_remember(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tui(_args: argparse.Namespace) -> int:
+    from . import tui
+    return tui.run()
+
+
 def cmd_onboard(args: argparse.Namespace) -> int:
     if args.provider and args.model:
         summary = onboard_mod.run_noninteractive(
@@ -117,12 +122,15 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--api-key", default=None,
                     help="non-interactive: paste key (else an env reference is used)")
     po.set_defaults(func=cmd_onboard)
+
+    pt = sub.add_parser("tui", help="launch the interactive terminal UI")
+    pt.set_defaults(func=cmd_tui)
     return parser
 
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo"):
+    if command in ("onboard", "demo", "tui"):
         return
     if cfg.is_configured() or not sys.stdin.isatty():
         return
