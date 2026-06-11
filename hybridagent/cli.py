@@ -109,7 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     po = sub.add_parser("onboard", help="pick a model provider + model (interactive)")
     po.add_argument("--provider", choices=["ollama", "openrouter", "github",
-                                           "openai", "anthropic", "custom"],
+                                           "openai", "anthropic", "xai",
+                                           "vercel-ai-gateway", "custom"],
                     help="non-interactive: provider id")
     po.add_argument("--model", help="non-interactive: model id")
     po.add_argument("--base-url", default=None, help="non-interactive: custom base URL")

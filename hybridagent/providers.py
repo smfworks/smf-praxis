@@ -66,6 +66,23 @@ CATALOG: dict[str, Provider] = {
         key_env="ANTHROPIC_API_KEY", needs_key=True,
         suggested_models=["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
     ),
+    "xai": Provider(
+        id="xai", label="xAI (Grok)",
+        base_url="https://api.x.ai/v1", compatibility="openai",
+        key_env="XAI_API_KEY", needs_key=True,
+        suggested_models=["grok-2-latest", "grok-2-mini", "grok-beta"],
+        notes="xAI Console API key (XAI_API_KEY); OpenAI-compatible endpoint.",
+    ),
+    "vercel-ai-gateway": Provider(
+        id="vercel-ai-gateway", label="Vercel AI Gateway",
+        base_url="https://ai-gateway.vercel.sh/v1", compatibility="openai",
+        key_env="AI_GATEWAY_API_KEY", needs_key=True,
+        suggested_models=[
+            "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet",
+            "xai/grok-2-latest", "meta/llama-3.1-70b-instruct",
+        ],
+        notes="Single key (AI_GATEWAY_API_KEY) fronts many providers; model ids are 'vendor/model'.",
+    ),
     "custom": Provider(
         id="custom", label="Custom (OpenAI-compatible)",
         base_url="", compatibility="openai",
@@ -74,7 +91,8 @@ CATALOG: dict[str, Provider] = {
     ),
 }
 
-ORDER = ["ollama", "openrouter", "github", "openai", "anthropic", "custom"]
+ORDER = ["ollama", "openrouter", "github", "openai", "anthropic",
+         "xai", "vercel-ai-gateway", "custom"]
 
 
 def discover_ollama_models(base_url: str, timeout: float = 3.0) -> list[str]:
