@@ -22,6 +22,26 @@ def test_chunk_text_basic():
     assert all(len(c) <= 300 for c in chunks)
 
 
+def test_chunk_text_clamps_pathological_overlap():
+    # overlap >= chunk_size must not explode into ~one chunk per character.
+    chunks = chunk_text("word " * 400, chunk_size=100, overlap=120)
+    assert len(chunks) < 100
+    assert all(len(c) <= 200 for c in chunks)
+
+
+def test_retrieve_skips_dim_mismatched_chunks(tmp_path, monkeypatch):
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    store = Store.open()
+    Rag(store, EmbeddingClient(mode="mock", dim=256)).ingest_text(
+        "alpha beta gamma revenue", source="a.txt")
+    Rag(store, EmbeddingClient(mode="mock", dim=128)).ingest_text(
+        "alpha beta gamma revenue", source="b.txt")          # different dim
+    hits = Rag(store, EmbeddingClient(mode="mock", dim=256)).retrieve("alpha revenue")
+    sources = {h.source for h in hits}
+    assert "a.txt" in sources           # comparable dim still retrieved
+    assert "b.txt" not in sources       # mismatched dim skipped, no crash
+
+
 def test_ingest_and_retrieve_ranks_relevant_first(tmp_path, monkeypatch):
     rag = _rag(tmp_path, monkeypatch)
     rag.ingest_text("AdventHealth quarterly revenue grew on inpatient volume.",

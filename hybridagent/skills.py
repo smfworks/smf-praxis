@@ -126,11 +126,16 @@ class SkillLibrary:
     def _load_disk(self) -> None:
         if not self.root.exists():
             return
+        # Only (re)embed skills that aren't already in the vector store, so
+        # constructing a library (every CLI invocation) doesn't re-embed every
+        # skill — which against a real embedding model means N API calls per run.
+        indexed = set(self.rag.store.doc_ids("skills")) if self.rag else set()
         for md in self.root.glob("*/SKILL.md"):
             try:
                 sk = Skill.from_markdown(md.read_text(encoding="utf-8"))
                 self.skills[sk.name] = sk
-                self._index(sk)
+                if sk.name not in indexed:
+                    self._index(sk)
             except Exception as exc:
                 _log.warning("failed to load skill %s: %s", md, exc)
 

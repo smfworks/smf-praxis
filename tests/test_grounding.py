@@ -1,7 +1,7 @@
 from hybridagent import PraxisAgent
 from hybridagent import config as cfg
 from hybridagent.grounding import (GroundedPlanner, GroundedResponder,
-                                   generate_json)
+                                   generate_json, _extract_json)
 from hybridagent.rag import RetrievedChunk
 from hybridagent.tools import default_registry
 
@@ -63,6 +63,15 @@ def test_generate_json_raises_on_missing_keys():
     import pytest
     with pytest.raises(RuntimeError):
         generate_json(FakeLLM("no json here"), "prompt", ["steps"])
+
+
+def test_extract_json_handles_braces_inside_strings():
+    # Braces/quotes inside JSON string values must not terminate the scan early.
+    assert _extract_json('{"a": "x}y", "b": 1}') == {"a": "x}y", "b": 1}
+    assert _extract_json('prefix {"steps": []} suffix') == {"steps": []}
+    assert _extract_json('{"o": {"k": "}"}, "n": 2}') == {"o": {"k": "}"}, "n": 2}
+    assert _extract_json('{"s": "say \\"hi\\""}') == {"s": 'say "hi"'}
+    assert _extract_json("no json here") is None
 
 
 def test_generate_json_keeps_sensitive_prompt_off_cloud():

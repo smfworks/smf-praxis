@@ -1,5 +1,6 @@
 from hybridagent import PraxisAgent
 from hybridagent import config as cfg
+from hybridagent.embeddings import EmbeddingClient
 from hybridagent.skills import Skill, SkillLibrary, distill_skill
 from hybridagent.persistence import Store
 
@@ -30,6 +31,24 @@ def test_library_add_persists_to_disk(tmp_path, monkeypatch):
     assert lib.path_for(lib.get("brief-prep")).exists()
     lib2 = SkillLibrary(store=Store.open())
     assert "brief-prep" in [s.name for s in lib2.list()]
+
+
+def test_skill_reload_does_not_reembed(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+
+    class Counting(EmbeddingClient):
+        calls = 0
+
+        def embed(self, texts):
+            Counting.calls += len(texts)
+            return super().embed(texts)
+
+    store = Store.open()
+    lib = SkillLibrary(store=store, embedder=Counting(mode="mock"))
+    lib.add(Skill(name="s1", trigger="follow up email"))
+    base = Counting.calls
+    SkillLibrary(store=store, embedder=Counting(mode="mock"))   # reload
+    assert Counting.calls == base       # no re-embedding existing skills on load
 
 
 def test_library_semantic_retrieve(tmp_path, monkeypatch):
