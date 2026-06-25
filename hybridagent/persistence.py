@@ -175,13 +175,18 @@ class Store:
         d["args"] = json.loads(d.pop("args_json") or "{}")
         return d
 
-    def resolve_approval(self, approval_id: str, status: str) -> None:
+    def resolve_approval(self, approval_id: str, status: str) -> bool:
+        """Atomically transition a still-pending approval. Returns True only if
+        THIS call won the pending->status transition (guards cross-process
+        double-execution of consequential actions)."""
         with self._lock:
-            self._conn.execute(
-                "UPDATE approvals SET status=? WHERE approval_id=?",
+            cur = self._conn.execute(
+                "UPDATE approvals SET status=? "
+                "WHERE approval_id=? AND status='pending'",
                 (status, approval_id),
             )
             self._conn.commit()
+            return cur.rowcount == 1
 
     # ----------------------------------------------------------- vectors (RAG)
     def add_vector(self, ns: str, doc_id: str, chunk_idx: int, text: str,

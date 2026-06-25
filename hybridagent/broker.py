@@ -162,9 +162,15 @@ class GovernanceBroker:
                 self.store.resolve_approval(approval_id, "expired")
             self.log.info("approval %s expired", approval_id)
             return None
+        # When persisted, atomically claim the pending->approved transition so a
+        # second process holding the same hydrated approval cannot execute it
+        # again (would otherwise double-fire a send/delete).
+        if self.store is not None and not self.store.resolve_approval(
+                approval_id, "approved"):
+            self.pending.pop(approval_id, None)        # already resolved elsewhere
+            self.log.info("approval %s already resolved; refusing", approval_id)
+            return None
         self.pending.pop(approval_id, None)
-        if self.store is not None:
-            self.store.resolve_approval(approval_id, "approved")
         return pending
 
     def reject(self, approval_id: str) -> None:
