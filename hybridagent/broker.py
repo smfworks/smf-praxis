@@ -53,14 +53,27 @@ class Decision:
     policy_rule: str = ""
 
 
-# Lines that look like embedded instructions inside retrieved content.
-_INJECTION_RE = re.compile(
-    r"ignore (all |the )?(previous |prior )?instructions|"
-    r"do not tell|send this (file|message) to everyone|"
-    r"delete the original|approve this (request )?immediately|"
-    r"reveal (your )?(system )?prompt|disregard (the )?(system|policy)",
-    re.IGNORECASE,
-)
+# Multiple injection patterns. Single-pattern regexes are easily paraphrased
+# around; this set covers common jailbreak shapes (instruction overrides,
+# role-swaps, exfil prompts, system-prompt extraction, encoded delimiters) so
+# that retrieved content carrying any of them gets flagged as data, not policy.
+_INJECTION_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in (
+        r"ignore (all |the )?(previous |prior )?(instructions|prompt|rules)",
+        r"disregard (the |all )?(system|policy|previous|prior)",
+        r"do not tell (?:anyone|the user|michael)",
+        r"send this (file|message|note) to (everyone|all|the team)",
+        r"delete the (original|email|file|record)",
+        r"approve (this|the) (request|action) (immediately|silently|without)",
+        r"reveal (your )?(system )?(prompt|instructions|context)",
+        r"override (the )?(safety|policy|approval)",
+        r"you are now (a |an )?[a-z]+ (assistant|agent|model) (?:that|who)",
+        r"switch (to )?(developer|debug|jailbreak|admin) mode",
+        r"<\|.*?system.*?\|>|<system>",
+        r"begin (a |an )?new (system|policy) prompt",
+        r"forget (everything|prior|previous|the )?",
+    )
+]
 
 _SECRET_RE = re.compile(r"(?i)(api[_-]?key|password|token|secret)\s*[:=]\s*\S+")
 
@@ -92,6 +105,12 @@ class PendingApproval:
     rationale: str = ""
     evidence: list[dict] = field(default_factory=list)
     expires_at: float | None = None
+    required_approvals: int = 1
+    approvals: list[dict] = field(default_factory=list)
+
+    @property
+    def fully_approved(self) -> bool:
+        return len(self.approvals) >= self.required_approvals
 
 
 class KillSwitch:
@@ -114,6 +133,10 @@ class GovernancePolicy:
     allowed_tools: set[str] = field(default_factory=set)
     injection_check: bool = True
     approval_ttl_seconds: float | None = 3600.0  # held actions expire after 1h
+    # Risk classes that require two distinct approvers (four-eyes principle).
+    # Default: irreversible destructive actions need a second sign-off.
+    dual_approval_risks: set[RiskClass] = field(
+        default_factory=lambda: {RiskClass.DESTRUCTIVE})
 
 
 class GovernanceBroker:
@@ -136,7 +159,9 @@ class GovernanceBroker:
                 provenance=row["provenance"], cycle_id=row.get("cycle_id", ""),
                 decision_id=row.get("decision_id", ""),
                 rationale=row.get("rationale", ""), evidence=row.get("evidence", []),
-                expires_at=row["expires_at"])
+                expires_at=row["expires_at"],
+                required_approvals=row.get("required_approvals", 1),
+                approvals=row.get("signatures", []))
         for row in store.load_audit():
             self.audit.append(AuditEntry(
                 actor=row["actor"], tool=row["tool"], risk=row["risk"],
@@ -173,24 +198,30 @@ class GovernanceBroker:
         approval_id = f"appr-{uuid.uuid4().hex[:8]}"
         ttl = self.policy.approval_ttl_seconds
         expires_at = time.time() + ttl if ttl else None
+        required = 2 if risk in self.policy.dual_approval_risks else 1
         why = rationale or (
-            f"{risk.value} tool '{tool}' is consequential and requires human approval."
+            f"{risk.value} tool '{tool}' is consequential and requires "
+            f"{required} human approval(s)."
         )
         self.pending[approval_id] = PendingApproval(
             approval_id=approval_id, tool=tool, args=args,
             preview=preview, provenance=provenance, cycle_id=cycle_id,
             decision_id=decision_id, rationale=why, evidence=evidence or [],
-            expires_at=expires_at,
+            expires_at=expires_at, required_approvals=required,
         )
         if self.store is not None:
             self.store.upsert_approval(approval_id, tool, args, preview,
                                        provenance, expires_at, cycle_id=cycle_id,
                                        decision_id=decision_id, rationale=why,
-                                       evidence=evidence)
+                                       evidence=evidence,
+                                       required_approvals=required)
         return self._log_decision(actor, tool, risk, Verdict.NEEDS_APPROVAL,
-                                  f"queued {approval_id}", approval_id,
+                                  f"queued {approval_id} (needs {required})",
+                                  approval_id,
                                   decision_id=decision_id, cycle_id=cycle_id,
-                                  policy_rule="human_approval_required",
+                                  policy_rule=("dual_approval_required"
+                                               if required > 1
+                                               else "human_approval_required"),
                                   args_hash=args_hash)
 
     def approve(self, approval_id: str, approved_by: str = "",
@@ -204,9 +235,26 @@ class GovernanceBroker:
                 self.store.resolve_approval(approval_id, "expired")
             self.log.info("approval %s expired", approval_id)
             return None
-        # When persisted, atomically claim the pending->approved transition so a
-        # second process holding the same hydrated approval cannot execute it
-        # again (would otherwise double-fire a send/delete).
+        # Four-eyes principle: an approver who already signed THIS approval
+        # cannot sign it a second time to satisfy the dual-approval requirement.
+        if approved_by and any(a.get("approved_by") == approved_by
+                               for a in pending.approvals):
+            self.log.info("approval %s: %s already signed; second approver required",
+                          approval_id, approved_by)
+            return None
+        pending.approvals.append({
+            "approved_by": approved_by, "notes": approval_notes,
+            "ts": time.time(),
+        })
+        if self.store is not None:
+            self.store.add_approval_signature(
+                approval_id, approved_by, approval_notes)
+        if not pending.fully_approved:
+            self.log.info("approval %s: %d/%d signatures collected",
+                          approval_id, len(pending.approvals),
+                          pending.required_approvals)
+            return None
+        # All signatures collected -> atomically claim execution.
         if self.store is not None and not self.store.resolve_approval(
                 approval_id, "approved", approved_by=approved_by,
                 approval_notes=approval_notes):
@@ -223,7 +271,9 @@ class GovernanceBroker:
 
     # ------------------------------------------------------------- screening
     def is_injection(self, text: str) -> bool:
-        return bool(self.policy.injection_check and _INJECTION_RE.search(text or ""))
+        if not (self.policy.injection_check and text):
+            return False
+        return any(pat.search(text) for pat in _INJECTION_PATTERNS)
 
     @staticmethod
     def redact(text: str) -> str:

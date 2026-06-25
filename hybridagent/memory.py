@@ -139,3 +139,65 @@ class Memory:
             "durable": len(self.durable),
             "skills": len(self.durable_of_kind("skill")),
         }
+
+    # -------------------------------------------------------- retention policy
+    def purge_expired(self) -> int:
+        """Remove memory items past their explicit ``expires_at``.
+
+        This is the GDPR/HIPAA-style purge hook: anything with a retention
+        deadline gets dropped from both the in-memory tier list and the on-disk
+        store. Returns the number of items removed.
+        """
+        now = time.time()
+        removed = 0
+        for tier_list in (self.episodic, self.durable):
+            survivors = []
+            for item in tier_list:
+                if item.expires_at and item.expires_at <= now:
+                    if self.store is not None and item.id is not None:
+                        self.store.delete_memory(item.id)
+                    removed += 1
+                else:
+                    survivors.append(item)
+            tier_list[:] = survivors
+        return removed
+
+    def decay_episodic(self, max_age_days: float = 90.0,
+                       salience_floor: float = 0.2) -> int:
+        """Forget low-salience episodic entries older than ``max_age_days``.
+
+        Keeps the episodic tier from growing unbounded while preserving
+        high-salience records that the operator (or the recall ranker) has
+        marked important. Returns the number of items dropped.
+        """
+        now = time.time()
+        cutoff = now - max_age_days * 86400.0
+        survivors = []
+        removed = 0
+        for item in self.episodic:
+            if item.ts < cutoff and item.salience <= salience_floor:
+                if self.store is not None and item.id is not None:
+                    self.store.delete_memory(item.id)
+                removed += 1
+            else:
+                survivors.append(item)
+        self.episodic[:] = survivors
+        return removed
+
+    def forget_by_provenance(self, provenance_prefix: str) -> int:
+        """Bulk delete memory rows whose ``provenance`` starts with the given
+        prefix (e.g. ``"user:michael"``). Useful for right-to-be-forgotten
+        requests and for revoking access to a specific data subject's traces.
+        """
+        removed = 0
+        for tier_list in (self.episodic, self.durable):
+            survivors = []
+            for item in tier_list:
+                if item.provenance.startswith(provenance_prefix):
+                    if self.store is not None and item.id is not None:
+                        self.store.delete_memory(item.id)
+                    removed += 1
+                else:
+                    survivors.append(item)
+            tier_list[:] = survivors
+        return removed
