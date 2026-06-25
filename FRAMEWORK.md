@@ -107,6 +107,7 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Multimodal intake (image/audio/video) | `multimodal.py` |
 | Grounding (cite-or-abstain, verify, tool-constrained) | `grounding.py` |
 | Skills library + governed `/learn` | `skills.py` |
+| Compliance attestation (cycle/decision evidence chain) | `compliance.py`, `persistence.py` |
 
 ---
 
@@ -137,4 +138,3 @@ single-colleague foundation.
 3. **Model router + multimodal** — role/sensitivity routing; image/audio/video intake. ✅
 4. **Grounding** — cite-or-abstain, structured outputs, verification pass. ✅
 5. **Skills + `/learn`** — persistent skill store, governed learn command, retrieval. ✅
-
