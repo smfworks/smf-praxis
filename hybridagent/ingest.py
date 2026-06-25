@@ -111,7 +111,8 @@ def _read_text(path: Path) -> str:
 def _parse_eml(path: Path) -> str:
     from email import policy
     from email.parser import BytesParser
-    msg = BytesParser(policy=policy.default).parse(path.open("rb"))
+    with path.open("rb") as fh:
+        msg = BytesParser(policy=policy.default).parse(fh)
     head = (f"From: {msg.get('from','')}\nTo: {msg.get('to','')}\n"
             f"Date: {msg.get('date','')}\nSubject: {msg.get('subject','')}\n\n")
     body = ""
@@ -194,8 +195,14 @@ def _parse_msg(path: Path) -> str:
     except Exception:
         _missing("extract-msg")
     m = extract_msg.Message(str(path))
-    return (f"From: {m.sender or ''}\nTo: {m.to or ''}\nDate: {m.date or ''}\n"
-            f"Subject: {m.subject or ''}\n\n{m.body or ''}")
+    try:
+        return (f"From: {m.sender or ''}\nTo: {m.to or ''}\nDate: {m.date or ''}\n"
+                f"Subject: {m.subject or ''}\n\n{m.body or ''}")
+    finally:
+        try:
+            m.close()
+        except Exception:
+            pass
 
 
 _PARSERS = {

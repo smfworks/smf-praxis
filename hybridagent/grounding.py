@@ -161,12 +161,16 @@ def _extract_json(text: str) -> dict | None:
 
 
 def generate_json(llm: LLMClient, prompt: str, required_keys: list[str],
-                  role: str = "planner", retries: int = 2) -> dict:
+                  role: str = "planner", retries: int = 2,
+                  sensitivity: str | None = None) -> dict:
+    if sensitivity is None:
+        sensitivity = classify_sensitivity(prompt)   # don't leak secrets to cloud
     system = ("Respond with ONLY a single valid JSON object — no prose, no "
               "markdown code fences, no commentary.")
     last = ""
     for _ in range(retries + 1):
-        out = llm.complete(prompt + "\nJSON:", system, role=role)
+        out = llm.complete(prompt + "\nJSON:", system, role=role,
+                           sensitivity=sensitivity)
         obj = _extract_json(out)
         if obj is not None and all(k in obj for k in required_keys):
             return obj

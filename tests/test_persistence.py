@@ -66,3 +66,17 @@ def test_memory_with_no_store_stays_in_memory(tmp_path, monkeypatch):
     a = PraxisAgent()                     # no store
     a.learn("ephemeral", kind="note", provenance="t")
     assert PraxisAgent().memory.stats()["durable"] == 0
+
+
+def test_cross_process_approval_cannot_double_execute(tmp_path, monkeypatch):
+    # Two processes hydrate the same held approval; only one may execute it.
+    _isolate(tmp_path, monkeypatch)
+    store = Store.open()
+    b1 = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}), store=store)
+    d = b1.authorize("praxis", "send_email", RiskClass.SEND, {"draft_id": "D1"})
+    aid = d.approval_id
+    b2 = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}), store=store)
+    assert aid in b2.pending                          # second process sees it too
+    assert b1.approve(aid) is not None                # first process wins
+    assert b2.approve(aid) is None                    # second is refused
+    assert aid not in b2.pending

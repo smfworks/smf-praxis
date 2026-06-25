@@ -65,6 +65,21 @@ def test_generate_json_raises_on_missing_keys():
         generate_json(FakeLLM("no json here"), "prompt", ["steps"])
 
 
+def test_generate_json_keeps_sensitive_prompt_off_cloud():
+    captured = {}
+
+    class LLM:
+        def _effective_mode(self):
+            return "real"
+
+        def complete(self, prompt, system=None, role="general", sensitivity="normal"):
+            captured["sensitivity"] = sensitivity
+            return '{"ok": true}'
+
+    generate_json(LLM(), "draft the reply containing SSN 123-45-6789", ["ok"])
+    assert captured["sensitivity"] == "sensitive"
+
+
 def test_grounded_planner_drops_hallucinated_tools():
     reg = default_registry()
     llm = FakeLLM('{"steps": ['
