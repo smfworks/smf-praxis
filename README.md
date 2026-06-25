@@ -139,6 +139,8 @@ praxis --help
 | `praxis learn "<goal>"` | distill a reusable skill (`/learn`); saved only on approval (`--yes`) |
 | `praxis skills` | list saved skills |
 | `praxis skill <name>` | show a saved skill |
+| `praxis skill-record <name> "<goal>" {success,partial,failure}` | record a skill outcome |
+| `praxis skill-evaluate` | score skills and quarantine low-quality ones |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
 
@@ -204,7 +206,13 @@ agent's capability compounds over time.
 praxis learn "Prepare and send a customer follow-up after a sync" --yes
 praxis skills
 praxis skill prepare-and-send-a-customer-follow-up
+praxis skill-record prepare-and-send-a-customer-follow-up "follow-up goal" success
+praxis skill-evaluate --min-uses 3 --threshold 0.4
 ```
+
+Skill outcomes feed quality scores (`success_count`, `failure_count`,
+`quality_score`, `last_used_ts`). Low-quality skills can be quarantined so they no
+longer influence perception until reviewed or unquarantined.
 
 ## Grounded, non-hallucinating answers
 
