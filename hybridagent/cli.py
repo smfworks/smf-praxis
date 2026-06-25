@@ -349,6 +349,35 @@ def cmd_skill_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_subagent_run(args: argparse.Namespace) -> int:
+    from .orchestrator import Orchestrator
+    from .persistence import Store
+    run = Orchestrator(Store.open()).run(args.goal, role=args.role)
+    print(f"{run.run_id} [{run.status}] role={run.role} agent={run.agent_id}")
+    if run.cycle_id:
+        print(f"cycle: {run.cycle_id}")
+    return 0
+
+
+def cmd_subagents(args: argparse.Namespace) -> int:
+    from .orchestrator import AgentPool, Orchestrator
+    from .persistence import Store
+    store = Store.open()
+    agents = AgentPool(store).list()
+    if not agents:
+        print("no subagents registered yet")
+    else:
+        print("subagents:")
+        for a in agents:
+            print(f"  {a.agent_id} [{a.role}] tools={','.join(a.tools)}")
+    runs = Orchestrator(store).list_runs(limit=args.limit)
+    if runs:
+        print("runs:")
+        for r in runs:
+            print(f"  {r['run_id']} [{r['status']}] role={r['role']} :: {r['goal']}")
+    return 0
+
+
 def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
@@ -503,6 +532,17 @@ def build_parser() -> argparse.ArgumentParser:
     pse.add_argument("--threshold", type=float, default=0.4)
     pse.set_defaults(func=cmd_skill_evaluate)
 
+    psa = sub.add_parser("subagent-run", help="route a goal to a scoped subagent")
+    psa.add_argument("goal")
+    psa.add_argument("--role", default=None,
+                     choices=["researcher", "drafter", "compliance", "predictor"],
+                     help="force a subagent role; default predicts from the goal")
+    psa.set_defaults(func=cmd_subagent_run)
+
+    psl = sub.add_parser("subagents", help="list scoped subagents and recent runs")
+    psl.add_argument("--limit", type=int, default=20)
+    psl.set_defaults(func=cmd_subagents)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -531,6 +571,7 @@ def _maybe_first_run_onboard(command: str) -> None:
                    "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance",
                    "skill-record", "skill-evaluate",
+                   "subagent-run", "subagents",
                    "task-create", "tasks", "task-run", "task-cancel",
                    "wiki-add", "wiki-sources", "wiki-refresh"):
         return

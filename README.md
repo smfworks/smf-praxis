@@ -141,6 +141,8 @@ praxis --help
 | `praxis skill <name>` | show a saved skill |
 | `praxis skill-record <name> "<goal>" {success,partial,failure}` | record a skill outcome |
 | `praxis skill-evaluate` | score skills and quarantine low-quality ones |
+| `praxis subagent-run "<goal>" [--role drafter]` | route a goal to a scoped subagent |
+| `praxis subagents` | list scoped subagents and recent runs |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
 
@@ -213,6 +215,21 @@ praxis skill-evaluate --min-uses 3 --threshold 0.4
 Skill outcomes feed quality scores (`success_count`, `failure_count`,
 `quality_score`, `last_used_ts`). Low-quality skills can be quarantined so they no
 longer influence perception until reviewed or unquarantined.
+
+## Scoped subagents
+
+Praxis can spawn scoped subagents over the same governed store. Subagents use
+role-specific tool allowlists (researcher, drafter, compliance, predictor) and
+all decisions/approvals still flow through the broker and compliance spine.
+
+```bash
+praxis subagent-run "draft a customer follow-up email" --role drafter
+praxis subagents
+praxis approvals
+```
+
+The current orchestrator is synchronous and deterministic; the persistent run
+records are ready for a future concurrent worker pool.
 
 ## Grounded, non-hallucinating answers
 

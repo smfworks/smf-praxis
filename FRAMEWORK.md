@@ -111,6 +111,7 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Persistent task queue (long-running/resumable work) | `task_manager.py`, `persistence.py` |
 | Managed wiki / KB source revalidation | `wiki.py`, `rag.py`, `persistence.py` |
 | Skill outcome evaluation / quarantine | `skill_evaluator.py`, `skills.py` |
+| Scoped subagent orchestration / predictive routing | `orchestrator.py`, `persistence.py` |
 
 ---
 
