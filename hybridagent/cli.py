@@ -179,6 +179,48 @@ def cmd_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learn(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    if agent.skills is None:
+        print("no skill store available")
+        return 1
+    draft = agent.learn_skill(args.goal, name=args.name)
+    print("Drafted skill (governed — requires approval to save):\n")
+    print(draft.to_markdown())
+    save = args.yes
+    if not save and sys.stdin.isatty():
+        save = input("Save this skill? [y/N]: ").strip().lower() == "y"
+    if save:
+        path = agent.skills.add(draft)
+        print(f"\nsaved skill '{draft.name}' -> {path}")
+    else:
+        print("\nnot saved. Skills require approval; re-run with --yes to persist.")
+    return 0
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    skills = agent.skills.list() if agent.skills else []
+    if not skills:
+        print("no skills saved yet (use 'praxis learn \"<goal>\"')")
+        return 0
+    print(f"{len(skills)} skill(s):")
+    for sk in skills:
+        state = "" if sk.enabled else " (disabled)"
+        print(f"  - {sk.name}{state}: {sk.trigger}")
+    return 0
+
+
+def cmd_skill(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    sk = agent.skills.get(args.name) if agent.skills else None
+    if not sk:
+        print(f"no skill named '{args.name}'")
+        return 1
+    print(sk.to_markdown())
+    return 0
+
+
 def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
@@ -264,6 +306,20 @@ def build_parser() -> argparse.ArgumentParser:
     pask.add_argument("--m365", action="store_true", help="use the M365 broker registry")
     pask.set_defaults(func=cmd_ask)
 
+    pl = sub.add_parser("learn", help="distill a reusable skill from a goal (/learn)")
+    pl.add_argument("goal", help="the goal to learn a skill from")
+    pl.add_argument("--name", default=None, help="override the skill name")
+    pl.add_argument("--yes", action="store_true", help="approve + save without prompting")
+    pl.add_argument("--m365", action="store_true", help="use the M365 broker registry")
+    pl.set_defaults(func=cmd_learn)
+
+    psk = sub.add_parser("skills", help="list saved skills")
+    psk.set_defaults(func=cmd_skills)
+
+    pskw = sub.add_parser("skill", help="show a saved skill by name")
+    pskw.add_argument("name", help="the skill name")
+    pskw.set_defaults(func=cmd_skill)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -289,7 +345,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
-                   "ingest", "recall", "describe", "route", "ask"):
+                   "ingest", "recall", "describe", "route", "ask",
+                   "learn", "skills", "skill"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

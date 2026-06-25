@@ -101,6 +101,12 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Multi-tier memory with provenance | `memory.py` |
 | Reflection + consolidation (self-improvement) | `reflection.py` |
 | Orchestrating agent loop | `agent.py` |
+| Durable state (memory/audit/approvals/vectors) | `persistence.py` |
+| RAG (chunk/embed/retrieve) + document ingestion | `rag.py`, `embeddings.py`, `ingest.py` |
+| Contextual model routing (role + sensitivity) | `router.py`, `llm.py` |
+| Multimodal intake (image/audio/video) | `multimodal.py` |
+| Grounding (cite-or-abstain, verify, tool-constrained) | `grounding.py` |
+| Skills library + governed `/learn` | `skills.py` |
 
 ---
 
@@ -120,8 +126,8 @@ single-colleague foundation.
 ### Production wiring
 - Implement `LLMClient._complete_real` (local/cloud model); set `PRAXIS_LLM=real`. ✅ done (`providers.py`).
 - Replace mock tools in `tools.py` with real M365 broker/Graph calls. ✅ via `m365_tools.py`.
-- Durable memory + audit + held approvals persist to `~/.praxis/praxis.db`
-  (`persistence.py`); semantic vector recall lands in the RAG phase.
+- Durable memory + audit + held approvals + RAG vectors persist to
+  `~/.praxis/praxis.db` (`persistence.py`); semantic recall via `rag.py`.
 - Provider calls retry with backoff and log structured events; held actions carry
   a TTL. Kill-switch still needs wiring to a real disable path.
 
@@ -130,5 +136,5 @@ single-colleague foundation.
 2. **RAG + ingestion** — embeddings, vector store, PDF/Office/email parsers. ✅
 3. **Model router + multimodal** — role/sensitivity routing; image/audio/video intake. ✅
 4. **Grounding** — cite-or-abstain, structured outputs, verification pass. ✅
-5. **Skills + `/learn`** — persistent skill store, governed learn command, retrieval.
+5. **Skills + `/learn`** — persistent skill store, governed learn command, retrieval. ✅
 

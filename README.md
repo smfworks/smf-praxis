@@ -128,8 +128,28 @@ praxis --help
 | `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
 | `praxis describe <path>` | extract text from a document or caption/transcribe a media file |
 | `praxis route` | show contextual model routing per role + sensitivity |
+| `praxis learn "<goal>"` | distill a reusable skill (`/learn`); saved only on approval (`--yes`) |
+| `praxis skills` | list saved skills |
+| `praxis skill <name>` | show a saved skill |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Skills library (`/learn`)
+
+Praxis builds a curated, reusable skills library — Hermes-style. `praxis learn`
+(or `/learn` in the TUI) distills a goal into a named, triggerable **skill**
+(`SKILL.md` with frontmatter + steps) and indexes it for semantic retrieval.
+Because saving a skill changes future behavior, it's a **governed** act: Praxis
+drafts autonomously but only persists after you approve (`--yes`, or `y` at the
+prompt). Saved skills are stored under `~/.praxis/skills/<name>/SKILL.md`, and the
+relevant ones are retrieved and folded into perception on every cycle, so the
+agent's capability compounds over time.
+
+```bash
+praxis learn "Prepare and send a customer follow-up after a sync" --yes
+praxis skills
+praxis skill prepare-and-send-a-customer-follow-up
+```
 
 ## Grounded, non-hallucinating answers
 

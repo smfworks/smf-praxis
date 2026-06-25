@@ -59,12 +59,16 @@ class PraxisAgent:
         )
         # RAG is available when there's a store to back the vector table.
         self.rag = None
+        self.skills = None
         if store is not None:
             from .rag import Rag
             from .embeddings import EmbeddingClient
-            self.rag = Rag(store, EmbeddingClient())
+            from .skills import SkillLibrary
+            embedder = EmbeddingClient()
+            self.rag = Rag(store, embedder)
+            self.skills = SkillLibrary(store=store, embedder=embedder)
         self.perception = Perception(self.registry, self.broker, self.memory,
-                                     rag=self.rag)
+                                     rag=self.rag, skills=self.skills)
         self.planner = Planner(self.registry, self.llm)
         self.reflector = Reflector(self.memory, self.llm)
 
@@ -170,3 +174,14 @@ class PraxisAgent:
                 text=item.text, source=f"memory:{item.kind}", score=1.0,
                 kind="memory", provenance=item.provenance))
         return GroundedResponder(self.llm).answer(question, sources)
+
+    # ------------------------------------------------------- skill distillation
+    def learn_skill(self, goal: str, name: str | None = None):
+        """Distill a reusable skill draft from the goal's plan (no side effects).
+
+        Returns a Skill draft; persisting it is a governed step the caller must
+        approve (see `praxis learn`)."""
+        from .skills import distill_skill
+        plan = self.planner.plan(goal)
+        trace = [f"{s.intent} -> {s.tool}" for s in plan.steps]
+        return distill_skill(self.llm, goal, trace, name=name)
