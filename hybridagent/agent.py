@@ -57,7 +57,14 @@ class PraxisAgent:
             GovernancePolicy(allowed_tools=set(self.registry.names())),
             store=store,
         )
-        self.perception = Perception(self.registry, self.broker, self.memory)
+        # RAG is available when there's a store to back the vector table.
+        self.rag = None
+        if store is not None:
+            from .rag import Rag
+            from .embeddings import EmbeddingClient
+            self.rag = Rag(store, EmbeddingClient())
+        self.perception = Perception(self.registry, self.broker, self.memory,
+                                     rag=self.rag)
         self.planner = Planner(self.registry, self.llm)
         self.reflector = Reflector(self.memory, self.llm)
 
@@ -82,9 +89,10 @@ class PraxisAgent:
         )
         report.injection_flags = [s.source for s in signals if s.flagged_injection]
         # Reuse what perception already read so a read tool isn't executed twice
-        # per cycle (which, against the M365 broker, would double real Graph calls).
+        # per cycle (which, against the M365 broker, would double real Graph
+        # calls). Only cache signals that came from an actual registered tool.
         read_cache = {s.source: s.content for s in signals
-                      if not s.source.startswith("memory:")}
+                      if self.registry.get(s.source) is not None}
 
         # 2. PLAN.
         plan: Plan = self.planner.plan(goal)

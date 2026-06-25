@@ -14,6 +14,7 @@ and TUI construct a persistent agent backed by ``~/.praxis/praxis.db``.
 """
 from __future__ import annotations
 
+import array
 import json
 import sqlite3
 import threading
@@ -53,6 +54,19 @@ CREATE TABLE IF NOT EXISTS approvals (
     expires_at  REAL,
     status      TEXT NOT NULL DEFAULT 'pending'
 );
+
+CREATE TABLE IF NOT EXISTS vectors (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ns         TEXT NOT NULL,
+    doc_id     TEXT NOT NULL,
+    chunk_idx  INTEGER NOT NULL,
+    text       TEXT NOT NULL,
+    provenance TEXT NOT NULL DEFAULT 'document',
+    kind       TEXT NOT NULL DEFAULT 'document',
+    embedding  BLOB NOT NULL,
+    ts         REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_vectors_ns ON vectors(ns);
 """
 
 
@@ -168,3 +182,58 @@ class Store:
                 (status, approval_id),
             )
             self._conn.commit()
+
+    # ----------------------------------------------------------- vectors (RAG)
+    def add_vector(self, ns: str, doc_id: str, chunk_idx: int, text: str,
+                   provenance: str, kind: str, embedding: list[float],
+                   ts: float | None = None) -> int:
+        ts = time.time() if ts is None else ts
+        blob = array.array("f", embedding).tobytes()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO vectors"
+                "(ns,doc_id,chunk_idx,text,provenance,kind,embedding,ts) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (ns, doc_id, chunk_idx, text, provenance, kind, blob, ts),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def iter_vectors(self, ns: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT doc_id,chunk_idx,text,provenance,kind,embedding,ts "
+                "FROM vectors WHERE ns=? ORDER BY id ASC", (ns,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            vec = array.array("f")
+            vec.frombytes(d.pop("embedding"))
+            d["embedding"] = list(vec)
+            out.append(d)
+        return out
+
+    def count_vectors(self, ns: str | None = None) -> int:
+        with self._lock:
+            if ns is None:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM vectors").fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM vectors WHERE ns=?", (ns,)).fetchone()
+        return int(row["n"])
+
+    def doc_ids(self, ns: str) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT doc_id FROM vectors WHERE ns=? ORDER BY doc_id",
+                (ns,)).fetchall()
+        return [r["doc_id"] for r in rows]
+
+    def delete_doc(self, ns: str, doc_id: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM vectors WHERE ns=? AND doc_id=?", (ns, doc_id))
+            self._conn.commit()
+            return cur.rowcount

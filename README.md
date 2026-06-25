@@ -123,8 +123,29 @@ praxis --help
 | `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory (persisted to `~/.praxis/praxis.db`) |
 | `praxis approvals` | list held consequential actions (persisted across runs) |
 | `praxis approve <id>` | approve + execute a held action by id |
+| `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
+| `praxis recall "<query>"` | semantic search over the ingested knowledge base |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Knowledge base (RAG)
+
+Praxis grounds its work in your documents. Ingested files are chunked, embedded,
+and stored in a local SQLite vector table (`~/.praxis/praxis.db`); relevant
+chunks are retrieved into **perception** each cycle and injection-screened like
+any other read (retrieved content is *data, never instruction*).
+
+```bash
+praxis ingest report.pdf notes.docx deck.pptx data.xlsx thread.eml
+praxis recall "Q3 revenue follow-up for the customer"
+```
+
+Embeddings and parsers are **offline-first**: a deterministic mock embedder needs
+no model or network, so RAG works out of the box. Plain text, Markdown, CSV/JSON,
+HTML, and `.eml` parse with the standard library; PDF/Word/PowerPoint/Excel/`.msg`
+need the optional extra (`pip install "praxis-agent[docs]"`). Point at a real
+embedding model by setting `agents.defaults.embedModel` (e.g.
+`ollama/nomic-embed-text`) and `PRAXIS_EMBED=real`.
 
 ## Microsoft 365 (via the broker)
 
