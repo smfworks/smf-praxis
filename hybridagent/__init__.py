@@ -28,6 +28,11 @@ from .wiki import KBSource, KBSourceManager
 from .skill_evaluator import SkillEvaluator
 from .orchestrator import (AgentPool, AgentSpec, AgentSpecializer,
                            Orchestrator, PredictiveRouter, SubagentRun)
+from .validation import ValidationError, validate, validate_tool_args
+from .contradiction import Contradiction, detect as detect_contradictions
+from .scratchpad import Scratchpad, ScratchpadEntry
+from .metrics import HealthMonitor, HealthSnapshot
+from .wiki_safe import UnsafeSourceError, fetch_url, validate_uri
 from . import ingest
 
 __all__ = [
@@ -53,6 +58,11 @@ __all__ = [
     "SkillEvaluator",
     "AgentPool", "AgentSpec", "AgentSpecializer", "Orchestrator",
     "PredictiveRouter", "SubagentRun",
+    "ValidationError", "validate", "validate_tool_args",
+    "Contradiction", "detect_contradictions",
+    "Scratchpad", "ScratchpadEntry",
+    "HealthMonitor", "HealthSnapshot",
+    "UnsafeSourceError", "fetch_url", "validate_uri",
 ]
 
-__version__ = "0.10.0"
+__version__ = "0.13.0"

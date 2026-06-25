@@ -162,10 +162,15 @@ def cmd_task_cancel(args: argparse.Namespace) -> int:
 def cmd_wiki_add(args: argparse.Namespace) -> int:
     from .persistence import Store
     from .wiki import KBSourceManager
+    from .wiki_safe import UnsafeSourceError
     interval = KBSourceManager.seconds_from_hours(args.refresh_hours)
-    src = KBSourceManager(Store.open()).add(
-        args.uri, ns=args.ns, title=args.title or "",
-        refresh_interval_seconds=interval)
+    try:
+        src = KBSourceManager(Store.open()).add(
+            args.uri, ns=args.ns, title=args.title or "",
+            refresh_interval_seconds=interval)
+    except UnsafeSourceError as exc:
+        print(f"refused: {exc}")
+        return 1
     print(f"registered {src.source_id} [{src.source_type}] ns={src.ns} {src.uri}")
     return 0
 
@@ -277,6 +282,55 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print("\n⚠ unverified claims (not supported by sources):")
         for claim in ans.verification.unsupported_claims:
             print(f"   - {claim}")
+    if getattr(ans, "contradictions", None):
+        print("\n⚠ contradictions detected across retrieved sources:")
+        for c in ans.contradictions:
+            print(f"   [{c.score:.2f}] {c.a_source} <-> {c.b_source}: "
+                  f"{c.explanation}")
+    return 0
+
+
+def cmd_health(_args: argparse.Namespace) -> int:
+    from .metrics import HealthMonitor
+    from .persistence import Store
+    snap = HealthMonitor(Store.open()).snapshot()
+    print(HealthMonitor.render(snap))
+    return 0
+
+
+def cmd_memory_purge(args: argparse.Namespace) -> int:
+    from .memory import Memory
+    from .persistence import Store
+    mem = Memory(store=Store.open())
+    removed = mem.purge_expired()
+    if args.decay_days is not None:
+        removed += mem.decay_episodic(max_age_days=args.decay_days,
+                                      salience_floor=args.salience_floor)
+    if args.forget_provenance:
+        removed += mem.forget_by_provenance(args.forget_provenance)
+    print(f"removed {removed} memory item(s)")
+    return 0
+
+
+def cmd_scratchpad_read(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .scratchpad import Scratchpad
+    entries = Scratchpad(Store.open()).read(args.key, ns=args.ns)
+    if not entries:
+        print(f"no scratchpad entries for {args.ns}/{args.key}")
+        return 0
+    for e in entries:
+        print(f"[{e.written_by}] {e.value}")
+    return 0
+
+
+def cmd_scratchpad_write(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .scratchpad import Scratchpad
+    Scratchpad(Store.open()).write(args.key, args.value,
+                                   written_by=args.written_by, ns=args.ns,
+                                   ttl_seconds=args.ttl)
+    print("written")
     return 0
 
 
@@ -543,6 +597,33 @@ def build_parser() -> argparse.ArgumentParser:
     psl.add_argument("--limit", type=int, default=20)
     psl.set_defaults(func=cmd_subagents)
 
+    phl = sub.add_parser("health", help="render runtime health/metrics snapshot")
+    phl.set_defaults(func=cmd_health)
+
+    pmp = sub.add_parser("memory-purge",
+                         help="purge expired/old memory by retention policy")
+    pmp.add_argument("--decay-days", type=float, default=None,
+                     help="forget episodic items older than N days under salience floor")
+    pmp.add_argument("--salience-floor", type=float, default=0.2)
+    pmp.add_argument("--forget-provenance", default=None,
+                     help="bulk-delete items whose provenance starts with this prefix")
+    pmp.set_defaults(func=cmd_memory_purge)
+
+    psr = sub.add_parser("scratchpad-read",
+                         help="read scoped inter-subagent scratchpad entries")
+    psr.add_argument("key")
+    psr.add_argument("--ns", default="default")
+    psr.set_defaults(func=cmd_scratchpad_read)
+
+    psw = sub.add_parser("scratchpad-write",
+                         help="write a scratchpad note from one subagent role")
+    psw.add_argument("key")
+    psw.add_argument("value")
+    psw.add_argument("--written-by", default="cli")
+    psw.add_argument("--ns", default="default")
+    psw.add_argument("--ttl", type=float, default=3600.0)
+    psw.set_defaults(func=cmd_scratchpad_write)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -573,7 +654,9 @@ def _maybe_first_run_onboard(command: str) -> None:
                    "skill-record", "skill-evaluate",
                    "subagent-run", "subagents",
                    "task-create", "tasks", "task-run", "task-cancel",
-                   "wiki-add", "wiki-sources", "wiki-refresh"):
+                   "wiki-add", "wiki-sources", "wiki-refresh",
+                   "health", "memory-purge",
+                   "scratchpad-read", "scratchpad-write"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

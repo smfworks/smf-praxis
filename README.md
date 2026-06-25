@@ -143,8 +143,20 @@ praxis --help
 | `praxis skill-evaluate` | score skills and quarantine low-quality ones |
 | `praxis subagent-run "<goal>" [--role drafter]` | route a goal to a scoped subagent |
 | `praxis subagents` | list scoped subagents and recent runs |
+| `praxis health` | runtime health snapshot (cycles, tasks, KB, agents) |
+| `praxis memory-purge [--decay-days N] [--forget-provenance prefix]` | enforce retention/decay/forget policies |
+| `praxis scratchpad-read <key> [--ns NS]` | read inter-subagent shared notes |
+| `praxis scratchpad-write <key> <value> --written-by <agent>` | publish a scoped note to other subagents |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Phase 11–13: regulated platform hardening
+
+Subsequent commits beyond the original 5 phases added:
+
+- **Security & liveness (Phase 11):** SSRF-safe wiki ingestion (`http`/`https` only, blocks loopback/link-local/private hosts unless `PRAXIS_KB_ALLOW_PRIVATE=1`), automatic skill outcome recording after every cycle, automatic wiki refresh on heartbeat and before `ask()`, infinite-due bug fixed, task idempotency (no duplicate consequential approvals on retry), compliance attestation now includes task/subagent/KB errors and treats benign dispositions (expired, rejected, cancelled) as informational, predictive router refuses keyword escalation when the goal carries injection-flagged provenance, retry backoff has jitter, RAG keys docs by source_id (not human title).
+- **Regulated controls (Phase 12):** dual-approval (four-eyes) for DESTRUCTIVE risk class — two distinct approvers required, same approver can't double-sign; JSON-schema validation of tool arguments before execution (`SCHEMA-DENIED` audit entry on mismatch); subagent recursion cap (`Orchestrator.MAX_DEPTH = 3`) with `subagent_recursion_blocked` compliance event; agent liveness sweep marks stale agents; memory retention via `purge_expired()`, `decay_episodic()`, and `forget_by_provenance()` for GDPR/HIPAA-style right-to-be-forgotten; broader prompt-injection regex set covering paraphrases, role-swaps, jailbreak modes, and prompt-extraction.
+- **Integration polish (Phase 13):** cross-source contradiction detection on `ask()` (polarity flips and numeric disagreement, surfaced in the answer and logged to compliance events); inter-subagent scratchpad (scoped, attributed, TTL-bounded shared context); runtime `health` snapshot; `SkillEvaluator` warns when no store is wired so misconfiguration is detectable.
 
 ## Compliance spine
 
