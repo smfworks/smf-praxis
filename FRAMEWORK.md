@@ -112,6 +112,9 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Managed wiki / KB source revalidation | `wiki.py`, `rag.py`, `persistence.py` |
 | Skill outcome evaluation / quarantine | `skill_evaluator.py`, `skills.py` |
 | Scoped subagent orchestration / predictive routing | `orchestrator.py`, `persistence.py` |
+| Safe wiki ingestion (scheme/IP allowlist, size cap) | `wiki_safe.py` |
+| Dual approval, JSON-schema validation, retention/decay | `broker.py`, `validation.py`, `memory.py` |
+| Contradiction detection, scratchpad, health metrics | `contradiction.py`, `scratchpad.py`, `metrics.py` |
 
 ---
 
