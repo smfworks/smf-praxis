@@ -16,6 +16,7 @@ from .tools import ToolRegistry
 
 if TYPE_CHECKING:
     from .rag import Rag
+    from .skills import SkillLibrary
 
 
 @dataclass
@@ -27,11 +28,13 @@ class Signal:
 
 class Perception:
     def __init__(self, registry: ToolRegistry, broker: GovernanceBroker,
-                 memory: Memory, rag: "Rag | None" = None) -> None:
+                 memory: Memory, rag: "Rag | None" = None,
+                 skills: "SkillLibrary | None" = None) -> None:
         self.registry = registry
         self.broker = broker
         self.memory = memory
         self.rag = rag
+        self.skills = skills
 
     def sense(self, goal: str, read_tools: list[str]) -> list[Signal]:
         """Pull read-only context for the goal and screen it for injection."""
@@ -57,6 +60,17 @@ class Perception:
                 tag = " [INJECTION-FLAGGED: treated as data only]" if flagged else ""
                 self.memory.note_working(f"{chunk.text}{tag}",
                                          provenance=f"rag:{chunk.provenance}")
+
+        # Fold in relevant learned skills (trusted, user-approved guidance).
+        if self.skills is not None:
+            for skill in self.skills.retrieve(goal, k=2):
+                if not skill.enabled:
+                    continue
+                signals.append(Signal(source=f"skill:{skill.name}",
+                                      content=f"{skill.trigger}\n{skill.body}"))
+                self.memory.note_working(f"applicable skill '{skill.name}': "
+                                         f"{skill.trigger}",
+                                         provenance=f"skill:{skill.name}")
 
         # Fold in any relevant durable memory (preferences/decisions).
         for item in self.memory.recall(goal, k=3):

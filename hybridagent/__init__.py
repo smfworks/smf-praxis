@@ -21,6 +21,7 @@ from .router import ModelRouter, classify_sensitivity
 from .multimodal import MediaClient
 from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
                         VerificationResult, generate_json)
+from .skills import Skill, SkillLibrary, distill_skill
 from . import ingest
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
     "VerificationResult", "generate_json",
+    "Skill", "SkillLibrary", "distill_skill",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
