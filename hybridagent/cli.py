@@ -104,6 +104,37 @@ def cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .rag import Rag
+    rag = Rag(Store.open())
+    total = 0
+    for path in args.paths:
+        try:
+            doc, n = rag.ingest_file(path)
+            print(f"ingested {doc.source} ({doc.kind}): {n} chunks")
+            total += n
+        except Exception as exc:
+            print(f"  skip {path}: {exc}")
+    print(f"+{total} chunks. KB now: {rag.stats()}")
+    return 0
+
+
+def cmd_recall(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .rag import Rag
+    rag = Rag(Store.open())
+    hits = rag.retrieve(args.query, k=args.k)
+    if not hits:
+        print("no matches (KB empty? run 'praxis ingest <file>')")
+        return 0
+    for h in hits:
+        snippet = " ".join(h.text.split())[:200]
+        print(f"[{h.score:.3f}] {h.source} ({h.kind})  {h.provenance}")
+        print(f"    {snippet}")
+    return 0
+
+
 def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
@@ -166,6 +197,16 @@ def build_parser() -> argparse.ArgumentParser:
                      help="use the M365 broker registry")
     pav.set_defaults(func=cmd_approve)
 
+    pin = sub.add_parser("ingest", help="ingest documents into the RAG knowledge base")
+    pin.add_argument("paths", nargs="+",
+                     help="file paths (pdf/docx/pptx/xlsx/eml/msg/html/txt/md/csv/json)")
+    pin.set_defaults(func=cmd_ingest)
+
+    prc = sub.add_parser("recall", help="semantic search over the RAG knowledge base")
+    prc.add_argument("query", help="the search query")
+    prc.add_argument("--k", type=int, default=5, help="number of results")
+    prc.set_defaults(func=cmd_recall)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -190,7 +231,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo", "tui", "m365", "approvals", "approve"):
+    if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
+                   "ingest", "recall"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

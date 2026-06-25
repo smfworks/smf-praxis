@@ -90,6 +90,17 @@ def get_default_model() -> str | None:
     return (load_config().get("agents", {}).get("defaults", {}).get("model"))
 
 
+def get_embed_model() -> str | None:
+    """Optional separate embedding model ref ('provider/model'); None -> mock."""
+    return (load_config().get("agents", {}).get("defaults", {}).get("embedModel"))
+
+
+def set_embed_model(model_ref: str) -> Path:
+    cfg = load_config()
+    cfg.setdefault("agents", {}).setdefault("defaults", {})["embedModel"] = model_ref
+    return save_config(cfg)
+
+
 def split_model_ref(ref: str) -> tuple[str, str]:
     """'openrouter/openai/gpt-4o-mini' -> ('openrouter', 'openai/gpt-4o-mini')."""
     provider, _, model = ref.partition("/")

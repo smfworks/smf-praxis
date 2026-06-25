@@ -197,3 +197,25 @@ def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
     if not isinstance(blocks, list):
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
     return "".join(block.get("text", "") for block in blocks)
+
+
+def embed(provider: Provider, model: str, texts: list[str],
+          api_key: str | None, base_url: str | None = None,
+          timeout: float = 60.0) -> list[list[float]]:
+    """Embed texts via an OpenAI-compatible /embeddings endpoint.
+
+    Works with OpenAI, Ollama (>=0.1.x exposes /v1/embeddings), OpenRouter, and
+    any compatible host. Anthropic has no embeddings API, so callers should route
+    embeddings to a different provider.
+    """
+    root = (base_url or provider.base_url).rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    data = _post(f"{root}/embeddings", headers,
+                 {"model": model, "input": texts}, timeout)
+    try:
+        items = sorted(data["data"], key=lambda d: d.get("index", 0))
+        return [it["embedding"] for it in items]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(f"unexpected embeddings response: {str(data)[:300]}")

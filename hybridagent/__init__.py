@@ -15,6 +15,9 @@ from .perception import Perception, Signal
 from .reflection import Reflector
 from .llm import LLMClient
 from .persistence import Store
+from .embeddings import EmbeddingClient
+from .rag import Rag, RetrievedChunk, chunk_text
+from . import ingest
 
 __all__ = [
     "PraxisAgent",
@@ -26,6 +29,8 @@ __all__ = [
     "Reflector",
     "LLMClient",
     "Store",
+    "EmbeddingClient",
+    "Rag", "RetrievedChunk", "chunk_text", "ingest",
 ]
 
 __version__ = "0.2.0"
