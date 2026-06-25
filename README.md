@@ -124,6 +124,10 @@ praxis --help
 | `praxis approvals` | list held consequential actions (persisted across runs) |
 | `praxis approve <id> --approved-by <name> --notes "<why>"` | approve + execute a held action by id, recording operator/justification |
 | `praxis compliance` | render an audit attestation over cycles, approvals, and consequential actions |
+| `praxis task-create "<goal>"` | create a persistent resumable task |
+| `praxis tasks` | list persistent tasks and statuses |
+| `praxis task-run <id>` | run one task attempt (records cycle/result) |
+| `praxis task-cancel <id>` | cancel a queued/runnable task |
 | `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
 | `praxis recall "<query>"` | semantic search over the ingested knowledge base |
 | `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
@@ -149,6 +153,20 @@ Held approvals carry rationale and source evidence bundles, and approvals can
 record an operator and justification (`--approved-by`, `--notes`). `praxis
 compliance` renders an attestation proving recorded SEND/DESTRUCTIVE actions were
 approved, pending, or denied before execution.
+
+## Persistent tasks
+
+Long-running work can be placed into a durable task queue. Tasks track status,
+attempt count, retry timing, last `cycle_id`, result metadata, and errors in the
+SQLite store, so work can be resumed after process restarts or handed to a future
+background scheduler.
+
+```bash
+praxis task-create "Review recent mail and save a brief"
+praxis tasks
+praxis task-run task-abc123def0
+praxis task-cancel task-abc123def0
+```
 
 ## Skills library (`/learn`)
 
