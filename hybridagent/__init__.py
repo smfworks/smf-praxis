@@ -14,6 +14,7 @@ from .planner import Planner, Step, Plan
 from .perception import Perception, Signal
 from .reflection import Reflector
 from .llm import LLMClient
+from .persistence import Store
 
 __all__ = [
     "PraxisAgent",
@@ -24,6 +25,7 @@ __all__ = [
     "Perception", "Signal",
     "Reflector",
     "LLMClient",
+    "Store",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

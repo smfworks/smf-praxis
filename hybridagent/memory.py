@@ -14,6 +14,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .persistence import Store
 
 
 class Tier(str, Enum):
@@ -36,10 +40,24 @@ _MAX_DURABLE_CHARS = 280
 
 
 class Memory:
-    def __init__(self) -> None:
+    def __init__(self, store: "Store | None" = None) -> None:
         self.working: list[MemoryItem] = []
         self.episodic: list[MemoryItem] = []
         self.durable: list[MemoryItem] = []
+        self.store = store
+        if store is not None:
+            self._hydrate(store)
+
+    def _hydrate(self, store: "Store") -> None:
+        """Load persisted episodic + durable memory from disk on startup."""
+        for row in store.load_memory(Tier.EPISODIC.value):
+            self.episodic.append(MemoryItem(
+                text=row["text"], tier=Tier.EPISODIC,
+                provenance=row["provenance"], kind=row["kind"], ts=row["ts"]))
+        for row in store.load_memory(Tier.DURABLE.value):
+            self.durable.append(MemoryItem(
+                text=row["text"], tier=Tier.DURABLE,
+                provenance=row["provenance"], kind=row["kind"], ts=row["ts"]))
 
     # ----------------------------------------------------------- write paths
     def note_working(self, text: str, provenance: str = "agent") -> MemoryItem:
@@ -50,6 +68,9 @@ class Memory:
     def add_episodic(self, text: str, provenance: str) -> MemoryItem:
         item = MemoryItem(text=text, tier=Tier.EPISODIC, provenance=provenance)
         self.episodic.append(item)
+        if self.store is not None:
+            self.store.add_memory(Tier.EPISODIC.value, item.text,
+                                  item.provenance, item.kind, item.ts)
         return item
 
     def add_durable(self, text: str, kind: str, provenance: str) -> MemoryItem:
@@ -57,6 +78,9 @@ class Memory:
         clipped = text if len(text) <= _MAX_DURABLE_CHARS else text[:_MAX_DURABLE_CHARS] + "…"
         item = MemoryItem(text=clipped, tier=Tier.DURABLE, kind=kind, provenance=provenance)
         self.durable.append(item)
+        if self.store is not None:
+            self.store.add_memory(Tier.DURABLE.value, item.text,
+                                  item.provenance, item.kind, item.ts)
         return item
 
     # --------------------------------------------------------------- reading
