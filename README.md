@@ -289,6 +289,19 @@ need the optional extra (`pip install "praxis-agent[docs]"`). Point at a real
 embedding model by setting `agents.defaults.embedModel` (e.g.
 `ollama/nomic-embed-text`) and `PRAXIS_EMBED=real`.
 
+### Retrieval performance
+
+Retrieval uses a **cached, pre-normalized vector index** (`vecsim.py`) rebuilt
+only when a namespace changes (tracked by a vector-version counter). With the
+optional `[fast]` extra (`pip install "praxis-agent[fast]"`, adds numpy) scoring
+is a single matrix–vector product built directly from raw embedding bytes —
+roughly **two orders of magnitude faster** than the previous per-query
+pure-Python cosine loop (≈945 ms → ≈4 ms per query over 4k chunks in the bundled
+`benchmarks/bench_retrieve.py`). Without numpy it falls back to a pure-Python
+index so the core stays dependency-free. The SQLite store runs in **WAL mode**
+with a busy-timeout so a heartbeat agent can read while `praxis approve` writes
+from another process.
+
 ## Microsoft 365 (via the broker)
 
 Praxis acts on your calendar/mail/files **only through the OpenClaw M365 Access
