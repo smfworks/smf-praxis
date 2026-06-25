@@ -108,6 +108,7 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Grounding (cite-or-abstain, verify, tool-constrained) | `grounding.py` |
 | Skills library + governed `/learn` | `skills.py` |
 | Compliance attestation (cycle/decision evidence chain) | `compliance.py`, `persistence.py` |
+| Persistent task queue (long-running/resumable work) | `task_manager.py`, `persistence.py` |
 
 ---
 

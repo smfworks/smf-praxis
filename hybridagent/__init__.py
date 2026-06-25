@@ -23,6 +23,7 @@ from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
                         VerificationResult, generate_json)
 from .skills import Skill, SkillLibrary, distill_skill
 from .compliance import ComplianceReporter, ComplianceReport, ComplianceFinding
+from .task_manager import TaskManager, TaskState
 from . import ingest
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "VerificationResult", "generate_json",
     "Skill", "SkillLibrary", "distill_skill",
     "ComplianceReporter", "ComplianceReport", "ComplianceFinding",
+    "TaskManager", "TaskState",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

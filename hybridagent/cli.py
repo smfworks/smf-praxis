@@ -118,6 +118,47 @@ def cmd_compliance(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_task_create(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .task_manager import TaskManager
+    task = TaskManager(Store.open()).create(args.goal, max_attempts=args.max_attempts)
+    print(f"created {task.task_id} [{task.status}] {task.goal}")
+    return 0
+
+
+def cmd_tasks(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .task_manager import TaskManager
+    tasks = TaskManager(Store.open()).list(status=args.status, limit=args.limit)
+    if not tasks:
+        print("no tasks")
+        return 0
+    for t in tasks:
+        extra = f" cycle={t.cycle_id}" if t.cycle_id else ""
+        print(f"{t.task_id} [{t.status}] attempts={t.attempts}/{t.max_attempts}{extra} :: {t.goal}")
+    return 0
+
+
+def cmd_task_run(args: argparse.Namespace) -> int:
+    from .task_manager import TaskManager
+    agent = _make_agent(args)
+    task = TaskManager(agent.store).run_once(args.task_id, agent)
+    print(f"{task.task_id} [{task.status}] attempts={task.attempts}/{task.max_attempts}")
+    if task.cycle_id:
+        print(f"cycle: {task.cycle_id}")
+    if task.error:
+        print(f"error: {task.error}")
+    return 0
+
+
+def cmd_task_cancel(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .task_manager import TaskManager
+    ok = TaskManager(Store.open()).cancel(args.task_id)
+    print("cancelled" if ok else "not cancelled")
+    return 0
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     from .persistence import Store
     from .rag import Rag
@@ -303,6 +344,25 @@ def build_parser() -> argparse.ArgumentParser:
     pc = sub.add_parser("compliance", help="render a compliance attestation report")
     pc.set_defaults(func=cmd_compliance)
 
+    ptc = sub.add_parser("task-create", help="create a persistent resumable task")
+    ptc.add_argument("goal", help="goal text")
+    ptc.add_argument("--max-attempts", type=int, default=3)
+    ptc.set_defaults(func=cmd_task_create)
+
+    pts = sub.add_parser("tasks", help="list persistent tasks")
+    pts.add_argument("--status", default=None, help="filter by status")
+    pts.add_argument("--limit", type=int, default=50)
+    pts.set_defaults(func=cmd_tasks)
+
+    ptr = sub.add_parser("task-run", help="run one persistent task attempt")
+    ptr.add_argument("task_id")
+    ptr.add_argument("--m365", action="store_true", help="use the M365 broker registry")
+    ptr.set_defaults(func=cmd_task_run)
+
+    ptx = sub.add_parser("task-cancel", help="cancel a persistent task")
+    ptx.add_argument("task_id")
+    ptx.set_defaults(func=cmd_task_cancel)
+
     pin = sub.add_parser("ingest", help="ingest documents into the RAG knowledge base")
     pin.add_argument("paths", nargs="+",
                      help="file paths (pdf/docx/pptx/xlsx/eml/msg/html/txt/md/csv/json)")
@@ -366,7 +426,8 @@ def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
                    "ingest", "recall", "describe", "route", "ask",
-                   "learn", "skills", "skill", "compliance"):
+                   "learn", "skills", "skill", "compliance",
+                   "task-create", "tasks", "task-run", "task-cancel"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

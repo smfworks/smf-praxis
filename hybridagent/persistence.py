@@ -90,6 +90,21 @@ CREATE TABLE IF NOT EXISTS compliance_events (
 );
 CREATE INDEX IF NOT EXISTS ix_compliance_cycle ON compliance_events(cycle_id);
 CREATE INDEX IF NOT EXISTS ix_compliance_type ON compliance_events(event_type);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    task_id TEXT PRIMARY KEY,
+    goal TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL,
+    next_retry_ts REAL,
+    cycle_id TEXT NOT NULL DEFAULT '',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_tasks_status ON tasks(status);
 """
 
 
@@ -371,3 +386,67 @@ class Store:
                 "DELETE FROM vectors WHERE ns=? AND doc_id=?", (ns, doc_id))
             self._conn.commit()
             return cur.rowcount
+
+    # --------------------------------------------------------------- tasks
+    def add_task(self, task_id: str, goal: str, status: str = "pending",
+                 max_attempts: int = 3, next_retry_ts: float | None = None) -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO tasks(task_id,goal,status,attempts,max_attempts,"
+                "created_ts,updated_ts,next_retry_ts) VALUES (?,?,?,?,?,?,?,?)",
+                (task_id, goal, status, 0, max_attempts, now, now, next_retry_ts),
+            )
+            self._conn.commit()
+
+    def get_task(self, task_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT task_id,goal,status,attempts,max_attempts,created_ts,"
+                "updated_ts,next_retry_ts,cycle_id,result_json,error "
+                "FROM tasks WHERE task_id=?", (task_id,),
+            ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["result"] = json.loads(d.pop("result_json") or "{}")
+        return d
+
+    def list_tasks(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        with self._lock:
+            if status:
+                rows = self._conn.execute(
+                    "SELECT task_id,goal,status,attempts,max_attempts,created_ts,"
+                    "updated_ts,next_retry_ts,cycle_id,result_json,error "
+                    "FROM tasks WHERE status=? ORDER BY created_ts DESC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT task_id,goal,status,attempts,max_attempts,created_ts,"
+                    "updated_ts,next_retry_ts,cycle_id,result_json,error "
+                    "FROM tasks ORDER BY created_ts DESC LIMIT ?", (limit,),
+                ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d["result"] = json.loads(d.pop("result_json") or "{}")
+            out.append(d)
+        return out
+
+    def update_task(self, task_id: str, **fields) -> bool:
+        allowed = {
+            "status", "attempts", "next_retry_ts", "cycle_id", "result_json",
+            "error", "updated_ts"
+        }
+        fields.setdefault("updated_ts", time.time())
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        cols = ", ".join(f"{k}=?" for k in updates)
+        vals = list(updates.values()) + [task_id]
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE tasks SET {cols} WHERE task_id=?", vals)
+            self._conn.commit()
+            return cur.rowcount == 1
