@@ -18,6 +18,7 @@ memory layers can keep treating retrieved content as *data, never instruction*.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -93,18 +94,22 @@ def _try_markitdown(path: Path) -> str | None:
 
 # --------------------------------------------------------------------- parsers
 def _read_text(path: Path) -> str:
-    if path.suffix.lower() in (".csv", ".tsv"):
-        delim = "\t" if path.suffix.lower() == ".tsv" else ","
-        with path.open("r", encoding="utf-8", errors="replace", newline="") as fh:
-            rows = list(csv.reader(fh, delimiter=delim))
+    suffix = path.suffix.lower()
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    if suffix in (".csv", ".tsv"):
+        delim = "\t" if suffix == ".tsv" else ","
+        # csv.reader raises "_csv.Error: line contains NUL" on embedded NUL bytes
+        # on Python < 3.11 (3.11+ tolerates them). Strip NULs first so a poisoned
+        # file degrades gracefully and parses identically on every supported
+        # Python version instead of crashing the whole ingestion run.
+        rows = list(csv.reader(io.StringIO(raw.replace("\x00", "")), delimiter=delim))
         return "\n".join(", ".join(r) for r in rows)
-    if path.suffix.lower() == ".json":
+    if suffix == ".json":
         try:
-            return json.dumps(json.loads(path.read_text(encoding="utf-8",
-                                                         errors="replace")), indent=2)
+            return json.dumps(json.loads(raw), indent=2)
         except json.JSONDecodeError:
             pass
-    return path.read_text(encoding="utf-8", errors="replace")
+    return raw
 
 
 def _parse_eml(path: Path) -> str:
