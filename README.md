@@ -125,8 +125,26 @@ praxis --help
 | `praxis approve <id>` | approve + execute a held action by id |
 | `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
 | `praxis recall "<query>"` | semantic search over the ingested knowledge base |
+| `praxis describe <path>` | extract text from a document or caption/transcribe a media file |
+| `praxis route` | show contextual model routing per role + sensitivity |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Model routing & multimodal
+
+Praxis routes each model call by **role** (planner / summarizer / vision /
+transcribe / general) and **data sensitivity**. Configure per-role models under
+`agents.roles` in `praxis.json`; anything classified sensitive (secrets, SSNs,
+card numbers, "confidential" markers) is pinned to a **local** model or the
+offline mock and is **never sent to a cloud provider**. On error the client falls
+back to the next candidate. Inspect the matrix with `praxis route`.
+
+Images, audio, and video are first-class inputs (`praxis describe <file>` or
+`praxis ingest <file>`). Offline, Praxis emits honest *metadata* (size, duration,
+dimensions) and never fabricates a description or transcript; set `PRAXIS_MM=real`
+with a vision model (`agents.roles.vision`) and speech-to-text (local Whisper or
+`agents.roles.transcribe`) to caption/transcribe for real. Extracted text flows
+into the same RAG + perception pipeline, injection-screened like any document.
 
 ## Knowledge base (RAG)
 

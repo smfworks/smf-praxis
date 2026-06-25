@@ -127,8 +127,8 @@ single-colleague foundation.
 
 ### Build phases (post-review roadmap)
 1. **Foundations** — SQLite persistence, resilience (retry/backoff/logging), TTLs. ✅
-2. **RAG + ingestion** — embeddings, vector store, PDF/Office/email parsers.
-3. **Model router + multimodal** — role/sensitivity routing; image/audio/video intake.
+2. **RAG + ingestion** — embeddings, vector store, PDF/Office/email parsers. ✅
+3. **Model router + multimodal** — role/sensitivity routing; image/audio/video intake. ✅
 4. **Grounding** — cite-or-abstain, structured outputs, verification pass.
 5. **Skills + `/learn`** — persistent skill store, governed learn command, retrieval.
 

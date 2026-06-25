@@ -25,6 +25,12 @@ docs = [
 ]
 # Alternative single-dependency converter that handles most rich formats.
 markitdown = ["markitdown>=0.0.1a2"]
+# Optional multimodal intake (images / audio / video).
+multimodal = [
+    "Pillow>=10.0",
+    "openai-whisper>=20231117",
+    "opencv-python>=4.8",
+]
 
 [project.scripts]
 praxis = "hybridagent.cli:main"

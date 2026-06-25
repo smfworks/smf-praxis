@@ -17,6 +17,8 @@ from .llm import LLMClient
 from .persistence import Store
 from .embeddings import EmbeddingClient
 from .rag import Rag, RetrievedChunk, chunk_text
+from .router import ModelRouter, classify_sensitivity
+from .multimodal import MediaClient
 from . import ingest
 
 __all__ = [
@@ -31,6 +33,8 @@ __all__ = [
     "Store",
     "EmbeddingClient",
     "Rag", "RetrievedChunk", "chunk_text", "ingest",
+    "ModelRouter", "classify_sensitivity",
+    "MediaClient",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
