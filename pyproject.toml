@@ -14,6 +14,23 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# Optional document parsers (RAG ingestion). Core stays dependency-free; install
+# this extra to ingest PDF / Word / PowerPoint / Excel / Outlook .msg files.
+docs = [
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "python-pptx>=0.6",
+    "openpyxl>=3.1",
+    "extract-msg>=0.48",
+]
+# Alternative single-dependency converter that handles most rich formats.
+markitdown = ["markitdown>=0.0.1a2"]
+# Optional multimodal intake (images / audio / video).
+multimodal = [
+    "Pillow>=10.0",
+    "openai-whisper>=20231117",
+    "opencv-python>=4.8",
+]
 
 [project.scripts]
 praxis = "hybridagent.cli:main"

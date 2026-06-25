@@ -18,6 +18,7 @@ class Tool:
     risk: RiskClass
     description: str
     run: Callable[..., str]
+    parameters: dict | None = None  # optional JSON-schema arg spec (function-calling)
 
 
 class ToolRegistry:

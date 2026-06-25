@@ -43,6 +43,8 @@ MENU = [
     ("Run a goal (perceive -> govern -> act -> reflect)", "handle"),
     ("Heartbeat (proactive scan tick)", "heartbeat"),
     ("Review pending approvals", "approvals"),
+    ("Learn a skill (/learn)", "learn"),
+    ("View skills", "skills"),
     ("View memory (tiers, skills, durable facts)", "memory"),
     ("View audit trail", "audit"),
     ("Configure model provider (onboard)", "onboard"),
@@ -137,10 +139,40 @@ def _do_audit(agent: PraxisAgent) -> None:
     _pause()
 
 
+def _do_learn(agent: PraxisAgent) -> None:
+    goal = input("\nGoal to learn a skill from: ").strip()
+    if not goal:
+        return
+    if agent.skills is None:
+        print(_yellow("no skill store available"))
+        _pause()
+        return
+    draft = agent.learn_skill(goal)
+    print(_bold("\nDrafted skill (approval required to save):"))
+    print(draft.to_markdown())
+    if input(_yellow("Save this skill? [y/N]: ")).strip().lower() == "y":
+        print(_green(f"saved -> {agent.skills.add(draft)}"))
+    else:
+        print(_dim("not saved (skills require approval)."))
+    _pause()
+
+
+def _do_skills(agent: PraxisAgent) -> None:
+    skills = agent.skills.list() if agent.skills else []
+    if not skills:
+        print(_dim("\nno skills saved yet."))
+    else:
+        print(_bold(f"\nSkills ({len(skills)}):"))
+        for sk in skills:
+            print(f"  - {_cyan(sk.name)}: {sk.trigger}")
+    _pause()
+
+
 def run() -> int:
-    agent = PraxisAgent()
+    agent = PraxisAgent.persistent()
     actions = {
         "handle": _do_handle, "heartbeat": _do_heartbeat, "approvals": _do_approvals,
+        "learn": _do_learn, "skills": _do_skills,
         "memory": _do_memory, "audit": _do_audit,
     }
     while True:

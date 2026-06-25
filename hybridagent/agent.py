@@ -45,18 +45,39 @@ class PraxisAgent:
         registry: ToolRegistry | None = None,
         llm: LLMClient | None = None,
         memory: Memory | None = None,
+        store=None,
     ) -> None:
+        self.store = store
         self.registry = registry or default_registry()
         self.llm = llm or LLMClient()
-        self.memory = memory or Memory()
+        self.memory = memory or Memory(store=store)
         # Least privilege: allow exactly the registered tools; consequential
         # ones still route through approval regardless of being allowlisted.
         self.broker = GovernanceBroker(
-            GovernancePolicy(allowed_tools=set(self.registry.names()))
+            GovernancePolicy(allowed_tools=set(self.registry.names())),
+            store=store,
         )
-        self.perception = Perception(self.registry, self.broker, self.memory)
+        # RAG is available when there's a store to back the vector table.
+        self.rag = None
+        self.skills = None
+        if store is not None:
+            from .rag import Rag
+            from .embeddings import EmbeddingClient
+            from .skills import SkillLibrary
+            embedder = EmbeddingClient()
+            self.rag = Rag(store, embedder)
+            self.skills = SkillLibrary(store=store, embedder=embedder)
+        self.perception = Perception(self.registry, self.broker, self.memory,
+                                     rag=self.rag, skills=self.skills)
         self.planner = Planner(self.registry, self.llm)
         self.reflector = Reflector(self.memory, self.llm)
+
+    @classmethod
+    def persistent(cls, registry: ToolRegistry | None = None,
+                   llm: LLMClient | None = None) -> "PraxisAgent":
+        """Build an agent backed by the on-disk store (~/.praxis/praxis.db)."""
+        from .persistence import Store
+        return cls(registry=registry, llm=llm, store=Store.open())
 
     # ----------------------------------------------------- durable seeding
     def learn(self, fact: str, kind: str = "preference", provenance: str = "user") -> None:
@@ -72,9 +93,13 @@ class PraxisAgent:
         )
         report.injection_flags = [s.source for s in signals if s.flagged_injection]
         # Reuse what perception already read so a read tool isn't executed twice
-        # per cycle (which, against the M365 broker, would double real Graph calls).
+        # per cycle (which, against the M365 broker, would double real Graph
+        # calls). Only cache signals that came from an actual registered tool.
+        # NOTE: keyed on tool name only — valid because perception and the
+        # heuristic Planner both read at goal granularity. Before wiring an
+        # LLM planner that emits arbitrary read args, key this on (tool, args).
         read_cache = {s.source: s.content for s in signals
-                      if not s.source.startswith("memory:")}
+                      if self.registry.get(s.source) is not None}
 
         # 2. PLAN.
         plan: Plan = self.planner.plan(goal)
@@ -138,3 +163,28 @@ class PraxisAgent:
     def heartbeat(self, watch_goal: str = "scan for urgent follow-ups") -> CycleReport:
         """OpenClaw-style always-on tick: proactively run a watch goal."""
         return self.handle(watch_goal)
+
+    # ------------------------------------------------- grounded Q&A (no hallucination)
+    def ask(self, question: str, k: int = 5):
+        """Answer a question grounded in retrieved sources; abstain if unsupported."""
+        from .grounding import GroundedResponder
+        from .rag import RetrievedChunk
+        sources: list = []
+        if self.rag is not None:
+            sources.extend(self.rag.retrieve(question, k=k))
+        for item in self.memory.recall(question, k=3):
+            sources.append(RetrievedChunk(
+                text=item.text, source=f"memory:{item.kind}", score=1.0,
+                kind="memory", provenance=item.provenance))
+        return GroundedResponder(self.llm).answer(question, sources)
+
+    # ------------------------------------------------------- skill distillation
+    def learn_skill(self, goal: str, name: str | None = None):
+        """Distill a reusable skill draft from the goal's plan (no side effects).
+
+        Returns a Skill draft; persisting it is a governed step the caller must
+        approve (see `praxis learn`)."""
+        from .skills import distill_skill
+        plan = self.planner.plan(goal)
+        trace = [f"{s.intent} -> {s.tool}" for s in plan.steps]
+        return distill_skill(self.llm, goal, trace, name=name)
