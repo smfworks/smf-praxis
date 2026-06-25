@@ -22,6 +22,17 @@ from .multimodal import MediaClient
 from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
                         VerificationResult, generate_json)
 from .skills import Skill, SkillLibrary, distill_skill
+from .compliance import ComplianceReporter, ComplianceReport, ComplianceFinding
+from .task_manager import TaskManager, TaskState
+from .wiki import KBSource, KBSourceManager
+from .skill_evaluator import SkillEvaluator
+from .orchestrator import (AgentPool, AgentSpec, AgentSpecializer,
+                           Orchestrator, PredictiveRouter, SubagentRun)
+from .validation import ValidationError, validate, validate_tool_args
+from .contradiction import Contradiction, detect as detect_contradictions
+from .scratchpad import Scratchpad, ScratchpadEntry
+from .metrics import HealthMonitor, HealthSnapshot
+from .wiki_safe import UnsafeSourceError, fetch_url, validate_uri
 from . import ingest
 
 __all__ = [
@@ -41,6 +52,17 @@ __all__ = [
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
     "VerificationResult", "generate_json",
     "Skill", "SkillLibrary", "distill_skill",
+    "ComplianceReporter", "ComplianceReport", "ComplianceFinding",
+    "TaskManager", "TaskState",
+    "KBSource", "KBSourceManager",
+    "SkillEvaluator",
+    "AgentPool", "AgentSpec", "AgentSpecializer", "Orchestrator",
+    "PredictiveRouter", "SubagentRun",
+    "ValidationError", "validate", "validate_tool_args",
+    "Contradiction", "detect_contradictions",
+    "Scratchpad", "ScratchpadEntry",
+    "HealthMonitor", "HealthSnapshot",
+    "UnsafeSourceError", "fetch_url", "validate_uri",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.13.0"

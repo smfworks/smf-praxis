@@ -122,7 +122,15 @@ praxis --help
 | `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
 | `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory (persisted to `~/.praxis/praxis.db`) |
 | `praxis approvals` | list held consequential actions (persisted across runs) |
-| `praxis approve <id>` | approve + execute a held action by id |
+| `praxis approve <id> --approved-by <name> --notes "<why>"` | approve + execute a held action by id, recording operator/justification |
+| `praxis compliance` | render an audit attestation over cycles, approvals, and consequential actions |
+| `praxis task-create "<goal>"` | create a persistent resumable task |
+| `praxis tasks` | list persistent tasks and statuses |
+| `praxis task-run <id>` | run one task attempt (records cycle/result) |
+| `praxis task-cancel <id>` | cancel a queued/runnable task |
+| `praxis wiki-add <path-or-url>` | register a KB/wiki source for periodic revalidation |
+| `praxis wiki-sources` | list registered KB/wiki sources and freshness status |
+| `praxis wiki-refresh [source-id]` | refresh one source or all due sources into RAG |
 | `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
 | `praxis recall "<query>"` | semantic search over the ingested knowledge base |
 | `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
@@ -131,8 +139,71 @@ praxis --help
 | `praxis learn "<goal>"` | distill a reusable skill (`/learn`); saved only on approval (`--yes`) |
 | `praxis skills` | list saved skills |
 | `praxis skill <name>` | show a saved skill |
+| `praxis skill-record <name> "<goal>" {success,partial,failure}` | record a skill outcome |
+| `praxis skill-evaluate` | score skills and quarantine low-quality ones |
+| `praxis subagent-run "<goal>" [--role drafter]` | route a goal to a scoped subagent |
+| `praxis subagents` | list scoped subagents and recent runs |
+| `praxis health` | runtime health snapshot (cycles, tasks, KB, agents) |
+| `praxis memory-purge [--decay-days N] [--forget-provenance prefix]` | enforce retention/decay/forget policies |
+| `praxis scratchpad-read <key> [--ns NS]` | read inter-subagent shared notes |
+| `praxis scratchpad-write <key> <value> --written-by <agent>` | publish a scoped note to other subagents |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Phase 11–13: regulated platform hardening
+
+Subsequent commits beyond the original 5 phases added:
+
+- **Security & liveness (Phase 11):** SSRF-safe wiki ingestion (`http`/`https` only, blocks loopback/link-local/private hosts unless `PRAXIS_KB_ALLOW_PRIVATE=1`), automatic skill outcome recording after every cycle, automatic wiki refresh on heartbeat and before `ask()`, infinite-due bug fixed, task idempotency (no duplicate consequential approvals on retry), compliance attestation now includes task/subagent/KB errors and treats benign dispositions (expired, rejected, cancelled) as informational, predictive router refuses keyword escalation when the goal carries injection-flagged provenance, retry backoff has jitter, RAG keys docs by source_id (not human title).
+- **Regulated controls (Phase 12):** dual-approval (four-eyes) for DESTRUCTIVE risk class — two distinct approvers required, same approver can't double-sign; JSON-schema validation of tool arguments before execution (`SCHEMA-DENIED` audit entry on mismatch); subagent recursion cap (`Orchestrator.MAX_DEPTH = 3`) with `subagent_recursion_blocked` compliance event; agent liveness sweep marks stale agents; memory retention via `purge_expired()`, `decay_episodic()`, and `forget_by_provenance()` for GDPR/HIPAA-style right-to-be-forgotten; broader prompt-injection regex set covering paraphrases, role-swaps, jailbreak modes, and prompt-extraction.
+- **Integration polish (Phase 13):** cross-source contradiction detection on `ask()` (polarity flips and numeric disagreement, surfaced in the answer and logged to compliance events); inter-subagent scratchpad (scoped, attributed, TTL-bounded shared context); runtime `health` snapshot; `SkillEvaluator` warns when no store is wired so misconfiguration is detectable.
+
+## Compliance spine
+
+Every persistent run now receives a `cycle_id`; every governed decision receives a
+`decision_id`. Praxis writes a durable compliance event chain to
+`~/.praxis/praxis.db` so auditors can trace:
+
+```
+signal evidence -> plan step -> broker decision -> held approval -> execution
+```
+
+Held approvals carry rationale and source evidence bundles, and approvals can
+record an operator and justification (`--approved-by`, `--notes`). `praxis
+compliance` renders an attestation proving recorded SEND/DESTRUCTIVE actions were
+approved, pending, or denied before execution.
+
+## Persistent tasks
+
+Long-running work can be placed into a durable task queue. Tasks track status,
+attempt count, retry timing, last `cycle_id`, result metadata, and errors in the
+SQLite store, so work can be resumed after process restarts or handed to a future
+background scheduler.
+
+```bash
+praxis task-create "Review recent mail and save a brief"
+praxis tasks
+praxis task-run task-abc123def0
+praxis task-cancel task-abc123def0
+```
+
+## Managed wiki / KB sources
+
+Praxis can register durable knowledge sources (files now; URL/wiki-like sources
+via the same registry) with refresh intervals, content hashes, status, and
+change-detection. `wiki-refresh` re-ingests only changed sources and keeps the RAG
+knowledge base fresh without re-embedding unchanged pages.
+
+```bash
+praxis wiki-add ./docs/clinical-policy.md --refresh-hours 24
+praxis wiki-sources
+praxis wiki-refresh
+praxis recall "clinical policy evidence requirements"
+```
+
+Durable memory now carries salience, access counts, freshness/TTL metadata, and
+recall updates access statistics so future ranking can favor high-value, recently
+used facts.
 
 ## Skills library (`/learn`)
 
@@ -149,7 +220,28 @@ agent's capability compounds over time.
 praxis learn "Prepare and send a customer follow-up after a sync" --yes
 praxis skills
 praxis skill prepare-and-send-a-customer-follow-up
+praxis skill-record prepare-and-send-a-customer-follow-up "follow-up goal" success
+praxis skill-evaluate --min-uses 3 --threshold 0.4
 ```
+
+Skill outcomes feed quality scores (`success_count`, `failure_count`,
+`quality_score`, `last_used_ts`). Low-quality skills can be quarantined so they no
+longer influence perception until reviewed or unquarantined.
+
+## Scoped subagents
+
+Praxis can spawn scoped subagents over the same governed store. Subagents use
+role-specific tool allowlists (researcher, drafter, compliance, predictor) and
+all decisions/approvals still flow through the broker and compliance spine.
+
+```bash
+praxis subagent-run "draft a customer follow-up email" --role drafter
+praxis subagents
+praxis approvals
+```
+
+The current orchestrator is synchronous and deterministic; the persistent run
+records are ready for a future concurrent worker pool.
 
 ## Grounded, non-hallucinating answers
 

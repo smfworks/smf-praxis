@@ -107,6 +107,14 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Multimodal intake (image/audio/video) | `multimodal.py` |
 | Grounding (cite-or-abstain, verify, tool-constrained) | `grounding.py` |
 | Skills library + governed `/learn` | `skills.py` |
+| Compliance attestation (cycle/decision evidence chain) | `compliance.py`, `persistence.py` |
+| Persistent task queue (long-running/resumable work) | `task_manager.py`, `persistence.py` |
+| Managed wiki / KB source revalidation | `wiki.py`, `rag.py`, `persistence.py` |
+| Skill outcome evaluation / quarantine | `skill_evaluator.py`, `skills.py` |
+| Scoped subagent orchestration / predictive routing | `orchestrator.py`, `persistence.py` |
+| Safe wiki ingestion (scheme/IP allowlist, size cap) | `wiki_safe.py` |
+| Dual approval, JSON-schema validation, retention/decay | `broker.py`, `validation.py`, `memory.py` |
+| Contradiction detection, scratchpad, health metrics | `contradiction.py`, `scratchpad.py`, `metrics.py` |
 
 ---
 
@@ -137,4 +145,3 @@ single-colleague foundation.
 3. **Model router + multimodal** — role/sensitivity routing; image/audio/video intake. ✅
 4. **Grounding** — cite-or-abstain, structured outputs, verification pass. ✅
 5. **Skills + `/learn`** — persistent skill store, governed learn command, retrieval. ✅
-

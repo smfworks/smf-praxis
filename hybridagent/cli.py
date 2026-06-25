@@ -95,12 +95,118 @@ def cmd_approvals(args: argparse.Namespace) -> int:
     print(f"{len(pending)} pending approval(s):")
     for aid, p in pending.items():
         print(f"   {aid}  [{p.tool}] {p.preview}")
+        if p.rationale:
+            print(f"      rationale: {p.rationale}")
+        if p.evidence:
+            sources = ", ".join(e.get("source", "?") for e in p.evidence[:5])
+            print(f"      evidence: {sources}")
     return 0
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
     agent = _make_agent(args)
-    print(agent.approve(args.approval_id))
+    print(agent.approve(args.approval_id, approved_by=args.approved_by,
+                        approval_notes=args.notes or ""))
+    return 0
+
+
+def cmd_compliance(_args: argparse.Namespace) -> int:
+    from .compliance import ComplianceReporter
+    from .persistence import Store
+    reporter = ComplianceReporter(Store.open())
+    print(ComplianceReporter.render(reporter.build()))
+    return 0
+
+
+def cmd_task_create(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .task_manager import TaskManager
+    task = TaskManager(Store.open()).create(args.goal, max_attempts=args.max_attempts)
+    print(f"created {task.task_id} [{task.status}] {task.goal}")
+    return 0
+
+
+def cmd_tasks(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .task_manager import TaskManager
+    tasks = TaskManager(Store.open()).list(status=args.status, limit=args.limit)
+    if not tasks:
+        print("no tasks")
+        return 0
+    for t in tasks:
+        extra = f" cycle={t.cycle_id}" if t.cycle_id else ""
+        print(f"{t.task_id} [{t.status}] attempts={t.attempts}/{t.max_attempts}{extra} :: {t.goal}")
+    return 0
+
+
+def cmd_task_run(args: argparse.Namespace) -> int:
+    from .task_manager import TaskManager
+    agent = _make_agent(args)
+    task = TaskManager(agent.store).run_once(args.task_id, agent)
+    print(f"{task.task_id} [{task.status}] attempts={task.attempts}/{task.max_attempts}")
+    if task.cycle_id:
+        print(f"cycle: {task.cycle_id}")
+    if task.error:
+        print(f"error: {task.error}")
+    return 0
+
+
+def cmd_task_cancel(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .task_manager import TaskManager
+    ok = TaskManager(Store.open()).cancel(args.task_id)
+    print("cancelled" if ok else "not cancelled")
+    return 0
+
+
+def cmd_wiki_add(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .wiki import KBSourceManager
+    from .wiki_safe import UnsafeSourceError
+    interval = KBSourceManager.seconds_from_hours(args.refresh_hours)
+    try:
+        src = KBSourceManager(Store.open()).add(
+            args.uri, ns=args.ns, title=args.title or "",
+            refresh_interval_seconds=interval)
+    except UnsafeSourceError as exc:
+        print(f"refused: {exc}")
+        return 1
+    print(f"registered {src.source_id} [{src.source_type}] ns={src.ns} {src.uri}")
+    return 0
+
+
+def cmd_wiki_sources(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .wiki import KBSourceManager
+    sources = KBSourceManager(Store.open()).list(enabled=None if args.all else True)
+    if not sources:
+        print("no KB/wiki sources")
+        return 0
+    for src in sources:
+        last = f" last={int(src.last_ingested_ts)}" if src.last_ingested_ts else ""
+        print(f"{src.source_id} [{src.status}] ns={src.ns}{last} :: {src.uri}")
+        if src.error:
+            print(f"   error: {src.error}")
+    return 0
+
+
+def cmd_wiki_refresh(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .rag import Rag
+    from .wiki import KBSourceManager
+    store = Store.open()
+    mgr = KBSourceManager(store)
+    if args.source_id:
+        refreshed = [mgr.refresh(args.source_id, rag=Rag(store))]
+    else:
+        refreshed = mgr.refresh_due(rag=Rag(store))
+    if not refreshed:
+        print("no sources due for refresh")
+        return 0
+    for src in refreshed:
+        print(f"{src.source_id} [{src.status}] {src.uri}")
+        if src.error:
+            print(f"   error: {src.error}")
     return 0
 
 
@@ -176,6 +282,55 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print("\n⚠ unverified claims (not supported by sources):")
         for claim in ans.verification.unsupported_claims:
             print(f"   - {claim}")
+    if getattr(ans, "contradictions", None):
+        print("\n⚠ contradictions detected across retrieved sources:")
+        for c in ans.contradictions:
+            print(f"   [{c.score:.2f}] {c.a_source} <-> {c.b_source}: "
+                  f"{c.explanation}")
+    return 0
+
+
+def cmd_health(_args: argparse.Namespace) -> int:
+    from .metrics import HealthMonitor
+    from .persistence import Store
+    snap = HealthMonitor(Store.open()).snapshot()
+    print(HealthMonitor.render(snap))
+    return 0
+
+
+def cmd_memory_purge(args: argparse.Namespace) -> int:
+    from .memory import Memory
+    from .persistence import Store
+    mem = Memory(store=Store.open())
+    removed = mem.purge_expired()
+    if args.decay_days is not None:
+        removed += mem.decay_episodic(max_age_days=args.decay_days,
+                                      salience_floor=args.salience_floor)
+    if args.forget_provenance:
+        removed += mem.forget_by_provenance(args.forget_provenance)
+    print(f"removed {removed} memory item(s)")
+    return 0
+
+
+def cmd_scratchpad_read(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .scratchpad import Scratchpad
+    entries = Scratchpad(Store.open()).read(args.key, ns=args.ns)
+    if not entries:
+        print(f"no scratchpad entries for {args.ns}/{args.key}")
+        return 0
+    for e in entries:
+        print(f"[{e.written_by}] {e.value}")
+    return 0
+
+
+def cmd_scratchpad_write(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .scratchpad import Scratchpad
+    Scratchpad(Store.open()).write(args.key, args.value,
+                                   written_by=args.written_by, ns=args.ns,
+                                   ttl_seconds=args.ttl)
+    print("written")
     return 0
 
 
@@ -218,6 +373,62 @@ def cmd_skill(args: argparse.Namespace) -> int:
         print(f"no skill named '{args.name}'")
         return 1
     print(sk.to_markdown())
+    return 0
+
+
+def cmd_skill_record(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    from .skill_evaluator import SkillEvaluator
+    meta = SkillEvaluator(agent.skills).record(
+        args.name, args.goal, args.outcome, cycle_id=args.cycle_id or "",
+        notes=args.notes or "")
+    print(SkillEvaluator(agent.skills).impact_report(args.name))
+    return 0
+
+
+def cmd_skill_evaluate(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    from .skill_evaluator import SkillEvaluator
+    ev = SkillEvaluator(agent.skills)
+    quarantined = ev.quarantine_low_quality(
+        min_uses=args.min_uses, threshold=args.threshold)
+    if quarantined:
+        print("quarantined: " + ", ".join(quarantined))
+    metas = agent.skills.rag.store.list_skill_metadata() if agent.skills and agent.skills.rag else []
+    if not metas:
+        print("no skill outcome data")
+        return 0
+    for m in metas:
+        print(ev.impact_report(m["skill_name"]))
+    return 0
+
+
+def cmd_subagent_run(args: argparse.Namespace) -> int:
+    from .orchestrator import Orchestrator
+    from .persistence import Store
+    run = Orchestrator(Store.open()).run(args.goal, role=args.role)
+    print(f"{run.run_id} [{run.status}] role={run.role} agent={run.agent_id}")
+    if run.cycle_id:
+        print(f"cycle: {run.cycle_id}")
+    return 0
+
+
+def cmd_subagents(args: argparse.Namespace) -> int:
+    from .orchestrator import AgentPool, Orchestrator
+    from .persistence import Store
+    store = Store.open()
+    agents = AgentPool(store).list()
+    if not agents:
+        print("no subagents registered yet")
+    else:
+        print("subagents:")
+        for a in agents:
+            print(f"  {a.agent_id} [{a.role}] tools={','.join(a.tools)}")
+    runs = Orchestrator(store).list_runs(limit=args.limit)
+    if runs:
+        print("runs:")
+        for r in runs:
+            print(f"  {r['run_id']} [{r['status']}] role={r['role']} :: {r['goal']}")
     return 0
 
 
@@ -279,9 +490,51 @@ def build_parser() -> argparse.ArgumentParser:
 
     pav = sub.add_parser("approve", help="approve + execute a held action by id")
     pav.add_argument("approval_id", help="the approval id (appr-xxxxxxxx)")
+    pav.add_argument("--approved-by", default="user",
+                     help="operator identity recorded in the audit trail")
+    pav.add_argument("--notes", default="", help="approval notes/justification")
     pav.add_argument("--m365", action="store_true",
                      help="use the M365 broker registry")
     pav.set_defaults(func=cmd_approve)
+
+    pc = sub.add_parser("compliance", help="render a compliance attestation report")
+    pc.set_defaults(func=cmd_compliance)
+
+    ptc = sub.add_parser("task-create", help="create a persistent resumable task")
+    ptc.add_argument("goal", help="goal text")
+    ptc.add_argument("--max-attempts", type=int, default=3)
+    ptc.set_defaults(func=cmd_task_create)
+
+    pts = sub.add_parser("tasks", help="list persistent tasks")
+    pts.add_argument("--status", default=None, help="filter by status")
+    pts.add_argument("--limit", type=int, default=50)
+    pts.set_defaults(func=cmd_tasks)
+
+    ptr = sub.add_parser("task-run", help="run one persistent task attempt")
+    ptr.add_argument("task_id")
+    ptr.add_argument("--m365", action="store_true", help="use the M365 broker registry")
+    ptr.set_defaults(func=cmd_task_run)
+
+    ptx = sub.add_parser("task-cancel", help="cancel a persistent task")
+    ptx.add_argument("task_id")
+    ptx.set_defaults(func=cmd_task_cancel)
+
+    pwa = sub.add_parser("wiki-add", help="register a KB/wiki source for revalidation")
+    pwa.add_argument("uri", help="file path or URL")
+    pwa.add_argument("--ns", default="kb", help="RAG namespace")
+    pwa.add_argument("--title", default="", help="display title")
+    pwa.add_argument("--refresh-hours", type=float, default=None,
+                     help="refresh interval in hours")
+    pwa.set_defaults(func=cmd_wiki_add)
+
+    pws = sub.add_parser("wiki-sources", help="list registered KB/wiki sources")
+    pws.add_argument("--all", action="store_true", help="include disabled sources")
+    pws.set_defaults(func=cmd_wiki_sources)
+
+    pwr = sub.add_parser("wiki-refresh", help="refresh due KB/wiki sources")
+    pwr.add_argument("source_id", nargs="?", default=None,
+                     help="specific source id (default: all due)")
+    pwr.set_defaults(func=cmd_wiki_refresh)
 
     pin = sub.add_parser("ingest", help="ingest documents into the RAG knowledge base")
     pin.add_argument("paths", nargs="+",
@@ -320,6 +573,57 @@ def build_parser() -> argparse.ArgumentParser:
     pskw.add_argument("name", help="the skill name")
     pskw.set_defaults(func=cmd_skill)
 
+    psr = sub.add_parser("skill-record", help="record a skill outcome")
+    psr.add_argument("name")
+    psr.add_argument("goal")
+    psr.add_argument("outcome", choices=["success", "partial", "failure"])
+    psr.add_argument("--cycle-id", default="")
+    psr.add_argument("--notes", default="")
+    psr.set_defaults(func=cmd_skill_record)
+
+    pse = sub.add_parser("skill-evaluate", help="evaluate and quarantine low-quality skills")
+    pse.add_argument("--min-uses", type=int, default=3)
+    pse.add_argument("--threshold", type=float, default=0.4)
+    pse.set_defaults(func=cmd_skill_evaluate)
+
+    psa = sub.add_parser("subagent-run", help="route a goal to a scoped subagent")
+    psa.add_argument("goal")
+    psa.add_argument("--role", default=None,
+                     choices=["researcher", "drafter", "compliance", "predictor"],
+                     help="force a subagent role; default predicts from the goal")
+    psa.set_defaults(func=cmd_subagent_run)
+
+    psl = sub.add_parser("subagents", help="list scoped subagents and recent runs")
+    psl.add_argument("--limit", type=int, default=20)
+    psl.set_defaults(func=cmd_subagents)
+
+    phl = sub.add_parser("health", help="render runtime health/metrics snapshot")
+    phl.set_defaults(func=cmd_health)
+
+    pmp = sub.add_parser("memory-purge",
+                         help="purge expired/old memory by retention policy")
+    pmp.add_argument("--decay-days", type=float, default=None,
+                     help="forget episodic items older than N days under salience floor")
+    pmp.add_argument("--salience-floor", type=float, default=0.2)
+    pmp.add_argument("--forget-provenance", default=None,
+                     help="bulk-delete items whose provenance starts with this prefix")
+    pmp.set_defaults(func=cmd_memory_purge)
+
+    psr = sub.add_parser("scratchpad-read",
+                         help="read scoped inter-subagent scratchpad entries")
+    psr.add_argument("key")
+    psr.add_argument("--ns", default="default")
+    psr.set_defaults(func=cmd_scratchpad_read)
+
+    psw = sub.add_parser("scratchpad-write",
+                         help="write a scratchpad note from one subagent role")
+    psw.add_argument("key")
+    psw.add_argument("value")
+    psw.add_argument("--written-by", default="cli")
+    psw.add_argument("--ns", default="default")
+    psw.add_argument("--ttl", type=float, default=3600.0)
+    psw.set_defaults(func=cmd_scratchpad_write)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -346,7 +650,13 @@ def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
                    "ingest", "recall", "describe", "route", "ask",
-                   "learn", "skills", "skill"):
+                   "learn", "skills", "skill", "compliance",
+                   "skill-record", "skill-evaluate",
+                   "subagent-run", "subagents",
+                   "task-create", "tasks", "task-run", "task-cancel",
+                   "wiki-add", "wiki-sources", "wiki-refresh",
+                   "health", "memory-purge",
+                   "scratchpad-read", "scratchpad-write"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

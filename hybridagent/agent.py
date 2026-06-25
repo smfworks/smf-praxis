@@ -12,6 +12,8 @@ governance broker:
 """
 from __future__ import annotations
 
+import hashlib
+import uuid
 from dataclasses import dataclass, field
 
 from .broker import GovernanceBroker, GovernancePolicy, Verdict, RiskClass
@@ -26,6 +28,7 @@ from .tools import ToolRegistry, default_registry
 @dataclass
 class CycleReport:
     goal: str
+    cycle_id: str = field(default_factory=lambda: f"cyc-{uuid.uuid4().hex[:12]}")
     actions: list[str] = field(default_factory=list)
     pending_approvals: list[dict] = field(default_factory=list)
     injection_flags: list[str] = field(default_factory=list)
@@ -86,12 +89,19 @@ class PraxisAgent:
     # --------------------------------------------------------- the main loop
     def handle(self, goal: str) -> CycleReport:
         report = CycleReport(goal=goal)
+        self._event(report.cycle_id, "cycle_start", {"goal": goal})
 
         # 1. PERCEIVE (proactive, injection-screened).
         signals: list[Signal] = self.perception.sense(
             goal, self.planner.read_tools_for(goal)
         )
         report.injection_flags = [s.source for s in signals if s.flagged_injection]
+        evidence = self._evidence_from_signals(signals)
+        self._event(report.cycle_id, "signals", {
+            "count": len(signals),
+            "injection_flags": report.injection_flags,
+            "evidence": evidence,
+        })
         # Reuse what perception already read so a read tool isn't executed twice
         # per cycle (which, against the M365 broker, would double real Graph
         # calls). Only cache signals that came from an actual registered tool.
@@ -103,17 +113,47 @@ class PraxisAgent:
 
         # 2. PLAN.
         plan: Plan = self.planner.plan(goal)
+        self._event(report.cycle_id, "plan", {
+            "steps": [
+                {"intent": s.intent, "tool": s.tool, "args_hash": self._hash_text(str(s.args))}
+                for s in plan.steps
+            ]
+        })
 
         # 3+4. GOVERN + ACT.
         for step in plan.steps:
             tool = self.registry.get(step.tool)
             if not tool:
                 continue
+            # Pre-flight: validate step args against the tool's declared schema
+            # so malformed plans fail at plan time (with a clean audit entry)
+            # rather than mid-execution against a real M365 endpoint.
+            try:
+                from .validation import validate_tool_args, ValidationError
+                validate_tool_args(tool, step.args)
+            except ValidationError as exc:
+                report.actions.append(
+                    f"[{tool.risk.value}] {step.intent} -> SCHEMA-DENIED ({exc})")
+                self._event(report.cycle_id, "schema_denied", {
+                    "tool": tool.name, "error": str(exc),
+                })
+                continue
             preview = f"{step.intent}: {step.tool}({step.args})"
             decision = self.broker.authorize(
                 actor="praxis", tool=tool.name, risk=tool.risk,
                 args=step.args, preview=preview, provenance="plan",
+                cycle_id=report.cycle_id, evidence=evidence,
+                rationale=f"Plan step '{step.intent}' requested {tool.risk.value} tool '{tool.name}'.",
             )
+            self._event(report.cycle_id, "decision", {
+                "decision_id": decision.decision_id,
+                "tool": tool.name,
+                "risk": tool.risk.value,
+                "verdict": decision.verdict.value,
+                "policy_rule": decision.policy_rule,
+                "reason": self.broker.redact(decision.reason),
+                "approval_id": decision.approval_id,
+            }, ref_id=decision.decision_id)
             if decision.verdict is Verdict.ALLOW:
                 if tool.risk is RiskClass.READ and tool.name in read_cache:
                     result = read_cache[tool.name]          # reuse perception's read
@@ -123,15 +163,31 @@ class PraxisAgent:
                     except Exception as exc:  # tool/broker failure shouldn't crash the cycle
                         report.actions.append(
                             f"[{tool.risk.value}] {step.intent} -> ERROR ({exc})")
+                        self._event(report.cycle_id, "action_error", {
+                            "decision_id": decision.decision_id,
+                            "tool": tool.name,
+                            "error": str(exc),
+                        }, ref_id=decision.decision_id)
                         continue
                 self.memory.note_working(result, provenance=f"action:{tool.name}")
                 report.actions.append(f"[{tool.risk.value}] {step.intent} -> {result}")
+                self._event(report.cycle_id, "action_result", {
+                    "decision_id": decision.decision_id,
+                    "tool": tool.name,
+                    "risk": tool.risk.value,
+                    "result_hash": self._hash_text(result),
+                    "result_preview": self.broker.redact(result)[:240],
+                }, ref_id=decision.decision_id)
             elif decision.verdict is Verdict.NEEDS_APPROVAL:
                 report.pending_approvals.append({
                     "approval_id": decision.approval_id,
+                    "decision_id": decision.decision_id,
+                    "cycle_id": report.cycle_id,
                     "tool": tool.name,
                     "risk": tool.risk.value,
                     "preview": preview,
+                    "rationale": f"{tool.risk.value} tool '{tool.name}' requires human approval.",
+                    "evidence": evidence,
                 })
                 report.actions.append(
                     f"[{tool.risk.value}] {step.intent} -> HELD ({decision.approval_id})"
@@ -141,11 +197,20 @@ class PraxisAgent:
 
         # 5+6. REFLECT + CONSOLIDATE.
         report.reflection = self.reflector.reflect(goal, report.actions)
+        self._record_skill_outcomes(goal, signals, report)
+        self._event(report.cycle_id, "cycle_end", {
+            "actions": len(report.actions),
+            "pending_approvals": len(report.pending_approvals),
+            "injection_flags": report.injection_flags,
+            "reflection": str(report.reflection),
+        })
         return report
 
     # ------------------------------------------------- approval completion
-    def approve(self, approval_id: str) -> str:
-        pending = self.broker.approve(approval_id)
+    def approve(self, approval_id: str, approved_by: str = "user",
+                approval_notes: str = "") -> str:
+        pending = self.broker.approve(
+            approval_id, approved_by=approved_by, approval_notes=approval_notes)
         if not pending:
             return f"no pending approval {approval_id}"
         tool = self.registry.get(pending.tool)
@@ -154,21 +219,110 @@ class PraxisAgent:
         try:
             result = tool.run(**pending.args)
         except Exception as exc:
+            self._event(pending.cycle_id, "approval_execution_error", {
+                "approval_id": approval_id,
+                "decision_id": pending.decision_id,
+                "tool": pending.tool,
+                "error": str(exc),
+            }, ref_id=approval_id)
             return f"approved action failed: {exc}"
         self.memory.add_episodic(f"approved+executed {pending.tool}: {result}",
                                  provenance="user-approval")
+        self._event(pending.cycle_id, "approval_executed", {
+            "approval_id": approval_id,
+            "decision_id": pending.decision_id,
+            "tool": pending.tool,
+            "approved_by": approved_by,
+            "result_hash": self._hash_text(result),
+            "result_preview": self.broker.redact(result)[:240],
+        }, ref_id=approval_id)
         return result
 
+    # ------------------------------------------------------ compliance helpers
+    def _event(self, cycle_id: str, event_type: str, payload: dict,
+               ref_id: str = "") -> None:
+        if self.store is not None:
+            self.store.add_compliance_event(cycle_id, event_type, payload, ref_id)
+
+    @staticmethod
+    def _hash_text(text: str) -> str:
+        return hashlib.sha256((text or "").encode()).hexdigest()
+
+    def _evidence_from_signals(self, signals: list[Signal]) -> list[dict]:
+        out = []
+        for sig in signals:
+            redacted = self.broker.redact(sig.content or "")
+            out.append({
+                "source": sig.source,
+                "content_hash": self._hash_text(sig.content or ""),
+                "snippet": redacted[:240],
+                "flagged_injection": sig.flagged_injection,
+            })
+        return out
+
+    def _record_skill_outcomes(self, goal: str, signals: list[Signal],
+                               report: "CycleReport") -> None:
+        """Score skills that fired during this cycle so the evaluator can
+        quarantine low-quality ones over time. Without this, Phase 9's metrics
+        never accumulate from real usage."""
+        if self.skills is None or self.skills.rag is None:
+            return
+        applied = [s.source.split(":", 1)[1] for s in signals
+                   if s.source.startswith("skill:")]
+        if not applied:
+            return
+        # A cycle is a "success" when actions ran without errors AND nothing was
+        # denied. Held approvals are neutral (the human will decide).
+        has_error = any("-> ERROR" in a for a in report.actions)
+        has_denied = any("-> DENIED" in a for a in report.actions)
+        if has_error or has_denied:
+            outcome = "failure"
+        elif report.pending_approvals:
+            outcome = "partial"
+        else:
+            outcome = "success"
+        for name in applied:
+            try:
+                self.skills.record_outcome(
+                    name, goal, outcome, cycle_id=report.cycle_id,
+                    notes=f"auto-recorded; actions={len(report.actions)}")
+            except Exception:
+                continue
+        self._event(report.cycle_id, "skill_outcomes_recorded", {
+            "skills": applied, "outcome": outcome,
+        })
+
     # ---------------------------------------------------- proactive trigger
-    def heartbeat(self, watch_goal: str = "scan for urgent follow-ups") -> CycleReport:
-        """OpenClaw-style always-on tick: proactively run a watch goal."""
+    def heartbeat(self, watch_goal: str = "scan for urgent follow-ups",
+                  refresh_wiki: bool = True) -> CycleReport:
+        """OpenClaw-style always-on tick: proactively refresh KB sources due
+        for revalidation, then run a watch goal. Setting refresh_wiki=False
+        skips the refresh (useful in tests)."""
+        if refresh_wiki and self.store is not None:
+            try:
+                from .wiki import KBSourceManager
+                KBSourceManager(self.store).refresh_due(rag=self.rag)
+            except Exception as exc:
+                self._event("", "heartbeat_wiki_error", {"error": str(exc)})
         return self.handle(watch_goal)
 
     # ------------------------------------------------- grounded Q&A (no hallucination)
-    def ask(self, question: str, k: int = 5):
-        """Answer a question grounded in retrieved sources; abstain if unsupported."""
+    def ask(self, question: str, k: int = 5, *,
+            refresh_wiki: bool = True):
+        """Answer a question grounded in retrieved sources; abstain if unsupported.
+
+        Before retrieval, refresh any registered wiki sources that are due so
+        the answer reflects current KB. Contradictions across retrieved chunks
+        are surfaced on the returned answer (caller can inspect
+        ``answer.contradictions``) and emitted to the compliance event log."""
         from .grounding import GroundedResponder
         from .rag import RetrievedChunk
+        if refresh_wiki and self.store is not None:
+            try:
+                from .wiki import KBSourceManager
+                KBSourceManager(self.store).refresh_due(rag=self.rag)
+            except Exception as exc:
+                self._event("", "ask_wiki_refresh_error", {"error": str(exc)})
         sources: list = []
         if self.rag is not None:
             sources.extend(self.rag.retrieve(question, k=k))
@@ -176,7 +330,24 @@ class PraxisAgent:
             sources.append(RetrievedChunk(
                 text=item.text, source=f"memory:{item.kind}", score=1.0,
                 kind="memory", provenance=item.provenance))
-        return GroundedResponder(self.llm).answer(question, sources)
+        answer = GroundedResponder(self.llm).answer(question, sources)
+        # Annotate with contradiction findings — caller / CLI can show these.
+        try:
+            from .contradiction import detect
+            answer.contradictions = detect(sources)
+            if answer.contradictions and self.store is not None:
+                self._event("", "ask_contradictions_detected", {
+                    "question": question,
+                    "count": len(answer.contradictions),
+                    "pairs": [
+                        {"a": c.a_source, "b": c.b_source,
+                         "score": c.score, "why": c.explanation}
+                        for c in answer.contradictions
+                    ],
+                })
+        except Exception:
+            answer.contradictions = []
+        return answer
 
     # ------------------------------------------------------- skill distillation
     def learn_skill(self, goal: str, name: str | None = None):
