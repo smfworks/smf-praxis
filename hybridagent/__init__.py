@@ -26,6 +26,8 @@ from .compliance import ComplianceReporter, ComplianceReport, ComplianceFinding
 from .task_manager import TaskManager, TaskState
 from .wiki import KBSource, KBSourceManager
 from .skill_evaluator import SkillEvaluator
+from .orchestrator import (AgentPool, AgentSpec, AgentSpecializer,
+                           Orchestrator, PredictiveRouter, SubagentRun)
 from . import ingest
 
 __all__ = [
@@ -49,6 +51,8 @@ __all__ = [
     "TaskManager", "TaskState",
     "KBSource", "KBSourceManager",
     "SkillEvaluator",
+    "AgentPool", "AgentSpec", "AgentSpecializer", "Orchestrator",
+    "PredictiveRouter", "SubagentRun",
 ]
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"

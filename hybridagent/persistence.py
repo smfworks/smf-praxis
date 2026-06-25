@@ -151,6 +151,33 @@ CREATE TABLE IF NOT EXISTS skill_metadata (
     quarantined INTEGER NOT NULL DEFAULT 0,
     updated_ts REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS agent_instances (
+    agent_id TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    tools_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'idle',
+    load INTEGER NOT NULL DEFAULT 0,
+    last_heartbeat_ts REAL,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_agent_instances_role ON agent_instances(role);
+
+CREATE TABLE IF NOT EXISTS subagent_runs (
+    run_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cycle_id TEXT NOT NULL DEFAULT '',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT NOT NULL DEFAULT '',
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_subagent_runs_agent ON subagent_runs(agent_id);
 """
 
 
@@ -648,3 +675,75 @@ class Store:
                 (skill_name, 1 if quarantined else 0, now),
             )
             self._conn.commit()
+
+    # --------------------------------------------------------------- agents
+    def upsert_agent_instance(self, agent_id: str, role: str,
+                              tools: list[str] | None = None,
+                              status: str = "idle", load: int = 0,
+                              metrics: dict | None = None) -> None:
+        now = time.time()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT created_ts FROM agent_instances WHERE agent_id=?",
+                (agent_id,),
+            ).fetchone()
+            created = existing["created_ts"] if existing else now
+            self._conn.execute(
+                "INSERT OR REPLACE INTO agent_instances"
+                "(agent_id,role,tools_json,status,load,last_heartbeat_ts,"
+                "metrics_json,created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                (agent_id, role, json.dumps(tools or []), status, load, now,
+                 json.dumps(metrics or {}), created, now),
+            )
+            self._conn.commit()
+
+    def list_agent_instances(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_instances ORDER BY role, agent_id").fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d["tools"] = json.loads(d.pop("tools_json") or "[]")
+            d["metrics"] = json.loads(d.pop("metrics_json") or "{}")
+            out.append(d)
+        return out
+
+    def add_subagent_run(self, run_id: str, agent_id: str, role: str,
+                         goal: str, status: str = "running") -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO subagent_runs"
+                "(run_id,agent_id,role,goal,status,created_ts,updated_ts) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (run_id, agent_id, role, goal, status, now, now),
+            )
+            self._conn.commit()
+
+    def update_subagent_run(self, run_id: str, **fields) -> bool:
+        allowed = {"status", "cycle_id", "result_json", "error", "updated_ts"}
+        fields.setdefault("updated_ts", time.time())
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        cols = ", ".join(f"{k}=?" for k in updates)
+        vals = list(updates.values()) + [run_id]
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE subagent_runs SET {cols} WHERE run_id=?", vals)
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def list_subagent_runs(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM subagent_runs ORDER BY created_ts DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d["result"] = json.loads(d.pop("result_json") or "{}")
+            out.append(d)
+        return out
