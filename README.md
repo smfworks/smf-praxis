@@ -125,10 +125,22 @@ praxis --help
 | `praxis approve <id>` | approve + execute a held action by id |
 | `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
 | `praxis recall "<query>"` | semantic search over the ingested knowledge base |
+| `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
 | `praxis describe <path>` | extract text from a document or caption/transcribe a media file |
 | `praxis route` | show contextual model routing per role + sensitivity |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Grounded, non-hallucinating answers
+
+`praxis ask` answers **only** from retrieved sources (knowledge base + durable
+memory). Every claim is cited `[S#]`; when the sources don't support an answer it
+returns **`INSUFFICIENT_EVIDENCE`** instead of guessing. Offline the answer is
+purely *extractive* (it copies supporting sentences, so it cannot fabricate); the
+real-model path uses a strict source-only system prompt at temperature 0 plus a
+verification pass that flags any claim not backed by a source. The LLM planner
+(`GroundedPlanner`) similarly drops any step that names a tool outside the
+registry, so it can never invent tools.
 
 ## Model routing & multimodal
 

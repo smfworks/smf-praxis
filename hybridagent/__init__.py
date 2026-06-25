@@ -19,6 +19,8 @@ from .embeddings import EmbeddingClient
 from .rag import Rag, RetrievedChunk, chunk_text
 from .router import ModelRouter, classify_sensitivity
 from .multimodal import MediaClient
+from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
+                        VerificationResult, generate_json)
 from . import ingest
 
 __all__ = [
@@ -35,6 +37,8 @@ __all__ = [
     "Rag", "RetrievedChunk", "chunk_text", "ingest",
     "ModelRouter", "classify_sensitivity",
     "MediaClient",
+    "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
+    "VerificationResult", "generate_json",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

@@ -156,3 +156,17 @@ class PraxisAgent:
     def heartbeat(self, watch_goal: str = "scan for urgent follow-ups") -> CycleReport:
         """OpenClaw-style always-on tick: proactively run a watch goal."""
         return self.handle(watch_goal)
+
+    # ------------------------------------------------- grounded Q&A (no hallucination)
+    def ask(self, question: str, k: int = 5):
+        """Answer a question grounded in retrieved sources; abstain if unsupported."""
+        from .grounding import GroundedResponder
+        from .rag import RetrievedChunk
+        sources: list = []
+        if self.rag is not None:
+            sources.extend(self.rag.retrieve(question, k=k))
+        for item in self.memory.recall(question, k=3):
+            sources.append(RetrievedChunk(
+                text=item.text, source=f"memory:{item.kind}", score=1.0,
+                kind="memory", provenance=item.provenance))
+        return GroundedResponder(self.llm).answer(question, sources)
