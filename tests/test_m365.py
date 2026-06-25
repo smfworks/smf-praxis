@@ -1,5 +1,5 @@
 from hybridagent.broker import RiskClass
-from hybridagent.m365_tools import m365_registry, build_m365_agent, M365Planner
+from hybridagent.m365_tools import M365Planner, build_m365_agent, m365_registry
 
 
 class FakeBroker:

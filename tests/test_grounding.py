@@ -1,7 +1,6 @@
 from hybridagent import PraxisAgent
 from hybridagent import config as cfg
-from hybridagent.grounding import (GroundedPlanner, GroundedResponder,
-                                   generate_json, _extract_json)
+from hybridagent.grounding import GroundedPlanner, GroundedResponder, _extract_json, generate_json
 from hybridagent.rag import RetrievedChunk
 from hybridagent.tools import default_registry
 

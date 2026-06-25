@@ -22,8 +22,9 @@ from dataclasses import dataclass, field
 
 from . import config as cfg
 from .logging_util import get_logger
-from .providers import CATALOG, embed as provider_embed
-from .router import ModelRouter, classify_sensitivity, SENSITIVE
+from .providers import CATALOG
+from .providers import embed as provider_embed
+from .router import SENSITIVE, ModelRouter, classify_sensitivity
 
 _log = get_logger("praxis.embeddings")
 
@@ -38,7 +39,7 @@ def _tokenize(text: str) -> list[str]:
 def cosine(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:

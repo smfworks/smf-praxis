@@ -3,14 +3,14 @@ import time
 
 import pytest
 
-from hybridagent import PraxisAgent, config as cfg
-from hybridagent.broker import (GovernanceBroker, GovernancePolicy, RiskClass,
-                                Verdict)
+from hybridagent import PraxisAgent
+from hybridagent import config as cfg
+from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
 from hybridagent.memory import Memory
 from hybridagent.orchestrator import AgentPool, Orchestrator
 from hybridagent.persistence import Store
-from hybridagent.tools import Tool, default_registry
-from hybridagent.validation import ValidationError, validate, validate_tool_args
+from hybridagent.tools import Tool
+from hybridagent.validation import ValidationError, validate
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -120,7 +120,6 @@ def test_liveness_marks_stale_agents(tmp_path, monkeypatch):
     pool = AgentPool(store)
     pool.ensure("researcher")
     # Force the heartbeat to look ancient.
-    import sqlite3
     store._conn.execute(
         "UPDATE agent_instances SET last_heartbeat_ts=? WHERE role=?",
         (time.time() - 86400, "researcher"))
@@ -149,7 +148,6 @@ def test_purge_expired_memory(tmp_path, monkeypatch):
 def test_decay_episodic_keeps_high_salience(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     store = Store.open()
-    mem = Memory(store=store)
     old_ts = time.time() - 200 * 86400
     store.add_memory("episodic", "old low-priority", "agent", "note",
                      ts=old_ts, salience=0.1)

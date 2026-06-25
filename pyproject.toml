@@ -13,7 +13,12 @@ authors = [{ name = "SMF Works" }]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mypy>=1.8",
+]
 # Optional document parsers (RAG ingestion). Core stays dependency-free; install
 # this extra to ingest PDF / Word / PowerPoint / Excel / Outlook .msg files.
 docs = [
@@ -31,9 +36,52 @@ multimodal = [
     "openai-whisper>=20231117",
     "opencv-python>=4.8",
 ]
+# Faster vector search for large knowledge bases (optional; pure-Python fallback
+# is used when absent).
+fast = ["numpy>=1.24"]
 
 [project.scripts]
 praxis = "hybridagent.cli:main"
 
 [tool.setuptools]
 packages = ["hybridagent"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes (F), pycodestyle errors (E), unused/import hygiene (I), bugbears (B).
+select = ["E", "F", "B", "I"]
+ignore = ["E501"]  # line length is enforced softly; many descriptive strings run long
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+# Pragmatic strictness: catch None-handling and obvious type errors without
+# requiring full annotations on a fast-moving codebase. warn_unused_ignores is
+# off because the optional-dependency imports carry `# type: ignore` markers
+# that are only "unused" under ignore_missing_imports but matter when the extra
+# is installed and mypy runs strict.
+warn_redundant_casts = true
+no_implicit_optional = true
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["hybridagent"]
+omit = ["hybridagent/tui.py"]
+
+[tool.coverage.report]
+# CLI dispatch is covered by smoke tests; exclude the interactive TUI loop and
+# defensive branches that only fire on real network/provider failures.
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

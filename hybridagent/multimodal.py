@@ -25,7 +25,8 @@ from pathlib import Path
 from . import config as cfg
 from .ingest import ExtractedDoc, MissingDependencyError
 from .logging_util import get_logger
-from .providers import CATALOG, chat_multimodal, transcribe as provider_transcribe
+from .providers import CATALOG, chat_multimodal
+from .providers import transcribe as provider_transcribe
 from .router import ModelRouter
 
 _log = get_logger("praxis.multimodal")
@@ -119,10 +120,10 @@ class MediaClient:
             return self._video_meta(path)
         try:
             import cv2  # type: ignore
-        except Exception:
+        except Exception as exc:
             raise MissingDependencyError(
                 "real video processing needs frame tooling: "
-                'pip install "praxis-agent[multimodal]" (opencv-python)')
+                'pip install "praxis-agent[multimodal]" (opencv-python)') from exc
         cap = cv2.VideoCapture(str(path))
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
         captions = []

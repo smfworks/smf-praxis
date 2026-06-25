@@ -12,9 +12,9 @@ weaknesses, and supplies the broker Hermes assumes:
 """
 from __future__ import annotations
 
-import re
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field

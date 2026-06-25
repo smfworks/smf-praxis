@@ -16,12 +16,12 @@ import hashlib
 import uuid
 from dataclasses import dataclass, field
 
-from .broker import GovernanceBroker, GovernancePolicy, Verdict, RiskClass
+from .broker import GovernanceBroker, GovernancePolicy, RiskClass, Verdict
 from .llm import LLMClient
 from .memory import Memory
 from .perception import Perception, Signal
-from .planner import Planner, Plan
-from .reflection import Reflector, ReflectionResult
+from .planner import Plan, Planner
+from .reflection import ReflectionResult, Reflector
 from .tools import ToolRegistry, default_registry
 
 
@@ -64,8 +64,8 @@ class PraxisAgent:
         self.rag = None
         self.skills = None
         if store is not None:
-            from .rag import Rag
             from .embeddings import EmbeddingClient
+            from .rag import Rag
             from .skills import SkillLibrary
             embedder = EmbeddingClient()
             self.rag = Rag(store, embedder)
@@ -129,7 +129,7 @@ class PraxisAgent:
             # so malformed plans fail at plan time (with a clean audit entry)
             # rather than mid-execution against a real M365 endpoint.
             try:
-                from .validation import validate_tool_args, ValidationError
+                from .validation import ValidationError, validate_tool_args
                 validate_tool_args(tool, step.args)
             except ValidationError as exc:
                 report.actions.append(

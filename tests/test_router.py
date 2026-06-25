@@ -1,7 +1,7 @@
 from hybridagent import config as cfg
 from hybridagent import onboard
 from hybridagent.llm import LLMClient
-from hybridagent.router import ModelRouter, classify_sensitivity, SENSITIVE, NORMAL
+from hybridagent.router import NORMAL, SENSITIVE, ModelRouter, classify_sensitivity
 
 
 def _home(tmp_path, monkeypatch):

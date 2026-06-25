@@ -255,7 +255,7 @@ class Store:
                 (tier, text, provenance, kind, salience, expires_at, ts),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+            return int(cur.lastrowid or 0)
 
     def load_memory(self, tier: str) -> list[dict]:
         with self._lock:
@@ -424,7 +424,7 @@ class Store:
                 (cycle_id, event_type, ref_id, json.dumps(payload), ts),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+            return int(cur.lastrowid or 0)
 
     def list_compliance_events(self, cycle_id: str | None = None,
                                limit: int = 500) -> list[dict]:
@@ -462,7 +462,7 @@ class Store:
                 (ns, doc_id, chunk_idx, text, provenance, kind, blob, ts),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+            return int(cur.lastrowid or 0)
 
     def iter_vectors(self, ns: str) -> list[dict]:
         with self._lock:

@@ -379,10 +379,10 @@ def cmd_skill(args: argparse.Namespace) -> int:
 def cmd_skill_record(args: argparse.Namespace) -> int:
     agent = _make_agent(args)
     from .skill_evaluator import SkillEvaluator
-    meta = SkillEvaluator(agent.skills).record(
-        args.name, args.goal, args.outcome, cycle_id=args.cycle_id or "",
-        notes=args.notes or "")
-    print(SkillEvaluator(agent.skills).impact_report(args.name))
+    ev = SkillEvaluator(agent.skills)
+    ev.record(args.name, args.goal, args.outcome, cycle_id=args.cycle_id or "",
+              notes=args.notes or "")
+    print(ev.impact_report(args.name))
     return 0
 
 

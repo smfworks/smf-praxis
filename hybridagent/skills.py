@@ -18,6 +18,7 @@ import datetime as _dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import List
 
 from . import config as cfg
 from .logging_util import get_logger
@@ -117,8 +118,8 @@ class SkillLibrary:
         self.skills: dict[str, Skill] = {}
         self.rag = None
         if store is not None:
-            from .rag import Rag
             from .embeddings import EmbeddingClient
+            from .rag import Rag
             self.rag = Rag(store, embedder or EmbeddingClient(), ns="skills")
         self._load_disk()
 
@@ -182,7 +183,7 @@ class SkillLibrary:
     def list(self) -> list[Skill]:
         return sorted(self.skills.values(), key=lambda s: s.name)
 
-    def retrieve(self, goal: str, k: int = 3) -> list[Skill]:
+    def retrieve(self, goal: str, k: int = 3) -> List[Skill]:
         def active(sk: Skill) -> bool:
             if not sk.enabled:
                 return False
@@ -233,7 +234,7 @@ class SkillLibrary:
         return self.rag.store.skill_metadata(skill_name)
 
     def quarantine_low_quality(self, min_uses: int = 3,
-                               threshold: float = 0.4) -> list[str]:
+                               threshold: float = 0.4) -> List[str]:
         if self.rag is None:
             return []
         quarantined: list[str] = []

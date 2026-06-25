@@ -6,34 +6,46 @@ behind a governance broker so the result is proactive AND safe.
 
 Loop:  perceive -> plan -> govern -> act/draft -> reflect -> consolidate
 """
-from .agent import PraxisAgent
-from .memory import Memory, MemoryItem, Tier
-from .broker import GovernanceBroker, GovernancePolicy, Decision, RiskClass, KillSwitch
-from .tools import Tool, ToolRegistry, default_registry
-from .planner import Planner, Step, Plan
-from .perception import Perception, Signal
-from .reflection import Reflector
-from .llm import LLMClient
-from .persistence import Store
-from .embeddings import EmbeddingClient
-from .rag import Rag, RetrievedChunk, chunk_text
-from .router import ModelRouter, classify_sensitivity
-from .multimodal import MediaClient
-from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
-                        VerificationResult, generate_json)
-from .skills import Skill, SkillLibrary, distill_skill
-from .compliance import ComplianceReporter, ComplianceReport, ComplianceFinding
-from .task_manager import TaskManager, TaskState
-from .wiki import KBSource, KBSourceManager
-from .skill_evaluator import SkillEvaluator
-from .orchestrator import (AgentPool, AgentSpec, AgentSpecializer,
-                           Orchestrator, PredictiveRouter, SubagentRun)
-from .validation import ValidationError, validate, validate_tool_args
-from .contradiction import Contradiction, detect as detect_contradictions
-from .scratchpad import Scratchpad, ScratchpadEntry
-from .metrics import HealthMonitor, HealthSnapshot
-from .wiki_safe import UnsafeSourceError, fetch_url, validate_uri
 from . import ingest
+from .agent import PraxisAgent
+from .broker import Decision, GovernanceBroker, GovernancePolicy, KillSwitch, RiskClass
+from .compliance import ComplianceFinding, ComplianceReport, ComplianceReporter
+from .contradiction import Contradiction
+from .contradiction import detect as detect_contradictions
+from .embeddings import EmbeddingClient
+from .grounding import (
+                        GroundedAnswer,
+                        GroundedPlanner,
+                        GroundedResponder,
+                        VerificationResult,
+                        generate_json,
+)
+from .llm import LLMClient
+from .memory import Memory, MemoryItem, Tier
+from .metrics import HealthMonitor, HealthSnapshot
+from .multimodal import MediaClient
+from .orchestrator import (
+                        AgentPool,
+                        AgentSpec,
+                        AgentSpecializer,
+                        Orchestrator,
+                        PredictiveRouter,
+                        SubagentRun,
+)
+from .perception import Perception, Signal
+from .persistence import Store
+from .planner import Plan, Planner, Step
+from .rag import Rag, RetrievedChunk, chunk_text
+from .reflection import Reflector
+from .router import ModelRouter, classify_sensitivity
+from .scratchpad import Scratchpad, ScratchpadEntry
+from .skill_evaluator import SkillEvaluator
+from .skills import Skill, SkillLibrary, distill_skill
+from .task_manager import TaskManager, TaskState
+from .tools import Tool, ToolRegistry, default_registry
+from .validation import ValidationError, validate, validate_tool_args
+from .wiki import KBSource, KBSourceManager
+from .wiki_safe import UnsafeSourceError, fetch_url, validate_uri
 
 __all__ = [
     "PraxisAgent",
