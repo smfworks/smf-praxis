@@ -95,12 +95,26 @@ def cmd_approvals(args: argparse.Namespace) -> int:
     print(f"{len(pending)} pending approval(s):")
     for aid, p in pending.items():
         print(f"   {aid}  [{p.tool}] {p.preview}")
+        if p.rationale:
+            print(f"      rationale: {p.rationale}")
+        if p.evidence:
+            sources = ", ".join(e.get("source", "?") for e in p.evidence[:5])
+            print(f"      evidence: {sources}")
     return 0
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
     agent = _make_agent(args)
-    print(agent.approve(args.approval_id))
+    print(agent.approve(args.approval_id, approved_by=args.approved_by,
+                        approval_notes=args.notes or ""))
+    return 0
+
+
+def cmd_compliance(_args: argparse.Namespace) -> int:
+    from .compliance import ComplianceReporter
+    from .persistence import Store
+    reporter = ComplianceReporter(Store.open())
+    print(ComplianceReporter.render(reporter.build()))
     return 0
 
 
@@ -279,9 +293,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     pav = sub.add_parser("approve", help="approve + execute a held action by id")
     pav.add_argument("approval_id", help="the approval id (appr-xxxxxxxx)")
+    pav.add_argument("--approved-by", default="user",
+                     help="operator identity recorded in the audit trail")
+    pav.add_argument("--notes", default="", help="approval notes/justification")
     pav.add_argument("--m365", action="store_true",
                      help="use the M365 broker registry")
     pav.set_defaults(func=cmd_approve)
+
+    pc = sub.add_parser("compliance", help="render a compliance attestation report")
+    pc.set_defaults(func=cmd_compliance)
 
     pin = sub.add_parser("ingest", help="ingest documents into the RAG knowledge base")
     pin.add_argument("paths", nargs="+",
@@ -346,7 +366,7 @@ def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
                    "ingest", "recall", "describe", "route", "ask",
-                   "learn", "skills", "skill"):
+                   "learn", "skills", "skill", "compliance"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

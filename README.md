@@ -122,7 +122,8 @@ praxis --help
 | `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
 | `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory (persisted to `~/.praxis/praxis.db`) |
 | `praxis approvals` | list held consequential actions (persisted across runs) |
-| `praxis approve <id>` | approve + execute a held action by id |
+| `praxis approve <id> --approved-by <name> --notes "<why>"` | approve + execute a held action by id, recording operator/justification |
+| `praxis compliance` | render an audit attestation over cycles, approvals, and consequential actions |
 | `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
 | `praxis recall "<query>"` | semantic search over the ingested knowledge base |
 | `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
@@ -133,6 +134,21 @@ praxis --help
 | `praxis skill <name>` | show a saved skill |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Compliance spine
+
+Every persistent run now receives a `cycle_id`; every governed decision receives a
+`decision_id`. Praxis writes a durable compliance event chain to
+`~/.praxis/praxis.db` so auditors can trace:
+
+```
+signal evidence -> plan step -> broker decision -> held approval -> execution
+```
+
+Held approvals carry rationale and source evidence bundles, and approvals can
+record an operator and justification (`--approved-by`, `--notes`). `praxis
+compliance` renders an attestation proving recorded SEND/DESTRUCTIVE actions were
+approved, pending, or denied before execution.
 
 ## Skills library (`/learn`)
 

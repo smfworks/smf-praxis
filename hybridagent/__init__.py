@@ -22,6 +22,7 @@ from .multimodal import MediaClient
 from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
                         VerificationResult, generate_json)
 from .skills import Skill, SkillLibrary, distill_skill
+from .compliance import ComplianceReporter, ComplianceReport, ComplianceFinding
 from . import ingest
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
     "VerificationResult", "generate_json",
     "Skill", "SkillLibrary", "distill_skill",
+    "ComplianceReporter", "ComplianceReport", "ComplianceFinding",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
