@@ -162,6 +162,23 @@ def cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    ans = agent.ask(args.question, k=args.k)
+    if ans.abstained:
+        print("INSUFFICIENT EVIDENCE — Praxis declined to answer rather than guess.")
+        print(ans.text)
+        return 0
+    print(ans.text)
+    if ans.citations:
+        print("\nsources: " + ", ".join(ans.citations))
+    if ans.verification and ans.verification.unsupported_claims:
+        print("\n⚠ unverified claims (not supported by sources):")
+        for claim in ans.verification.unsupported_claims:
+            print(f"   - {claim}")
+    return 0
+
+
 def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
@@ -241,6 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     prt = sub.add_parser("route", help="show contextual model routing per role")
     prt.set_defaults(func=cmd_route)
 
+    pask = sub.add_parser("ask", help="grounded Q&A over the KB + memory (cite or abstain)")
+    pask.add_argument("question", help="the question to answer from sources")
+    pask.add_argument("--k", type=int, default=5, help="sources to retrieve")
+    pask.add_argument("--m365", action="store_true", help="use the M365 broker registry")
+    pask.set_defaults(func=cmd_ask)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -266,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
-                   "ingest", "recall", "describe", "route"):
+                   "ingest", "recall", "describe", "route", "ask"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return
