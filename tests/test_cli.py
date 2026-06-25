@@ -49,6 +49,21 @@ def test_remember_command(capsys):
     assert "stored durable preference" in capsys.readouterr().out
 
 
+def test_demo_command_runs_from_package(capsys):
+    # Regression: `praxis demo` must run from the installed package, not a
+    # repo-root demo.py (which is absent in a non-editable wheel install).
+    assert _run(["demo"]) == 0
+    out = capsys.readouterr().out
+    assert "CYCLE 1" in out
+    assert "AUDIT TRAIL" in out
+
+
+def test_demo_module_importable():
+    # The demo ships inside the package so wheel installs can run it.
+    from hybridagent import demo
+    assert callable(demo.main)
+
+
 def test_approvals_and_approve_flow(capsys):
     _run(["handle", "Prepare a customer follow-up email"])
     capsys.readouterr()

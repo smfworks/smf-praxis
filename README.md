@@ -29,28 +29,53 @@ perceive → plan → govern → act/draft → reflect → consolidate
 ## Setup
 
 Requires **Python 3.10+**. No third-party packages are needed to run (offline
-mock LLM); `pytest` is the only dev dependency.
+mock LLM); extras are opt-in.
+
+### One command (install + configure)
+
+The bootstrap script finds Python, creates a `.venv`, installs Praxis, and runs
+the onboarding wizard — from scratch or inside a clone.
 
 ```bash
-# 1. clone
+# from scratch (clones, installs, configures):
+curl -fsSL https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.sh | bash
+
+# or from a clone:
 git clone https://github.com/smfworks/smf-praxis.git
 cd smf-praxis
+./install.sh
+```
 
-# 2. (recommended) create a virtual environment
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.ps1 | iex
+# or from a clone:  .\install.ps1
+```
+
+Useful flags (same on both scripts): `--with docs,multimodal,fast` to add
+optional extras, `--no-configure` to skip onboarding, and
+`--provider ollama --model llama3.1` to configure non-interactively. Then
+`source .venv/bin/activate` (`.venv\Scripts\Activate.ps1` on Windows) and run
+`praxis demo`.
+
+### Manual install
+
+```bash
+git clone https://github.com/smfworks/smf-praxis.git
+cd smf-praxis
 python -m venv .venv
 # Windows:  .venv\Scripts\activate
 # macOS/Linux:  source .venv/bin/activate
-
-# 3. install (editable) with the `praxis` CLI + dev tools
-pip install -e ".[dev]"
+pip install -e ".[dev]"     # editable + dev tools; or `pip install .` for core only
 ```
 
 Everything runs offline with a deterministic mock LLM — no API keys required.
 
 ## Configure a model provider
 
-Praxis mirrors **OpenClaw's onboarding model**. Run the wizard to pick a
-provider and model — it's offered automatically on first use, or run it anytime:
+The one-command installer runs this for you. To (re)configure anytime, run the
+wizard — it's also offered automatically on first use:
 
 ```bash
 praxis onboard
@@ -92,7 +117,7 @@ provider if onboarded, else offline mock) · `mock` (always offline) · `real`
 ## Quick start
 
 ```bash
-python demo.py          # offline, mock LLM
+praxis demo             # offline demo (mock LLM); also: python demo.py
 pytest -q               # test suite
 ```
 

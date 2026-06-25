@@ -47,6 +47,27 @@ jobs:
           python demo.py
           praxis demo
 
+  install-script:
+    # Exercise the one-command bootstrap on Linux so the documented install path
+    # (and its LF line endings / executable bit) can't silently break.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run install.sh (core, no onboarding)
+        run: |
+          test -x ./install.sh || { echo "install.sh is not executable"; exit 1; }
+          ! grep -lU $'\r' install.sh || { echo "install.sh has CRLF line endings"; exit 1; }
+          ./install.sh --no-configure --venv .venv
+      - name: Verify the installed CLI works
+        run: |
+          ./.venv/bin/praxis demo
+          ./.venv/bin/praxis onboard --provider ollama --model llama3.1
+          ./.venv/bin/praxis route
+
   mutation:
     # Manual-only: mutation testing is slow, so it never gates the PR matrix.
     # Trigger from the Actions tab ("Run workflow") to audit the governance core.

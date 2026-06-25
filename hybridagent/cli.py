@@ -451,10 +451,8 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
 
 def cmd_demo(_args: argparse.Namespace) -> int:
-    import os
-    import runpy
-    demo = os.path.join(os.path.dirname(os.path.dirname(__file__)), "demo.py")
-    runpy.run_path(demo, run_name="__main__")
+    from . import demo
+    demo.main()
     return 0
 
 

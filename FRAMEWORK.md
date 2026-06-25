@@ -124,7 +124,8 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 `hybridagent/` implements the framework and runs **offline** (mock LLM).
 
 ```bash
-python demo.py        # full loop incl. injection + kill-switch demos
+./install.sh          # one command: venv + install + onboarding (see README)
+praxis demo           # full loop incl. injection + kill-switch demos
 python -m pytest -q   # test suite
 ```
 
