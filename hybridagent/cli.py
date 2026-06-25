@@ -40,9 +40,10 @@ def _print_report(agent: PraxisAgent, report) -> None:
 def _make_agent(args: argparse.Namespace):
     if getattr(args, "m365", False):
         from .m365_tools import build_m365_agent
-        agent, _client = build_m365_agent()
+        from .persistence import Store
+        agent, _client = build_m365_agent(store=Store.open())
         return agent
-    return PraxisAgent()
+    return PraxisAgent.persistent()
 
 
 def cmd_handle(args: argparse.Namespace) -> int:
@@ -78,10 +79,145 @@ def cmd_m365(_args: argparse.Namespace) -> int:
 
 
 def cmd_remember(args: argparse.Namespace) -> int:
-    agent = PraxisAgent()
+    agent = PraxisAgent.persistent()
     agent.learn(args.fact, kind=args.kind, provenance="cli")
     print(f"stored durable {args.kind}: {args.fact}")
     print("memory:", agent.memory.stats())
+    return 0
+
+
+def cmd_approvals(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    pending = agent.broker.pending
+    if not pending:
+        print("no pending approvals")
+        return 0
+    print(f"{len(pending)} pending approval(s):")
+    for aid, p in pending.items():
+        print(f"   {aid}  [{p.tool}] {p.preview}")
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    print(agent.approve(args.approval_id))
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .rag import Rag
+    rag = Rag(Store.open())
+    total = 0
+    for path in args.paths:
+        try:
+            doc, n = rag.ingest_file(path)
+            print(f"ingested {doc.source} ({doc.kind}): {n} chunks")
+            total += n
+        except Exception as exc:
+            print(f"  skip {path}: {exc}")
+    print(f"+{total} chunks. KB now: {rag.stats()}")
+    return 0
+
+
+def cmd_recall(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .rag import Rag
+    rag = Rag(Store.open())
+    hits = rag.retrieve(args.query, k=args.k)
+    if not hits:
+        print("no matches (KB empty? run 'praxis ingest <file>')")
+        return 0
+    for h in hits:
+        snippet = " ".join(h.text.split())[:200]
+        print(f"[{h.score:.3f}] {h.source} ({h.kind})  {h.provenance}")
+        print(f"    {snippet}")
+    return 0
+
+
+def cmd_describe(args: argparse.Namespace) -> int:
+    from .ingest import extract_text
+    from .multimodal import MediaClient
+    mc = MediaClient()
+    try:
+        doc = mc.process(args.path) if mc.is_media(args.path) else extract_text(args.path)
+    except Exception as exc:
+        print(f"could not process {args.path}: {exc}")
+        return 1
+    print(f"# {doc.source} ({doc.kind})")
+    print(doc.text[:2000])
+    return 0
+
+
+def cmd_route(args: argparse.Namespace) -> int:
+    from .router import ModelRouter
+    r = ModelRouter()
+    roles = ["general", "planner", "summarizer", "vision", "transcribe"]
+    print(f"{'role':<12} {'sensitivity':<11} candidates (primary first)")
+    for role in roles:
+        for sens in ("normal", "sensitive"):
+            exp = r.explain(role, sens)
+            tag = " [local]" if exp["primary_is_local"] else ""
+            print(f"{role:<12} {sens:<11} {exp['candidates']}{tag}")
+    return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    ans = agent.ask(args.question, k=args.k)
+    if ans.abstained:
+        print("INSUFFICIENT EVIDENCE — Praxis declined to answer rather than guess.")
+        print(ans.text)
+        return 0
+    print(ans.text)
+    if ans.citations:
+        print("\nsources: " + ", ".join(ans.citations))
+    if ans.verification and ans.verification.unsupported_claims:
+        print("\n⚠ unverified claims (not supported by sources):")
+        for claim in ans.verification.unsupported_claims:
+            print(f"   - {claim}")
+    return 0
+
+
+def cmd_learn(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    if agent.skills is None:
+        print("no skill store available")
+        return 1
+    draft = agent.learn_skill(args.goal, name=args.name)
+    print("Drafted skill (governed — requires approval to save):\n")
+    print(draft.to_markdown())
+    save = args.yes
+    if not save and sys.stdin.isatty():
+        save = input("Save this skill? [y/N]: ").strip().lower() == "y"
+    if save:
+        path = agent.skills.add(draft)
+        print(f"\nsaved skill '{draft.name}' -> {path}")
+    else:
+        print("\nnot saved. Skills require approval; re-run with --yes to persist.")
+    return 0
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    skills = agent.skills.list() if agent.skills else []
+    if not skills:
+        print("no skills saved yet (use 'praxis learn \"<goal>\"')")
+        return 0
+    print(f"{len(skills)} skill(s):")
+    for sk in skills:
+        state = "" if sk.enabled else " (disabled)"
+        print(f"  - {sk.name}{state}: {sk.trigger}")
+    return 0
+
+
+def cmd_skill(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    sk = agent.skills.get(args.name) if agent.skills else None
+    if not sk:
+        print(f"no skill named '{args.name}'")
+        return 1
+    print(sk.to_markdown())
     return 0
 
 
@@ -136,6 +272,54 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["preference", "fact", "decision", "skill", "note"])
     pm.set_defaults(func=cmd_remember)
 
+    pap = sub.add_parser("approvals", help="list pending held actions (persisted)")
+    pap.add_argument("--m365", action="store_true",
+                     help="use the M365 broker registry")
+    pap.set_defaults(func=cmd_approvals)
+
+    pav = sub.add_parser("approve", help="approve + execute a held action by id")
+    pav.add_argument("approval_id", help="the approval id (appr-xxxxxxxx)")
+    pav.add_argument("--m365", action="store_true",
+                     help="use the M365 broker registry")
+    pav.set_defaults(func=cmd_approve)
+
+    pin = sub.add_parser("ingest", help="ingest documents into the RAG knowledge base")
+    pin.add_argument("paths", nargs="+",
+                     help="file paths (pdf/docx/pptx/xlsx/eml/msg/html/txt/md/csv/json)")
+    pin.set_defaults(func=cmd_ingest)
+
+    prc = sub.add_parser("recall", help="semantic search over the RAG knowledge base")
+    prc.add_argument("query", help="the search query")
+    prc.add_argument("--k", type=int, default=5, help="number of results")
+    prc.set_defaults(func=cmd_recall)
+
+    pdsc = sub.add_parser("describe", help="extract text from a doc or media file")
+    pdsc.add_argument("path", help="path to a document, image, audio, or video file")
+    pdsc.set_defaults(func=cmd_describe)
+
+    prt = sub.add_parser("route", help="show contextual model routing per role")
+    prt.set_defaults(func=cmd_route)
+
+    pask = sub.add_parser("ask", help="grounded Q&A over the KB + memory (cite or abstain)")
+    pask.add_argument("question", help="the question to answer from sources")
+    pask.add_argument("--k", type=int, default=5, help="sources to retrieve")
+    pask.add_argument("--m365", action="store_true", help="use the M365 broker registry")
+    pask.set_defaults(func=cmd_ask)
+
+    pl = sub.add_parser("learn", help="distill a reusable skill from a goal (/learn)")
+    pl.add_argument("goal", help="the goal to learn a skill from")
+    pl.add_argument("--name", default=None, help="override the skill name")
+    pl.add_argument("--yes", action="store_true", help="approve + save without prompting")
+    pl.add_argument("--m365", action="store_true", help="use the M365 broker registry")
+    pl.set_defaults(func=cmd_learn)
+
+    psk = sub.add_parser("skills", help="list saved skills")
+    psk.set_defaults(func=cmd_skills)
+
+    pskw = sub.add_parser("skill", help="show a saved skill by name")
+    pskw.add_argument("name", help="the skill name")
+    pskw.set_defaults(func=cmd_skill)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -160,7 +344,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo", "tui", "m365"):
+    if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
+                   "ingest", "recall", "describe", "route", "ask",
+                   "learn", "skills", "skill"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

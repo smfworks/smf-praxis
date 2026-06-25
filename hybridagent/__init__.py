@@ -14,6 +14,15 @@ from .planner import Planner, Step, Plan
 from .perception import Perception, Signal
 from .reflection import Reflector
 from .llm import LLMClient
+from .persistence import Store
+from .embeddings import EmbeddingClient
+from .rag import Rag, RetrievedChunk, chunk_text
+from .router import ModelRouter, classify_sensitivity
+from .multimodal import MediaClient
+from .grounding import (GroundedResponder, GroundedAnswer, GroundedPlanner,
+                        VerificationResult, generate_json)
+from .skills import Skill, SkillLibrary, distill_skill
+from . import ingest
 
 __all__ = [
     "PraxisAgent",
@@ -24,6 +33,14 @@ __all__ = [
     "Perception", "Signal",
     "Reflector",
     "LLMClient",
+    "Store",
+    "EmbeddingClient",
+    "Rag", "RetrievedChunk", "chunk_text", "ingest",
+    "ModelRouter", "classify_sensitivity",
+    "MediaClient",
+    "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
+    "VerificationResult", "generate_json",
+    "Skill", "SkillLibrary", "distill_skill",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"

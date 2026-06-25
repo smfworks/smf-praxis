@@ -93,7 +93,7 @@ provider if onboarded, else offline mock) · `mock` (always offline) · `real`
 
 ```bash
 python demo.py          # offline, mock LLM
-pytest -q               # 11 tests
+pytest -q               # test suite
 ```
 
 ## CLI
@@ -120,9 +120,82 @@ praxis --help
 | `praxis handle ... --approve-all` | auto-approve consequential actions (dev convenience) |
 | `praxis handle ... --m365` | run against **live Microsoft 365** through the broker |
 | `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
-| `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory |
+| `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory (persisted to `~/.praxis/praxis.db`) |
+| `praxis approvals` | list held consequential actions (persisted across runs) |
+| `praxis approve <id>` | approve + execute a held action by id |
+| `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
+| `praxis recall "<query>"` | semantic search over the ingested knowledge base |
+| `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
+| `praxis describe <path>` | extract text from a document or caption/transcribe a media file |
+| `praxis route` | show contextual model routing per role + sensitivity |
+| `praxis learn "<goal>"` | distill a reusable skill (`/learn`); saved only on approval (`--yes`) |
+| `praxis skills` | list saved skills |
+| `praxis skill <name>` | show a saved skill |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Skills library (`/learn`)
+
+Praxis builds a curated, reusable skills library — Hermes-style. `praxis learn`
+(or `/learn` in the TUI) distills a goal into a named, triggerable **skill**
+(`SKILL.md` with frontmatter + steps) and indexes it for semantic retrieval.
+Because saving a skill changes future behavior, it's a **governed** act: Praxis
+drafts autonomously but only persists after you approve (`--yes`, or `y` at the
+prompt). Saved skills are stored under `~/.praxis/skills/<name>/SKILL.md`, and the
+relevant ones are retrieved and folded into perception on every cycle, so the
+agent's capability compounds over time.
+
+```bash
+praxis learn "Prepare and send a customer follow-up after a sync" --yes
+praxis skills
+praxis skill prepare-and-send-a-customer-follow-up
+```
+
+## Grounded, non-hallucinating answers
+
+`praxis ask` answers **only** from retrieved sources (knowledge base + durable
+memory). Every claim is cited `[S#]`; when the sources don't support an answer it
+returns **`INSUFFICIENT_EVIDENCE`** instead of guessing. Offline the answer is
+purely *extractive* (it copies supporting sentences, so it cannot fabricate); the
+real-model path uses a strict source-only system prompt at temperature 0 plus a
+verification pass that flags any claim not backed by a source. The LLM planner
+(`GroundedPlanner`) similarly drops any step that names a tool outside the
+registry, so it can never invent tools.
+
+## Model routing & multimodal
+
+Praxis routes each model call by **role** (planner / summarizer / vision /
+transcribe / general) and **data sensitivity**. Configure per-role models under
+`agents.roles` in `praxis.json`; anything classified sensitive (secrets, SSNs,
+card numbers, "confidential" markers) is pinned to a **local** model or the
+offline mock and is **never sent to a cloud provider**. On error the client falls
+back to the next candidate. Inspect the matrix with `praxis route`.
+
+Images, audio, and video are first-class inputs (`praxis describe <file>` or
+`praxis ingest <file>`). Offline, Praxis emits honest *metadata* (size, duration,
+dimensions) and never fabricates a description or transcript; set `PRAXIS_MM=real`
+with a vision model (`agents.roles.vision`) and speech-to-text (local Whisper or
+`agents.roles.transcribe`) to caption/transcribe for real. Extracted text flows
+into the same RAG + perception pipeline, injection-screened like any document.
+
+## Knowledge base (RAG)
+
+Praxis grounds its work in your documents. Ingested files are chunked, embedded,
+and stored in a local SQLite vector table (`~/.praxis/praxis.db`); relevant
+chunks are retrieved into **perception** each cycle and injection-screened like
+any other read (retrieved content is *data, never instruction*).
+
+```bash
+praxis ingest report.pdf notes.docx deck.pptx data.xlsx thread.eml
+praxis recall "Q3 revenue follow-up for the customer"
+```
+
+Embeddings and parsers are **offline-first**: a deterministic mock embedder needs
+no model or network, so RAG works out of the box. Plain text, Markdown, CSV/JSON,
+HTML, and `.eml` parse with the standard library; PDF/Word/PowerPoint/Excel/`.msg`
+need the optional extra (`pip install "praxis-agent[docs]"`). Point at a real
+embedding model by setting `agents.defaults.embedModel` (e.g.
+`ollama/nomic-embed-text`) and `PRAXIS_EMBED=real`.
 
 ## Microsoft 365 (via the broker)
 
@@ -146,7 +219,7 @@ tenant) is in **[M365-SETUP.md](M365-SETUP.md)**.
 
 ## Tests & CI
 
-`pytest -q` runs the 11-test suite. GitHub Actions
+`pytest -q` runs the test suite. GitHub Actions
 (`.github/workflows/ci.yml`) runs tests on Python 3.10–3.12 plus a demo/CLI
 smoke test on every push and PR to `main`.
 

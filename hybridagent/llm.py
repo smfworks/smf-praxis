@@ -17,40 +17,74 @@ import os
 from dataclasses import dataclass, field
 
 from . import config as cfg
+from .logging_util import get_logger
 from .providers import CATALOG, chat
+from .router import ModelRouter, classify_sensitivity, NORMAL
+
+_log = get_logger("praxis.llm")
 
 
 @dataclass
 class LLMClient:
     model: str = "praxis-local"
     mode: str = field(default_factory=lambda: os.environ.get("PRAXIS_LLM", "auto"))
+    router: ModelRouter = field(default_factory=ModelRouter)
 
     def _effective_mode(self) -> str:
         if self.mode in ("mock", "real"):
             return self.mode
         return "real" if cfg.is_configured() else "mock"  # auto
 
-    def complete(self, prompt: str, system: str | None = None) -> str:
+    # ------------------------------------------------------------------ public
+    def complete(self, prompt: str, system: str | None = None,
+                 role: str = "general", sensitivity: str = NORMAL) -> str:
         if self._effective_mode() == "real":
-            return self._complete_real(prompt, system)
+            return self._route(prompt, system, role, sensitivity)
+        return self._mock_complete(prompt, system)
+
+    def summarize(self, text: str, role: str = "summarizer",
+                  sensitivity: str | None = None) -> str:
+        if sensitivity is None:
+            sensitivity = classify_sensitivity(text)
+        if self._effective_mode() == "real":
+            return self._route("Summarize concisely:\n" + text, None,
+                               role, sensitivity)
+        return self._mock_summarize(text)
+
+    # -------------------------------------------------------------------- mock
+    def _mock_complete(self, prompt: str, system: str | None) -> str:
         seed = hashlib.sha256(((system or "") + prompt).encode()).hexdigest()[:8]
         head = prompt.strip().splitlines()[0][:100] if prompt.strip() else "(empty)"
         return f"[{seed}] {head}"
 
-    def summarize(self, text: str) -> str:
-        if self._effective_mode() == "real":
-            return self._complete_real("Summarize concisely:\n" + text, system=None)
+    def _mock_summarize(self, text: str) -> str:
         seed = hashlib.sha256(text.encode()).hexdigest()[:6]
         first = text.strip().splitlines()[0][:120] if text.strip() else ""
         return f"summary[{seed}]: {first}"
 
-    def _complete_real(self, prompt: str, system: str | None) -> str:
-        model_ref = cfg.get_default_model()
-        if not model_ref:
+    # ------------------------------------------------------------------- route
+    def _route(self, prompt: str, system: str | None,
+               role: str, sensitivity: str) -> str:
+        candidates = self.router.select(role, sensitivity)
+        if not candidates:
             raise RuntimeError(
                 "No provider configured. Run 'praxis onboard' to pick a "
                 "provider and model (or set PRAXIS_LLM=mock for offline use)."
             )
+        last_exc: Exception | None = None
+        for ref in candidates:
+            if ref == "mock":          # router's offline-safe choice (e.g. sensitive)
+                return self._mock_complete(prompt, system)
+            try:
+                return self._complete_with_ref(ref, prompt, system)
+            except RuntimeError as exc:
+                last_exc = exc
+                _log.warning("model %s failed (%s); trying next candidate", ref, exc)
+                continue
+        raise last_exc if last_exc else RuntimeError("no usable model")
+
+    def _complete_with_ref(self, model_ref: str, prompt: str,
+                           system: str | None) -> str:
         provider_id, model = cfg.split_model_ref(model_ref)
         if not model:
             raise RuntimeError(
@@ -71,3 +105,7 @@ class LLMClient:
             provider=provider, model=model, prompt=prompt, system=system,
             api_key=api_key, base_url=entry.get("baseUrl"),
         )
+
+    # Backwards-compatible seam (documented in FRAMEWORK.md).
+    def _complete_real(self, prompt: str, system: str | None) -> str:
+        return self._route(prompt, system, "general", NORMAL)

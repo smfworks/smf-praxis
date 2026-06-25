@@ -144,10 +144,11 @@ class M365Planner(Planner):
         return Plan(goal=goal, steps=steps)
 
 
-def build_m365_agent(client: BrokerClient | None = None) -> tuple[PraxisAgent, BrokerClient]:
+def build_m365_agent(client: BrokerClient | None = None,
+                     store=None) -> tuple[PraxisAgent, BrokerClient]:
     """A PraxisAgent whose tools are backed by the M365 broker."""
     client = client or BrokerClient.from_env()
     reg = m365_registry(client)
-    agent = PraxisAgent(registry=reg)
+    agent = PraxisAgent(registry=reg, store=store)
     agent.planner = M365Planner(reg, agent.llm)
     return agent, client
