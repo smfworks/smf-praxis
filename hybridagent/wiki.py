@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import time
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 from .ingest import extract_text
 from .rag import Rag
+from .wiki_safe import UnsafeSourceError, fetch_url, validate_uri
 
 
 @dataclass
@@ -52,6 +52,16 @@ class KBSourceManager:
             title: str = "", refresh_interval_seconds: float | None = None,
             enabled: bool = True) -> KBSource:
         stype = source_type or self._infer_type(uri)
+        # Validate up front so an operator (or an LLM-generated suggestion) is
+        # rejected at registration time rather than silently failing later.
+        if stype == "url":
+            validate_uri(uri)
+        elif stype == "file":
+            if not Path(uri).exists():
+                raise UnsafeSourceError(f"file source not found: {uri}")
+        else:
+            raise UnsafeSourceError(
+                f"refusing unknown source_type {stype!r}: use 'url' or 'file'.")
         sid = self.store.upsert_kb_source(
             uri=uri, source_type=stype, ns=ns, title=title,
             refresh_interval_seconds=refresh_interval_seconds, enabled=enabled)
@@ -78,15 +88,22 @@ class KBSourceManager:
         src = self.get(source_id)
         if src is None:
             raise KeyError(source_id)
+        # Use the stable source_id as the RAG doc id so two sources with the
+        # same human title can't clobber each other's vectors.
+        doc_id = source_id
         try:
             text, kind, source_name = self._read_source(src)
             digest = hashlib.sha256(text.encode()).hexdigest()
             if digest == src.last_hash:
+                # Advance last_ingested_ts so an unchanged source stops being
+                # "due" until the interval elapses again — otherwise every
+                # refresh_due cycle re-fetches it forever.
                 self.store.update_kb_source_refresh(
-                    source_id, "unchanged", last_hash=digest, error="")
+                    source_id, "unchanged", last_hash=digest, error="",
+                    ingested=True)
             else:
                 rag.ingest_text(
-                    text, source=source_name, kind=kind,
+                    text, source=doc_id, kind=kind,
                     provenance=f"{src.source_type}:{src.uri}", ns=src.ns)
                 self.store.update_kb_source_refresh(
                     source_id, "refreshed", last_hash=digest,
@@ -110,9 +127,7 @@ class KBSourceManager:
     @staticmethod
     def _read_source(src: KBSource) -> tuple[str, str, str]:
         if src.source_type == "url":
-            req = urllib.request.Request(src.uri, headers={"User-Agent": "praxis-kb"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                raw = resp.read().decode(errors="replace")
+            raw = fetch_url(src.uri)
             title = src.title or src.uri
             return raw, "wiki", title
         path = Path(src.uri)

@@ -9,6 +9,7 @@ phases can run the same queue from an async worker or background scheduler.
 from __future__ import annotations
 
 import json
+import random
 import time
 import uuid
 from dataclasses import dataclass
@@ -16,6 +17,9 @@ from dataclasses import dataclass
 
 TERMINAL = {"completed", "failed", "cancelled"}
 RUNNABLE = {"pending", "retry"}
+# A task left in 'running' longer than this is treated as orphaned (process
+# crashed mid-cycle) and gets recovered on the next TaskManager construction.
+ORPHAN_THRESHOLD_SECONDS = 300.0
 
 
 @dataclass
@@ -40,6 +44,21 @@ class TaskState:
 class TaskManager:
     def __init__(self, store) -> None:
         self.store = store
+        self._recover_orphans()
+
+    def _recover_orphans(self) -> None:
+        """Sweep tasks left in 'running' past the orphan threshold and move
+        them back to 'retry' so a crash mid-cycle doesn't lose work."""
+        now = time.time()
+        for row in self.store.list_tasks(status="running"):
+            if now - row.get("updated_ts", now) < ORPHAN_THRESHOLD_SECONDS:
+                continue
+            self.store.update_task(
+                row["task_id"], status="retry",
+                error="orphaned: process exited before task finished")
+            self.store.add_compliance_event(
+                row.get("cycle_id", ""), "task_orphan_recovered",
+                {"task_id": row["task_id"]}, ref_id=row["task_id"])
 
     def create(self, goal: str, max_attempts: int = 3) -> TaskState:
         task_id = f"task-{uuid.uuid4().hex[:10]}"
@@ -73,6 +92,11 @@ class TaskManager:
             raise KeyError(task_id)
         if task.status in TERMINAL:
             return task
+        if task.status == "waiting_approval":
+            # Idempotency guard: do NOT re-execute a task whose previous attempt
+            # already queued an approval. Otherwise retries stack duplicate
+            # consequential approvals for the same logical action.
+            return task
         now = time.time()
         row = self.store.get_task(task_id)
         if row.get("next_retry_ts") and row["next_retry_ts"] > now:
@@ -102,7 +126,11 @@ class TaskManager:
         except Exception as exc:
             failed_terminal = attempts >= task.max_attempts
             status = "failed" if failed_terminal else "retry"
-            next_retry = None if failed_terminal else now + min(3600, 2 ** attempts)
+            # Exponential backoff with jitter avoids thundering-herd when many
+            # tasks fail simultaneously and all retry at the same second.
+            base = min(3600.0, 2.0 ** attempts)
+            jitter = random.uniform(0, base * 0.25)
+            next_retry = None if failed_terminal else now + base + jitter
             self.store.update_task(
                 task_id, status=status, next_retry_ts=next_retry, error=str(exc))
             self.store.add_compliance_event(task.cycle_id, "task_error", {

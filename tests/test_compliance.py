@@ -61,7 +61,7 @@ def test_approval_records_operator_and_compliance_report_passes(tmp_path, monkey
     assert "PASS" in ComplianceReporter.render(report)
 
 
-def test_compliance_report_flags_resolved_without_approval(tmp_path, monkeypatch):
+def test_compliance_report_treats_rejected_as_benign(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     agent = PraxisAgent.persistent()
     report = agent.handle("Prepare a customer follow-up email")
@@ -69,5 +69,20 @@ def test_compliance_report_flags_resolved_without_approval(tmp_path, monkeypatch
     assert agent.store.resolve_approval(approval_id, "rejected")
 
     compliance = ComplianceReporter(agent.store).build()
+    # Rejection is the compliant outcome — the action did not run.
+    assert compliance.passed
+    assert compliance.rejected_consequential == 1
+
+
+def test_compliance_report_flags_failed_task(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    agent = PraxisAgent.persistent()
+    # Synthesize a failed task to trigger the new error-aware finding.
+    agent.store.add_task("task-fail1", "broken goal")
+    agent.store.update_task("task-fail1", status="failed", error="boom")
+    compliance = ComplianceReporter(agent.store).build()
     assert not compliance.passed
-    assert any(f.severity == "high" for f in compliance.findings)
+    assert any("task" in f.message and f.severity == "high"
+               for f in compliance.findings)
+    assert compliance.failed_tasks == 1
+
