@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from .agent import PraxisAgent
 from .tools import ToolRegistry, default_registry
 
-
 ROLE_TO_TOOLS = {
     "researcher": {"list_today_events", "search_mail", "get_file_text", "save_private_note"},
     "drafter": {

@@ -1,6 +1,6 @@
 from hybridagent import PraxisAgent
 from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass, Verdict
-from hybridagent.memory import Memory, Tier
+from hybridagent.memory import Memory
 
 
 def test_reads_and_drafts_are_autonomous():

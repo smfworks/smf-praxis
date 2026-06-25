@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 
 from .broker import RiskClass
 
-
 CONSEQUENTIAL = {RiskClass.SEND.value, RiskClass.DESTRUCTIVE.value}
 ERROR_EVENT_TYPES = {
     "task_error",

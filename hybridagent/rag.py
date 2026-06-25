@@ -85,7 +85,7 @@ class Rag:
         prov = provenance or f"document:{source}"
         # Re-ingesting a doc replaces its old chunks (idempotent updates).
         self.store.delete_doc(ns, source)
-        for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
+        for i, (chunk, vec) in enumerate(zip(chunks, vectors, strict=True)):
             self.store.add_vector(ns, source, i, chunk, prov, kind, vec)
         _log.info("ingested %s: %d chunks into ns=%s", source, len(chunks), ns)
         return len(chunks)

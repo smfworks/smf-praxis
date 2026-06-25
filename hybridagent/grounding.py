@@ -54,6 +54,7 @@ class GroundedAnswer:
     abstained: bool = False
     verification: VerificationResult | None = None
     sources_used: list[int] = field(default_factory=list)
+    contradictions: list = field(default_factory=list)
 
 
 def _render_sources(sources: list[RetrievedChunk]) -> str:
@@ -205,9 +206,10 @@ class GroundedPlanner(Planner):
         if self.llm._effective_mode() != "real":
             return super().plan(goal)
         try:
+            tools = [self.registry.get(n) for n in self.registry.names()]
             catalog = "\n".join(
-                f"- {self.registry.get(n).name} ({self.registry.get(n).risk.value}): "
-                f"{self.registry.get(n).description}" for n in self.registry.names())
+                f"- {t.name} ({t.risk.value}): {t.description}"
+                for t in tools if t is not None)
             prompt = (
                 f"Goal: {goal}\n\nAvailable tools (use ONLY these tool names):\n"
                 f"{catalog}\n\nReturn JSON: "
@@ -216,11 +218,15 @@ class GroundedPlanner(Planner):
             obj = generate_json(self.llm, prompt, ["steps"])
             steps: list[Step] = []
             for s in obj.get("steps", []):
+                if not isinstance(s, dict):
+                    continue
                 tool = s.get("tool")
-                if not isinstance(s, dict) or self.registry.get(tool) is None:
+                if not isinstance(tool, str) or self.registry.get(tool) is None:
                     continue                      # drop hallucinated/unknown tools
-                steps.append(Step(s.get("intent", "step"), tool,
-                                  s.get("args") if isinstance(s.get("args"), dict) else {}))
+                args = s.get("args")
+                intent = str(s.get("intent", "step"))
+                steps.append(Step(intent, tool,
+                                  args if isinstance(args, dict) else {}))
             return Plan(goal=goal, steps=steps) if steps else super().plan(goal)
         except Exception:
             return super().plan(goal)             # safe fallback

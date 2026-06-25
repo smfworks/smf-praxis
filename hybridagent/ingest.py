@@ -18,7 +18,6 @@ memory layers can keep treating retrieved content as *data, never instruction*.
 from __future__ import annotations
 
 import csv
-import io
 import json
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -119,12 +118,15 @@ def _parse_eml(path: Path) -> str:
     try:
         part = msg.get_body(preferencelist=("plain", "html"))
         if part is not None:
-            content = part.get_content()
+            content = str(part.get_content())
             if part.get_content_subtype() == "html":
-                p = _TextHTMLParser(); p.feed(content); content = p.text()
+                p = _TextHTMLParser()
+                p.feed(content)
+                content = p.text()
             body = content
     except Exception:
-        body = msg.get_payload(decode=False) if isinstance(msg.get_payload(), str) else ""
+        payload = msg.get_payload(decode=False)
+        body = payload if isinstance(payload, str) else ""
     return head + body
 
 
@@ -145,7 +147,7 @@ def _parse_pdf(path: Path) -> str:
 
 def _parse_docx(path: Path) -> str:
     try:
-        import docx  # type: ignore  (python-docx)
+        import docx  # type: ignore[import-untyped]
     except Exception:
         _missing("python-docx")
     d = docx.Document(str(path))

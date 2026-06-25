@@ -19,7 +19,7 @@ from __future__ import annotations
 from .agent import PraxisAgent
 from .broker import RiskClass
 from .broker_client import BrokerClient
-from .planner import Planner, Plan, Step
+from .planner import Plan, Planner, Step
 from .tools import Tool, ToolRegistry
 
 # broker catalog sensitivity -> Praxis risk class

@@ -76,7 +76,7 @@ def write_provider(provider_id: str, base_url: str, compatibility: str,
     cfg = load_config()
     cfg.setdefault("agents", {}).setdefault("defaults", {})["model"] = model_ref
     providers = cfg.setdefault("providers", {})
-    entry = {"baseUrl": base_url, "compatibility": compatibility}
+    entry: dict = {"baseUrl": base_url, "compatibility": compatibility}
     if key_env:
         if use_env_ref:
             entry["keyRef"] = {"source": "env", "id": key_env}

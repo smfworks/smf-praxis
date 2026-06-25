@@ -175,8 +175,8 @@ def _chat_openai(root: str, model: str, prompt: str, system: str | None,
                   "temperature": temperature, "max_tokens": max_tokens}, timeout)
     try:
         return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
 
 
 def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
@@ -218,8 +218,8 @@ def embed(provider: Provider, model: str, texts: list[str],
     try:
         items = sorted(data["data"], key=lambda d: d.get("index", 0))
         return [it["embedding"] for it in items]
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError(f"unexpected embeddings response: {str(data)[:300]}")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected embeddings response: {str(data)[:300]}") from exc
 
 
 def chat_multimodal(provider: Provider, model: str, prompt: str,
@@ -263,8 +263,8 @@ def chat_multimodal(provider: Provider, model: str, prompt: str,
                   "temperature": temperature, "max_tokens": max_tokens}, timeout)
     try:
         return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
 
 
 def transcribe(provider: Provider, model: str, audio_path: str,
@@ -294,7 +294,7 @@ def transcribe(provider: Provider, model: str, audio_path: str,
             data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         raise RuntimeError(
-            f"transcribe HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+            f"transcribe HTTP {e.code}: {e.read().decode(errors='replace')[:200]}") from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f"transcribe unreachable: {e.reason}")
+        raise RuntimeError(f"transcribe unreachable: {e.reason}") from e
     return data.get("text", "")

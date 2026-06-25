@@ -1,4 +1,5 @@
-from hybridagent import PraxisAgent, config as cfg
+from hybridagent import PraxisAgent
+from hybridagent import config as cfg
 from hybridagent.compliance import ComplianceReporter
 
 

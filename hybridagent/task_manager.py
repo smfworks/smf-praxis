@@ -14,7 +14,6 @@ import time
 import uuid
 from dataclasses import dataclass
 
-
 TERMINAL = {"completed", "failed", "cancelled"}
 RUNNABLE = {"pending", "retry"}
 # A task left in 'running' longer than this is treated as orphaned (process
@@ -66,7 +65,13 @@ class TaskManager:
         self.store.add_compliance_event("", "task_created", {
             "task_id": task_id, "goal": goal, "max_attempts": max_attempts,
         }, ref_id=task_id)
-        return self.get(task_id)
+        return self._require(task_id)
+
+    def _require(self, task_id: str) -> TaskState:
+        task = self.get(task_id)
+        if task is None:
+            raise KeyError(task_id)
+        return task
 
     def get(self, task_id: str) -> TaskState | None:
         row = self.store.get_task(task_id)
@@ -137,4 +142,4 @@ class TaskManager:
                 "task_id": task_id, "attempt": attempts,
                 "status": status, "error": str(exc),
             }, ref_id=task_id)
-        return self.get(task_id)
+        return self._require(task_id)

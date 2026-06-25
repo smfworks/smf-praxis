@@ -104,7 +104,7 @@ def test_extract_xlsx(tmp_path):
 def test_extract_pdf(tmp_path):
     pytest.importorskip("pypdf")
     # Build a 1-page PDF with text using pypdf's writer if reportlab is absent.
-    reportlab = pytest.importorskip("reportlab")
+    pytest.importorskip("reportlab")
     from reportlab.pdfgen import canvas
     p = tmp_path / "d.pdf"
     c = canvas.Canvas(str(p))
