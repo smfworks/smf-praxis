@@ -61,7 +61,14 @@ class PredictiveRouter:
     """Lightweight goal -> role routing heuristic, ready to be replaced by
     learned outcome statistics as subagent run data accumulates."""
 
-    def route(self, goal: str) -> str:
+    def route(self, goal: str, *, injection_flagged: bool = False) -> str:
+        """Heuristic role assignment. When the goal text originates from a
+        signal flagged as injection (or any other untrusted source), refuse to
+        let keyword steering escalate from the most-restrictive role —
+        otherwise an attacker who controls retrieved content can route
+        consequential work into the drafter pool, etc."""
+        if injection_flagged:
+            return "researcher"
         g = goal.lower()
         if any(k in g for k in ("risk", "compliance", "audit", "policy", "hipaa")):
             return "compliance"
@@ -97,21 +104,46 @@ class AgentPool:
 
 
 class Orchestrator:
+    # Hard cap on subagent nesting depth. The orchestrator can call itself
+    # (e.g. compliance reviewer spawning a researcher), but unbounded recursion
+    # would be both a runaway-resource risk and a governance-bypass surface.
+    MAX_DEPTH = 3
+
     def __init__(self, store, router: PredictiveRouter | None = None,
                  pool: AgentPool | None = None) -> None:
         self.store = store
         self.router = router or PredictiveRouter()
         self.pool = pool or AgentPool(store)
 
-    def run(self, goal: str, role: str | None = None) -> SubagentRun:
-        chosen = role or self.router.route(goal)
+    def run(self, goal: str, role: str | None = None, *,
+            injection_flagged: bool = False, parent_run_id: str = "",
+            depth: int = 0) -> SubagentRun:
+        if depth >= self.MAX_DEPTH:
+            run_id = f"run-{uuid.uuid4().hex[:10]}"
+            chosen = role or "researcher"
+            self.store.add_subagent_run(run_id, f"agent-{chosen}", chosen, goal,
+                                        status="failed")
+            self.store.update_subagent_run(
+                run_id, status="failed",
+                error=f"recursion depth exceeded (depth={depth} >= {self.MAX_DEPTH})")
+            self.store.add_compliance_event("", "subagent_recursion_blocked", {
+                "run_id": run_id, "parent_run_id": parent_run_id,
+                "depth": depth, "max_depth": self.MAX_DEPTH,
+            }, ref_id=run_id)
+            return SubagentRun(run_id, f"agent-{chosen}", chosen, goal, "failed")
+        chosen = role or self.router.route(goal, injection_flagged=injection_flagged)
         spec, agent = self.pool.build_agent(chosen)
         run_id = f"run-{uuid.uuid4().hex[:10]}"
         self.store.add_subagent_run(run_id, spec.agent_id, spec.role, goal)
         self.store.add_compliance_event("", "subagent_started", {
             "run_id": run_id, "agent_id": spec.agent_id,
             "role": spec.role, "goal": goal, "tools": spec.tools,
+            "parent_run_id": parent_run_id, "depth": depth,
         }, ref_id=run_id)
+        # Mark the agent instance live for liveness monitoring.
+        self.store.upsert_agent_instance(spec.agent_id, spec.role,
+                                         tools=spec.tools, status="running",
+                                         load=1)
         try:
             report = agent.handle(goal)
             result = {"summary": report.summary(), "actions": report.actions,
@@ -122,8 +154,11 @@ class Orchestrator:
                 result_json=json.dumps(result), error="")
             self.store.add_compliance_event(report.cycle_id, "subagent_finished", {
                 "run_id": run_id, "agent_id": spec.agent_id, "role": spec.role,
-                "status": status,
+                "status": status, "parent_run_id": parent_run_id, "depth": depth,
             }, ref_id=run_id)
+            self.store.upsert_agent_instance(spec.agent_id, spec.role,
+                                             tools=spec.tools, status="idle",
+                                             load=0)
             return SubagentRun(run_id, spec.agent_id, spec.role, goal, status,
                                cycle_id=report.cycle_id)
         except Exception as exc:
@@ -131,8 +166,28 @@ class Orchestrator:
             self.store.add_compliance_event("", "subagent_error", {
                 "run_id": run_id, "agent_id": spec.agent_id,
                 "role": spec.role, "error": str(exc),
+                "parent_run_id": parent_run_id, "depth": depth,
             }, ref_id=run_id)
+            self.store.upsert_agent_instance(spec.agent_id, spec.role,
+                                             tools=spec.tools, status="error",
+                                             load=0)
             return SubagentRun(run_id, spec.agent_id, spec.role, goal, "failed")
 
     def list_runs(self, limit: int = 100) -> list[dict]:
         return self.store.list_subagent_runs(limit)
+
+    def liveness(self, max_idle_seconds: float = 3600.0) -> list[dict]:
+        """Return agent instances whose last_heartbeat_ts is older than
+        ``max_idle_seconds``. Stale agents are also marked 'stale' in the store."""
+        import time as _time
+        now = _time.time()
+        stale: list[dict] = []
+        for inst in self.store.list_agent_instances():
+            hb = inst.get("last_heartbeat_ts")
+            if hb is None or (now - hb) <= max_idle_seconds:
+                continue
+            stale.append(inst)
+            self.store.upsert_agent_instance(
+                inst["agent_id"], inst["role"], tools=inst.get("tools", []),
+                status="stale", load=inst.get("load", 0))
+        return stale

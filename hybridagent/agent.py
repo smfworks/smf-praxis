@@ -125,6 +125,19 @@ class PraxisAgent:
             tool = self.registry.get(step.tool)
             if not tool:
                 continue
+            # Pre-flight: validate step args against the tool's declared schema
+            # so malformed plans fail at plan time (with a clean audit entry)
+            # rather than mid-execution against a real M365 endpoint.
+            try:
+                from .validation import validate_tool_args, ValidationError
+                validate_tool_args(tool, step.args)
+            except ValidationError as exc:
+                report.actions.append(
+                    f"[{tool.risk.value}] {step.intent} -> SCHEMA-DENIED ({exc})")
+                self._event(report.cycle_id, "schema_denied", {
+                    "tool": tool.name, "error": str(exc),
+                })
+                continue
             preview = f"{step.intent}: {step.tool}({step.args})"
             decision = self.broker.authorize(
                 actor="praxis", tool=tool.name, risk=tool.risk,
@@ -184,6 +197,7 @@ class PraxisAgent:
 
         # 5+6. REFLECT + CONSOLIDATE.
         report.reflection = self.reflector.reflect(goal, report.actions)
+        self._record_skill_outcomes(goal, signals, report)
         self._event(report.cycle_id, "cycle_end", {
             "actions": len(report.actions),
             "pending_approvals": len(report.pending_approvals),
@@ -246,16 +260,69 @@ class PraxisAgent:
             })
         return out
 
+    def _record_skill_outcomes(self, goal: str, signals: list[Signal],
+                               report: "CycleReport") -> None:
+        """Score skills that fired during this cycle so the evaluator can
+        quarantine low-quality ones over time. Without this, Phase 9's metrics
+        never accumulate from real usage."""
+        if self.skills is None or self.skills.rag is None:
+            return
+        applied = [s.source.split(":", 1)[1] for s in signals
+                   if s.source.startswith("skill:")]
+        if not applied:
+            return
+        # A cycle is a "success" when actions ran without errors AND nothing was
+        # denied. Held approvals are neutral (the human will decide).
+        has_error = any("-> ERROR" in a for a in report.actions)
+        has_denied = any("-> DENIED" in a for a in report.actions)
+        if has_error or has_denied:
+            outcome = "failure"
+        elif report.pending_approvals:
+            outcome = "partial"
+        else:
+            outcome = "success"
+        for name in applied:
+            try:
+                self.skills.record_outcome(
+                    name, goal, outcome, cycle_id=report.cycle_id,
+                    notes=f"auto-recorded; actions={len(report.actions)}")
+            except Exception:
+                continue
+        self._event(report.cycle_id, "skill_outcomes_recorded", {
+            "skills": applied, "outcome": outcome,
+        })
+
     # ---------------------------------------------------- proactive trigger
-    def heartbeat(self, watch_goal: str = "scan for urgent follow-ups") -> CycleReport:
-        """OpenClaw-style always-on tick: proactively run a watch goal."""
+    def heartbeat(self, watch_goal: str = "scan for urgent follow-ups",
+                  refresh_wiki: bool = True) -> CycleReport:
+        """OpenClaw-style always-on tick: proactively refresh KB sources due
+        for revalidation, then run a watch goal. Setting refresh_wiki=False
+        skips the refresh (useful in tests)."""
+        if refresh_wiki and self.store is not None:
+            try:
+                from .wiki import KBSourceManager
+                KBSourceManager(self.store).refresh_due(rag=self.rag)
+            except Exception as exc:
+                self._event("", "heartbeat_wiki_error", {"error": str(exc)})
         return self.handle(watch_goal)
 
     # ------------------------------------------------- grounded Q&A (no hallucination)
-    def ask(self, question: str, k: int = 5):
-        """Answer a question grounded in retrieved sources; abstain if unsupported."""
+    def ask(self, question: str, k: int = 5, *,
+            refresh_wiki: bool = True):
+        """Answer a question grounded in retrieved sources; abstain if unsupported.
+
+        Before retrieval, refresh any registered wiki sources that are due so
+        the answer reflects current KB. Contradictions across retrieved chunks
+        are surfaced on the returned answer (caller can inspect
+        ``answer.contradictions``) and emitted to the compliance event log."""
         from .grounding import GroundedResponder
         from .rag import RetrievedChunk
+        if refresh_wiki and self.store is not None:
+            try:
+                from .wiki import KBSourceManager
+                KBSourceManager(self.store).refresh_due(rag=self.rag)
+            except Exception as exc:
+                self._event("", "ask_wiki_refresh_error", {"error": str(exc)})
         sources: list = []
         if self.rag is not None:
             sources.extend(self.rag.retrieve(question, k=k))
@@ -263,7 +330,24 @@ class PraxisAgent:
             sources.append(RetrievedChunk(
                 text=item.text, source=f"memory:{item.kind}", score=1.0,
                 kind="memory", provenance=item.provenance))
-        return GroundedResponder(self.llm).answer(question, sources)
+        answer = GroundedResponder(self.llm).answer(question, sources)
+        # Annotate with contradiction findings — caller / CLI can show these.
+        try:
+            from .contradiction import detect
+            answer.contradictions = detect(sources)
+            if answer.contradictions and self.store is not None:
+                self._event("", "ask_contradictions_detected", {
+                    "question": question,
+                    "count": len(answer.contradictions),
+                    "pairs": [
+                        {"a": c.a_source, "b": c.b_source,
+                         "score": c.score, "why": c.explanation}
+                        for c in answer.contradictions
+                    ],
+                })
+        except Exception:
+            answer.contradictions = []
+        return answer
 
     # ------------------------------------------------------- skill distillation
     def learn_skill(self, goal: str, name: str | None = None):

@@ -8,6 +8,13 @@ class SkillEvaluator:
 
     def record(self, skill_name: str, goal: str, outcome: str,
                cycle_id: str = "", notes: str = "") -> dict | None:
+        if self.library is None or self.library.rag is None:
+            from .logging_util import get_logger
+            get_logger("praxis.skills").warning(
+                "skill outcome %s/%s not recorded: SkillLibrary has no store. "
+                "Build a persistent agent or pass a store to the library.",
+                skill_name, outcome)
+            return None
         self.library.record_outcome(
             skill_name, goal, outcome, cycle_id=cycle_id, notes=notes)
         return self.library.metadata(skill_name)
