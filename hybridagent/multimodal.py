@@ -52,10 +52,16 @@ class MediaClient:
     mode: str = field(default_factory=lambda: os.environ.get("PRAXIS_MM", "auto"))
     router: ModelRouter = field(default_factory=ModelRouter)
 
-    def _effective_mode(self) -> str:
-        if self.mode in ("mock", "real"):
-            return self.mode
-        return "real" if cfg.is_configured() else "mock"  # auto
+    def _use_real(self, role: str) -> bool:
+        """Real multimodal only when a *capable* model exists. In auto mode that
+        means a model is configured for THIS role (vision/transcribe) — a bare
+        text model must not be handed an image (it would invent a caption) or an
+        audio file (it would error)."""
+        if self.mode == "mock":
+            return False
+        if self.mode == "real":
+            return True
+        return self.router.role_model(role) is not None  # auto
 
     def is_media(self, path: str | Path) -> bool:
         return is_media(path)
@@ -81,7 +87,7 @@ class MediaClient:
     def describe_image(self, path: str | Path,
                        prompt: str = "Describe this image in detail for search "
                                      "and retrieval. List any visible text.") -> str:
-        if self._effective_mode() == "mock":
+        if not self._use_real("vision"):
             return self._image_meta(path)
         provider, model, entry = self._resolve("vision")
         key = cfg.resolve_api_key(provider.id)
@@ -91,7 +97,7 @@ class MediaClient:
 
     # -------------------------------------------------------------------- audio
     def transcribe_audio(self, path: str | Path) -> str:
-        if self._effective_mode() == "mock":
+        if not self._use_real("transcribe"):
             return self._audio_meta(path)
         # Prefer a local Whisper install (fully local STT) when available.
         try:
@@ -109,7 +115,7 @@ class MediaClient:
 
     # -------------------------------------------------------------------- video
     def process_video(self, path: str | Path) -> str:
-        if self._effective_mode() == "mock":
+        if not self._use_real("vision"):
             return self._video_meta(path)
         try:
             import cv2  # type: ignore

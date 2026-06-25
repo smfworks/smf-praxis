@@ -30,3 +30,26 @@ def test_auto_mode_is_mock_without_embed_model(tmp_path, monkeypatch):
     assert EmbeddingClient()._effective_mode() == "mock"
     out = EmbeddingClient().embed([])
     assert out == []
+
+
+def test_sensitive_text_never_sent_to_cloud_embedder(tmp_path, monkeypatch):
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_embed_model("openai/text-embedding-3-small")          # cloud embedder
+    import hybridagent.embeddings as emb
+
+    def _boom(**_):
+        raise AssertionError("cloud embedder was called with sensitive content")
+
+    monkeypatch.setattr(emb, "provider_embed", _boom)
+    e = emb.EmbeddingClient(mode="real")
+    out = e.embed(["server password: hunter2 do not share"])
+    assert len(out) == 1 and len(out[0]) == e.dim                 # local mock vector
+
+
+def test_nonsensitive_text_uses_real_embedder(tmp_path, monkeypatch):
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_embed_model("openai/text-embedding-3-small")
+    import hybridagent.embeddings as emb
+    monkeypatch.setattr(emb, "provider_embed", lambda **k: [[0.1, 0.2, 0.3]])
+    e = emb.EmbeddingClient(mode="real")
+    assert e.embed(["quarterly status update meeting notes"]) == [[0.1, 0.2, 0.3]]

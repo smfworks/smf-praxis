@@ -95,6 +95,9 @@ class PraxisAgent:
         # Reuse what perception already read so a read tool isn't executed twice
         # per cycle (which, against the M365 broker, would double real Graph
         # calls). Only cache signals that came from an actual registered tool.
+        # NOTE: keyed on tool name only — valid because perception and the
+        # heuristic Planner both read at goal granularity. Before wiring an
+        # LLM planner that emits arbitrary read args, key this on (tool, args).
         read_cache = {s.source: s.content for s in signals
                       if self.registry.get(s.source) is not None}
 

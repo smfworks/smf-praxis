@@ -236,6 +236,13 @@ class Store:
                 (ns,)).fetchall()
         return [r["doc_id"] for r in rows]
 
+    def doc_latest_ts(self, ns: str, doc_id: str) -> float:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(ts) AS m FROM vectors WHERE ns=? AND doc_id=?",
+                (ns, doc_id)).fetchone()
+        return float(row["m"]) if row and row["m"] is not None else 0.0
+
     def delete_doc(self, ns: str, doc_id: str) -> int:
         with self._lock:
             cur = self._conn.execute(
