@@ -183,21 +183,71 @@ class SkillLibrary:
         return sorted(self.skills.values(), key=lambda s: s.name)
 
     def retrieve(self, goal: str, k: int = 3) -> list[Skill]:
+        def active(sk: Skill) -> bool:
+            if not sk.enabled:
+                return False
+            if self.rag is not None:
+                meta = self.rag.store.skill_metadata(sk.name)
+                if meta and meta.get("quarantined"):
+                    return False
+            return True
+
         if self.rag is not None and self.rag.store.count_vectors("skills"):
             hits = self.rag.retrieve(goal, k=k, ns="skills")
-            out = [self.skills[h.source] for h in hits if h.source in self.skills]
+            out = [
+                self.skills[h.source] for h in hits
+                if h.source in self.skills and active(self.skills[h.source])
+            ]
             if out:
                 return out
         # Lexical fallback over triggers/names.
         q = set(re.findall(r"[a-z0-9]+", goal.lower()))
         scored = []
         for sk in self.skills.values():
+            if not active(sk):
+                continue
             toks = set(re.findall(r"[a-z0-9]+", f"{sk.name} {sk.trigger}".lower()))
             overlap = len(q & toks)
             if overlap:
                 scored.append((overlap, sk))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [sk for _, sk in scored[:k]]
+
+    # -------------------------------------------------------------- outcomes
+    def record_outcome(self, skill_name: str, goal: str, outcome: str,
+                       score: float | None = None, cycle_id: str = "",
+                       notes: str = "") -> None:
+        if self.rag is None:
+            return
+        if outcome not in ("success", "partial", "failure"):
+            raise ValueError("outcome must be success, partial, or failure")
+        numeric = score if score is not None else {
+            "success": 1.0, "partial": 0.5, "failure": 0.0,
+        }[outcome]
+        self.rag.store.record_skill_outcome(
+            skill_name, goal, outcome, numeric, cycle_id=cycle_id, notes=notes)
+
+    def metadata(self, skill_name: str) -> dict | None:
+        if self.rag is None:
+            return None
+        return self.rag.store.skill_metadata(skill_name)
+
+    def quarantine_low_quality(self, min_uses: int = 3,
+                               threshold: float = 0.4) -> list[str]:
+        if self.rag is None:
+            return []
+        quarantined: list[str] = []
+        for meta in self.rag.store.list_skill_metadata():
+            if (meta["usage_count"] >= min_uses
+                    and meta["quality_score"] < threshold
+                    and not meta["quarantined"]):
+                self.rag.store.set_skill_quarantine(meta["skill_name"], True)
+                quarantined.append(meta["skill_name"])
+        return quarantined
+
+    def unquarantine(self, skill_name: str) -> None:
+        if self.rag is not None:
+            self.rag.store.set_skill_quarantine(skill_name, False)
 
 
 # ----------------------------------------------------------------- distillation

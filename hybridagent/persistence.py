@@ -128,6 +128,29 @@ CREATE TABLE IF NOT EXISTS kb_sources (
 );
 CREATE INDEX IF NOT EXISTS ix_kb_sources_enabled ON kb_sources(enabled);
 CREATE INDEX IF NOT EXISTS ix_kb_sources_ns ON kb_sources(ns);
+
+CREATE TABLE IF NOT EXISTS skill_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_name TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    score REAL NOT NULL,
+    cycle_id TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_skill_outcomes_name ON skill_outcomes(skill_name);
+
+CREATE TABLE IF NOT EXISTS skill_metadata (
+    skill_name TEXT PRIMARY KEY,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    quality_score REAL NOT NULL DEFAULT 0.0,
+    last_used_ts REAL,
+    quarantined INTEGER NOT NULL DEFAULT 0,
+    updated_ts REAL NOT NULL
+);
 """
 
 
@@ -565,4 +588,63 @@ class Store:
         vals = list(fields.values()) + [source_id]
         with self._lock:
             self._conn.execute(f"UPDATE kb_sources SET {cols} WHERE source_id=?", vals)
+            self._conn.commit()
+
+    # ---------------------------------------------------------- skill metrics
+    def record_skill_outcome(self, skill_name: str, goal: str, outcome: str,
+                             score: float, cycle_id: str = "",
+                             notes: str = "") -> None:
+        now = time.time()
+        success = 1 if outcome == "success" else 0
+        failure = 1 if outcome == "failure" else 0
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO skill_outcomes"
+                "(skill_name,goal,outcome,score,cycle_id,notes,ts) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (skill_name, goal, outcome, score, cycle_id, notes, now),
+            )
+            meta = self._conn.execute(
+                "SELECT usage_count,success_count,failure_count FROM skill_metadata "
+                "WHERE skill_name=?", (skill_name,),
+            ).fetchone()
+            if meta:
+                usage = meta["usage_count"] + 1
+                successes = meta["success_count"] + success
+                failures = meta["failure_count"] + failure
+            else:
+                usage, successes, failures = 1, success, failure
+            quality = successes / usage if usage else 0.0
+            self._conn.execute(
+                "INSERT OR REPLACE INTO skill_metadata"
+                "(skill_name,usage_count,success_count,failure_count,quality_score,"
+                "last_used_ts,quarantined,updated_ts) VALUES (?,?,?,?,?,?,"
+                "COALESCE((SELECT quarantined FROM skill_metadata WHERE skill_name=?), 0),?)",
+                (skill_name, usage, successes, failures, quality, now, skill_name, now),
+            )
+            self._conn.commit()
+
+    def skill_metadata(self, skill_name: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM skill_metadata WHERE skill_name=?", (skill_name,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_skill_metadata(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM skill_metadata ORDER BY quality_score ASC, updated_ts DESC",
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_skill_quarantine(self, skill_name: str, quarantined: bool) -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO skill_metadata(skill_name,quarantined,updated_ts) "
+                "VALUES (?,?,?) ON CONFLICT(skill_name) DO UPDATE SET "
+                "quarantined=excluded.quarantined, updated_ts=excluded.updated_ts",
+                (skill_name, 1 if quarantined else 0, now),
+            )
             self._conn.commit()

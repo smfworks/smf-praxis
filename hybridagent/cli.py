@@ -322,6 +322,33 @@ def cmd_skill(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skill_record(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    from .skill_evaluator import SkillEvaluator
+    meta = SkillEvaluator(agent.skills).record(
+        args.name, args.goal, args.outcome, cycle_id=args.cycle_id or "",
+        notes=args.notes or "")
+    print(SkillEvaluator(agent.skills).impact_report(args.name))
+    return 0
+
+
+def cmd_skill_evaluate(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    from .skill_evaluator import SkillEvaluator
+    ev = SkillEvaluator(agent.skills)
+    quarantined = ev.quarantine_low_quality(
+        min_uses=args.min_uses, threshold=args.threshold)
+    if quarantined:
+        print("quarantined: " + ", ".join(quarantined))
+    metas = agent.skills.rag.store.list_skill_metadata() if agent.skills and agent.skills.rag else []
+    if not metas:
+        print("no skill outcome data")
+        return 0
+    for m in metas:
+        print(ev.impact_report(m["skill_name"]))
+    return 0
+
+
 def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
@@ -463,6 +490,19 @@ def build_parser() -> argparse.ArgumentParser:
     pskw.add_argument("name", help="the skill name")
     pskw.set_defaults(func=cmd_skill)
 
+    psr = sub.add_parser("skill-record", help="record a skill outcome")
+    psr.add_argument("name")
+    psr.add_argument("goal")
+    psr.add_argument("outcome", choices=["success", "partial", "failure"])
+    psr.add_argument("--cycle-id", default="")
+    psr.add_argument("--notes", default="")
+    psr.set_defaults(func=cmd_skill_record)
+
+    pse = sub.add_parser("skill-evaluate", help="evaluate and quarantine low-quality skills")
+    pse.add_argument("--min-uses", type=int, default=3)
+    pse.add_argument("--threshold", type=float, default=0.4)
+    pse.set_defaults(func=cmd_skill_evaluate)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -490,6 +530,7 @@ def _maybe_first_run_onboard(command: str) -> None:
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
                    "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance",
+                   "skill-record", "skill-evaluate",
                    "task-create", "tasks", "task-run", "task-cancel",
                    "wiki-add", "wiki-sources", "wiki-refresh"):
         return

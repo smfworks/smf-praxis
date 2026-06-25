@@ -25,6 +25,7 @@ from .skills import Skill, SkillLibrary, distill_skill
 from .compliance import ComplianceReporter, ComplianceReport, ComplianceFinding
 from .task_manager import TaskManager, TaskState
 from .wiki import KBSource, KBSourceManager
+from .skill_evaluator import SkillEvaluator
 from . import ingest
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "ComplianceReporter", "ComplianceReport", "ComplianceFinding",
     "TaskManager", "TaskState",
     "KBSource", "KBSourceManager",
+    "SkillEvaluator",
 ]
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
