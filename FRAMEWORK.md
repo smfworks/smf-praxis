@@ -109,6 +109,7 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Skills library + governed `/learn` | `skills.py` |
 | Compliance attestation (cycle/decision evidence chain) | `compliance.py`, `persistence.py` |
 | Persistent task queue (long-running/resumable work) | `task_manager.py`, `persistence.py` |
+| Managed wiki / KB source revalidation | `wiki.py`, `rag.py`, `persistence.py` |
 
 ---
 

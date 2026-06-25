@@ -15,6 +15,7 @@ and TUI construct a persistent agent backed by ``~/.praxis/praxis.db``.
 from __future__ import annotations
 
 import array
+import hashlib
 import json
 import sqlite3
 import threading
@@ -30,6 +31,10 @@ CREATE TABLE IF NOT EXISTS memory_items (
     text       TEXT NOT NULL,
     provenance TEXT NOT NULL DEFAULT 'agent',
     kind       TEXT NOT NULL DEFAULT 'note',
+    salience   REAL NOT NULL DEFAULT 1.0,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_access_ts REAL,
+    expires_at REAL,
     ts         REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_memory_tier ON memory_items(tier);
@@ -105,6 +110,24 @@ CREATE TABLE IF NOT EXISTS tasks (
     error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_tasks_status ON tasks(status);
+
+CREATE TABLE IF NOT EXISTS kb_sources (
+    source_id TEXT PRIMARY KEY,
+    uri TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    ns TEXT NOT NULL DEFAULT 'kb',
+    title TEXT NOT NULL DEFAULT '',
+    last_hash TEXT NOT NULL DEFAULT '',
+    last_ingested_ts REAL,
+    refresh_interval_seconds REAL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT NOT NULL DEFAULT '',
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_kb_sources_enabled ON kb_sources(enabled);
+CREATE INDEX IF NOT EXISTS ix_kb_sources_ns ON kb_sources(ns);
 """
 
 
@@ -140,6 +163,12 @@ class Store:
             "approved_by": "TEXT NOT NULL DEFAULT ''",
             "approval_notes": "TEXT NOT NULL DEFAULT ''",
         })
+        self._ensure_columns_locked("memory_items", {
+            "salience": "REAL NOT NULL DEFAULT 1.0",
+            "access_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_access_ts": "REAL",
+            "expires_at": "REAL",
+        })
 
     def _ensure_columns_locked(self, table: str, columns: dict[str, str]) -> None:
         existing = {
@@ -160,13 +189,16 @@ class Store:
 
     # ------------------------------------------------------------- memory
     def add_memory(self, tier: str, text: str, provenance: str,
-                   kind: str, ts: float | None = None) -> int:
+                   kind: str, ts: float | None = None,
+                   salience: float = 1.0,
+                   expires_at: float | None = None) -> int:
         ts = time.time() if ts is None else ts
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO memory_items(tier,text,provenance,kind,ts) "
-                "VALUES (?,?,?,?,?)",
-                (tier, text, provenance, kind, ts),
+                "INSERT INTO memory_items"
+                "(tier,text,provenance,kind,salience,expires_at,ts) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (tier, text, provenance, kind, salience, expires_at, ts),
             )
             self._conn.commit()
             return int(cur.lastrowid)
@@ -174,10 +206,19 @@ class Store:
     def load_memory(self, tier: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT text,provenance,kind,ts FROM memory_items "
+                "SELECT id,text,provenance,kind,salience,access_count,"
+                "last_access_ts,expires_at,ts FROM memory_items "
                 "WHERE tier=? ORDER BY id ASC", (tier,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def record_memory_access(self, memory_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE memory_items SET access_count=access_count+1, "
+                "last_access_ts=? WHERE id=?", (time.time(), memory_id),
+            )
+            self._conn.commit()
 
     # -------------------------------------------------------------- audit
     def add_audit(self, actor: str, tool: str, risk: str, verdict: str,
@@ -450,3 +491,78 @@ class Store:
                 f"UPDATE tasks SET {cols} WHERE task_id=?", vals)
             self._conn.commit()
             return cur.rowcount == 1
+
+    # ------------------------------------------------------------ KB sources
+    @staticmethod
+    def stable_source_id(uri: str, ns: str = "kb") -> str:
+        return "src-" + hashlib.sha1(f"{ns}:{uri}".encode()).hexdigest()[:12]
+
+    def upsert_kb_source(self, uri: str, source_type: str, ns: str = "kb",
+                         title: str = "", refresh_interval_seconds: float | None = None,
+                         enabled: bool = True, source_id: str | None = None) -> str:
+        now = time.time()
+        sid = source_id or self.stable_source_id(uri, ns)
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM kb_sources WHERE source_id=?",
+                (sid,),
+            ).fetchone()
+            created = existing["created_ts"] if existing else now
+            self._conn.execute(
+                "INSERT OR REPLACE INTO kb_sources"
+                "(source_id,uri,source_type,ns,title,refresh_interval_seconds,"
+                "enabled,status,created_ts,updated_ts,last_hash,last_ingested_ts,error) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sid, uri, source_type, ns, title, refresh_interval_seconds,
+                 1 if enabled else 0, "pending", created, now,
+                 (existing["last_hash"] if existing and "last_hash" in existing.keys() else ""),
+                 (existing["last_ingested_ts"] if existing and "last_ingested_ts" in existing.keys() else None),
+                 (existing["error"] if existing and "error" in existing.keys() else "")),
+            )
+            self._conn.commit()
+        return sid
+
+    def get_kb_source(self, source_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM kb_sources WHERE source_id=?", (source_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_kb_sources(self, enabled: bool | None = None) -> list[dict]:
+        with self._lock:
+            if enabled is None:
+                rows = self._conn.execute(
+                    "SELECT * FROM kb_sources ORDER BY updated_ts DESC").fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM kb_sources WHERE enabled=? ORDER BY updated_ts DESC",
+                    (1 if enabled else 0,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def due_kb_sources(self, now: float | None = None) -> list[dict]:
+        now = time.time() if now is None else now
+        due = []
+        for src in self.list_kb_sources(enabled=True):
+            interval = src.get("refresh_interval_seconds")
+            last = src.get("last_ingested_ts")
+            if last is None or (interval is not None and last + interval <= now):
+                due.append(src)
+        return due
+
+    def update_kb_source_refresh(self, source_id: str, status: str,
+                                 last_hash: str | None = None,
+                                 error: str = "",
+                                 ingested: bool = False) -> None:
+        now = time.time()
+        fields = {"status": status, "error": error, "updated_ts": now}
+        if last_hash is not None:
+            fields["last_hash"] = last_hash
+        if ingested:
+            fields["last_ingested_ts"] = now
+        cols = ", ".join(f"{k}=?" for k in fields)
+        vals = list(fields.values()) + [source_id]
+        with self._lock:
+            self._conn.execute(f"UPDATE kb_sources SET {cols} WHERE source_id=?", vals)
+            self._conn.commit()

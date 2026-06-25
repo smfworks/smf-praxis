@@ -128,6 +128,9 @@ praxis --help
 | `praxis tasks` | list persistent tasks and statuses |
 | `praxis task-run <id>` | run one task attempt (records cycle/result) |
 | `praxis task-cancel <id>` | cancel a queued/runnable task |
+| `praxis wiki-add <path-or-url>` | register a KB/wiki source for periodic revalidation |
+| `praxis wiki-sources` | list registered KB/wiki sources and freshness status |
+| `praxis wiki-refresh [source-id]` | refresh one source or all due sources into RAG |
 | `praxis ingest <paths…>` | ingest PDF/Word/PowerPoint/Excel/email/HTML/text into the RAG knowledge base |
 | `praxis recall "<query>"` | semantic search over the ingested knowledge base |
 | `praxis ask "<question>"` | grounded Q&A over KB + memory — cites sources or abstains |
@@ -167,6 +170,24 @@ praxis tasks
 praxis task-run task-abc123def0
 praxis task-cancel task-abc123def0
 ```
+
+## Managed wiki / KB sources
+
+Praxis can register durable knowledge sources (files now; URL/wiki-like sources
+via the same registry) with refresh intervals, content hashes, status, and
+change-detection. `wiki-refresh` re-ingests only changed sources and keeps the RAG
+knowledge base fresh without re-embedding unchanged pages.
+
+```bash
+praxis wiki-add ./docs/clinical-policy.md --refresh-hours 24
+praxis wiki-sources
+praxis wiki-refresh
+praxis recall "clinical policy evidence requirements"
+```
+
+Durable memory now carries salience, access counts, freshness/TTL metadata, and
+recall updates access statistics so future ranking can favor high-value, recently
+used facts.
 
 ## Skills library (`/learn`)
 

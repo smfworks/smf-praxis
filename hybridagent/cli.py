@@ -159,6 +159,52 @@ def cmd_task_cancel(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_wiki_add(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .wiki import KBSourceManager
+    interval = KBSourceManager.seconds_from_hours(args.refresh_hours)
+    src = KBSourceManager(Store.open()).add(
+        args.uri, ns=args.ns, title=args.title or "",
+        refresh_interval_seconds=interval)
+    print(f"registered {src.source_id} [{src.source_type}] ns={src.ns} {src.uri}")
+    return 0
+
+
+def cmd_wiki_sources(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .wiki import KBSourceManager
+    sources = KBSourceManager(Store.open()).list(enabled=None if args.all else True)
+    if not sources:
+        print("no KB/wiki sources")
+        return 0
+    for src in sources:
+        last = f" last={int(src.last_ingested_ts)}" if src.last_ingested_ts else ""
+        print(f"{src.source_id} [{src.status}] ns={src.ns}{last} :: {src.uri}")
+        if src.error:
+            print(f"   error: {src.error}")
+    return 0
+
+
+def cmd_wiki_refresh(args: argparse.Namespace) -> int:
+    from .persistence import Store
+    from .rag import Rag
+    from .wiki import KBSourceManager
+    store = Store.open()
+    mgr = KBSourceManager(store)
+    if args.source_id:
+        refreshed = [mgr.refresh(args.source_id, rag=Rag(store))]
+    else:
+        refreshed = mgr.refresh_due(rag=Rag(store))
+    if not refreshed:
+        print("no sources due for refresh")
+        return 0
+    for src in refreshed:
+        print(f"{src.source_id} [{src.status}] {src.uri}")
+        if src.error:
+            print(f"   error: {src.error}")
+    return 0
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     from .persistence import Store
     from .rag import Rag
@@ -363,6 +409,23 @@ def build_parser() -> argparse.ArgumentParser:
     ptx.add_argument("task_id")
     ptx.set_defaults(func=cmd_task_cancel)
 
+    pwa = sub.add_parser("wiki-add", help="register a KB/wiki source for revalidation")
+    pwa.add_argument("uri", help="file path or URL")
+    pwa.add_argument("--ns", default="kb", help="RAG namespace")
+    pwa.add_argument("--title", default="", help="display title")
+    pwa.add_argument("--refresh-hours", type=float, default=None,
+                     help="refresh interval in hours")
+    pwa.set_defaults(func=cmd_wiki_add)
+
+    pws = sub.add_parser("wiki-sources", help="list registered KB/wiki sources")
+    pws.add_argument("--all", action="store_true", help="include disabled sources")
+    pws.set_defaults(func=cmd_wiki_sources)
+
+    pwr = sub.add_parser("wiki-refresh", help="refresh due KB/wiki sources")
+    pwr.add_argument("source_id", nargs="?", default=None,
+                     help="specific source id (default: all due)")
+    pwr.set_defaults(func=cmd_wiki_refresh)
+
     pin = sub.add_parser("ingest", help="ingest documents into the RAG knowledge base")
     pin.add_argument("paths", nargs="+",
                      help="file paths (pdf/docx/pptx/xlsx/eml/msg/html/txt/md/csv/json)")
@@ -427,7 +490,8 @@ def _maybe_first_run_onboard(command: str) -> None:
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
                    "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance",
-                   "task-create", "tasks", "task-run", "task-cancel"):
+                   "task-create", "tasks", "task-run", "task-cancel",
+                   "wiki-add", "wiki-sources", "wiki-refresh"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return
