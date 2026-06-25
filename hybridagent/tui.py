@@ -138,7 +138,7 @@ def _do_audit(agent: PraxisAgent) -> None:
 
 
 def run() -> int:
-    agent = PraxisAgent()
+    agent = PraxisAgent.persistent()
     actions = {
         "handle": _do_handle, "heartbeat": _do_heartbeat, "approvals": _do_approvals,
         "memory": _do_memory, "audit": _do_audit,

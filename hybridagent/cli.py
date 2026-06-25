@@ -40,9 +40,10 @@ def _print_report(agent: PraxisAgent, report) -> None:
 def _make_agent(args: argparse.Namespace):
     if getattr(args, "m365", False):
         from .m365_tools import build_m365_agent
-        agent, _client = build_m365_agent()
+        from .persistence import Store
+        agent, _client = build_m365_agent(store=Store.open())
         return agent
-    return PraxisAgent()
+    return PraxisAgent.persistent()
 
 
 def cmd_handle(args: argparse.Namespace) -> int:
@@ -78,10 +79,28 @@ def cmd_m365(_args: argparse.Namespace) -> int:
 
 
 def cmd_remember(args: argparse.Namespace) -> int:
-    agent = PraxisAgent()
+    agent = PraxisAgent.persistent()
     agent.learn(args.fact, kind=args.kind, provenance="cli")
     print(f"stored durable {args.kind}: {args.fact}")
     print("memory:", agent.memory.stats())
+    return 0
+
+
+def cmd_approvals(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    pending = agent.broker.pending
+    if not pending:
+        print("no pending approvals")
+        return 0
+    print(f"{len(pending)} pending approval(s):")
+    for aid, p in pending.items():
+        print(f"   {aid}  [{p.tool}] {p.preview}")
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    agent = _make_agent(args)
+    print(agent.approve(args.approval_id))
     return 0
 
 
@@ -136,6 +155,17 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["preference", "fact", "decision", "skill", "note"])
     pm.set_defaults(func=cmd_remember)
 
+    pap = sub.add_parser("approvals", help="list pending held actions (persisted)")
+    pap.add_argument("--m365", action="store_true",
+                     help="use the M365 broker registry")
+    pap.set_defaults(func=cmd_approvals)
+
+    pav = sub.add_parser("approve", help="approve + execute a held action by id")
+    pav.add_argument("approval_id", help="the approval id (appr-xxxxxxxx)")
+    pav.add_argument("--m365", action="store_true",
+                     help="use the M365 broker registry")
+    pav.set_defaults(func=cmd_approve)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -160,7 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo", "tui", "m365"):
+    if command in ("onboard", "demo", "tui", "m365", "approvals", "approve"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return

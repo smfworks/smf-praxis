@@ -45,18 +45,28 @@ class PraxisAgent:
         registry: ToolRegistry | None = None,
         llm: LLMClient | None = None,
         memory: Memory | None = None,
+        store=None,
     ) -> None:
+        self.store = store
         self.registry = registry or default_registry()
         self.llm = llm or LLMClient()
-        self.memory = memory or Memory()
+        self.memory = memory or Memory(store=store)
         # Least privilege: allow exactly the registered tools; consequential
         # ones still route through approval regardless of being allowlisted.
         self.broker = GovernanceBroker(
-            GovernancePolicy(allowed_tools=set(self.registry.names()))
+            GovernancePolicy(allowed_tools=set(self.registry.names())),
+            store=store,
         )
         self.perception = Perception(self.registry, self.broker, self.memory)
         self.planner = Planner(self.registry, self.llm)
         self.reflector = Reflector(self.memory, self.llm)
+
+    @classmethod
+    def persistent(cls, registry: ToolRegistry | None = None,
+                   llm: LLMClient | None = None) -> "PraxisAgent":
+        """Build an agent backed by the on-disk store (~/.praxis/praxis.db)."""
+        from .persistence import Store
+        return cls(registry=registry, llm=llm, store=Store.open())
 
     # ----------------------------------------------------- durable seeding
     def learn(self, fact: str, kind: str = "preference", provenance: str = "user") -> None:

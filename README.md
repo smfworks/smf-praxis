@@ -93,7 +93,7 @@ provider if onboarded, else offline mock) · `mock` (always offline) · `real`
 
 ```bash
 python demo.py          # offline, mock LLM
-pytest -q               # 11 tests
+pytest -q               # test suite
 ```
 
 ## CLI
@@ -120,7 +120,9 @@ praxis --help
 | `praxis handle ... --approve-all` | auto-approve consequential actions (dev convenience) |
 | `praxis handle ... --m365` | run against **live Microsoft 365** through the broker |
 | `praxis heartbeat [--watch "<goal>"]` | proactive always-on tick |
-| `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory |
+| `praxis remember "<fact>" --kind {preference,fact,decision,skill,note}` | store durable memory (persisted to `~/.praxis/praxis.db`) |
+| `praxis approvals` | list held consequential actions (persisted across runs) |
+| `praxis approve <id>` | approve + execute a held action by id |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
 
@@ -146,7 +148,7 @@ tenant) is in **[M365-SETUP.md](M365-SETUP.md)**.
 
 ## Tests & CI
 
-`pytest -q` runs the 11-test suite. GitHub Actions
+`pytest -q` runs the test suite. GitHub Actions
 (`.github/workflows/ci.yml`) runs tests on Python 3.10–3.12 plus a demo/CLI
 smoke test on every push and PR to `main`.
 
