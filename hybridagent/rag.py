@@ -35,6 +35,10 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 150) -> list[st
     text = (text or "").strip()
     if not text:
         return []
+    chunk_size = max(1, chunk_size)
+    # Clamp overlap so the hard-split step stays positive (overlap >= chunk_size
+    # would otherwise explode a long paragraph into one chunk per character).
+    overlap = max(0, min(overlap, chunk_size // 2))
     paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     base: list[str] = []
     cur = ""
@@ -104,13 +108,23 @@ class Rag:
         if not query.strip() or self.store.count_vectors(ns) == 0:
             return []
         qv = self.embed.embed_one(query)
+        qd = len(qv)
         scored: list[RetrievedChunk] = []
+        mismatched = 0
         for row in self.store.iter_vectors(ns):
+            if len(row["embedding"]) != qd:
+                mismatched += 1          # embedded with a different model/dim
+                continue
             s = cosine(qv, row["embedding"])
             if s > min_score:
                 scored.append(RetrievedChunk(
                     text=row["text"], source=row["doc_id"], score=s,
                     kind=row["kind"], provenance=row["provenance"]))
+        if mismatched:
+            _log.warning(
+                "ns=%s: skipped %d chunk(s) embedded with a different model "
+                "(dim != %d). Re-ingest after changing the embedding model.",
+                ns, mismatched, qd)
         scored.sort(key=lambda c: c.score, reverse=True)
         return scored[:k]
 

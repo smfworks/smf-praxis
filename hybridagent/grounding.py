@@ -142,14 +142,29 @@ class GroundedResponder:
 
 # ----------------------------------------------------------- structured output
 def _extract_json(text: str) -> dict | None:
+    """Extract the first balanced JSON object, respecting strings/escapes so
+    braces inside string values don't terminate the scan early."""
     start = text.find("{")
     if start < 0:
         return None
     depth = 0
+    in_str = False
+    esc = False
     for i in range(start, len(text)):
-        if text[i] == "{":
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
             depth += 1
-        elif text[i] == "}":
+        elif c == "}":
             depth -= 1
             if depth == 0:
                 try:
