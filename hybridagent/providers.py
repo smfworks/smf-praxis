@@ -10,6 +10,7 @@ dependency-free.
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -219,3 +220,81 @@ def embed(provider: Provider, model: str, texts: list[str],
         return [it["embedding"] for it in items]
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(f"unexpected embeddings response: {str(data)[:300]}")
+
+
+def chat_multimodal(provider: Provider, model: str, prompt: str,
+                    images: list[dict], system: str | None, api_key: str | None,
+                    base_url: str | None = None, timeout: float = 90.0,
+                    temperature: float = 0.0, max_tokens: int = 1024) -> str:
+    """Vision chat. ``images`` items are ``{"media_type": str, "data": base64}``."""
+    root = (base_url or provider.base_url).rstrip("/")
+    if provider.compatibility == "anthropic":
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for img in images:
+            content.append({"type": "image", "source": {
+                "type": "base64", "media_type": img["media_type"],
+                "data": img["data"]}})
+        headers = {"Content-Type": "application/json",
+                   "anthropic-version": "2023-06-01"}
+        if api_key:
+            headers["x-api-key"] = api_key
+        payload = {"model": model, "max_tokens": max_tokens,
+                   "temperature": temperature,
+                   "messages": [{"role": "user", "content": content}]}
+        if system:
+            payload["system"] = system
+        data = _post(f"{root}/messages", headers, payload, timeout)
+        blocks = data.get("content")
+        if not isinstance(blocks, list):
+            raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+        return "".join(b.get("text", "") for b in blocks)
+
+    content = [{"type": "text", "text": prompt}]
+    for img in images:
+        content.append({"type": "image_url", "image_url": {
+            "url": f"data:{img['media_type']};base64,{img['data']}"}})
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    messages = ([{"role": "system", "content": system}] if system else []) + \
+               [{"role": "user", "content": content}]
+    data = _post(f"{root}/chat/completions", headers,
+                 {"model": model, "messages": messages,
+                  "temperature": temperature, "max_tokens": max_tokens}, timeout)
+    try:
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+
+
+def transcribe(provider: Provider, model: str, audio_path: str,
+               api_key: str | None, base_url: str | None = None,
+               timeout: float = 120.0) -> str:
+    """Speech-to-text via an OpenAI-compatible /audio/transcriptions endpoint."""
+    import mimetypes
+    import uuid
+    root = (base_url or provider.base_url).rstrip("/")
+    boundary = "----praxis" + uuid.uuid4().hex
+    fname = os.path.basename(audio_path)
+    with open(audio_path, "rb") as fh:
+        audio = fh.read()
+    mt = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\""
+            f"\r\n\r\n{model}\r\n").encode()
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+             f"filename=\"{fname}\"\r\nContent-Type: {mt}\r\n\r\n").encode()
+    body += audio + b"\r\n" + f"--{boundary}--\r\n".encode()
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(f"{root}/audio/transcriptions", data=body,
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"transcribe HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"transcribe unreachable: {e.reason}")
+    return data.get("text", "")

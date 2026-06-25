@@ -87,7 +87,11 @@ class Rag:
         return len(chunks)
 
     def ingest_file(self, path, ns: str | None = None) -> tuple[ExtractedDoc, int]:
-        doc = extract_text(path)
+        from .multimodal import MediaClient, is_media
+        if is_media(path):
+            doc = MediaClient().process(path)
+        else:
+            doc = extract_text(path)
         n = self.ingest_text(
             doc.text, source=doc.source, kind=doc.kind,
             provenance=f"file:{doc.metadata.get('path', doc.source)}", ns=ns)

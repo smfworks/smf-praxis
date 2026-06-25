@@ -135,6 +135,33 @@ def cmd_recall(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_describe(args: argparse.Namespace) -> int:
+    from .ingest import extract_text
+    from .multimodal import MediaClient
+    mc = MediaClient()
+    try:
+        doc = mc.process(args.path) if mc.is_media(args.path) else extract_text(args.path)
+    except Exception as exc:
+        print(f"could not process {args.path}: {exc}")
+        return 1
+    print(f"# {doc.source} ({doc.kind})")
+    print(doc.text[:2000])
+    return 0
+
+
+def cmd_route(args: argparse.Namespace) -> int:
+    from .router import ModelRouter
+    r = ModelRouter()
+    roles = ["general", "planner", "summarizer", "vision", "transcribe"]
+    print(f"{'role':<12} {'sensitivity':<11} candidates (primary first)")
+    for role in roles:
+        for sens in ("normal", "sensitive"):
+            exp = r.explain(role, sens)
+            tag = " [local]" if exp["primary_is_local"] else ""
+            print(f"{role:<12} {sens:<11} {exp['candidates']}{tag}")
+    return 0
+
+
 def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
@@ -207,6 +234,13 @@ def build_parser() -> argparse.ArgumentParser:
     prc.add_argument("--k", type=int, default=5, help="number of results")
     prc.set_defaults(func=cmd_recall)
 
+    pdsc = sub.add_parser("describe", help="extract text from a doc or media file")
+    pdsc.add_argument("path", help="path to a document, image, audio, or video file")
+    pdsc.set_defaults(func=cmd_describe)
+
+    prt = sub.add_parser("route", help="show contextual model routing per role")
+    prt.set_defaults(func=cmd_route)
+
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
@@ -232,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
-                   "ingest", "recall"):
+                   "ingest", "recall", "describe", "route"):
         return
     if os.environ.get("PRAXIS_LLM"):   # explicit mode (mock/real/auto) — respect it
         return
