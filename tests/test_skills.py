@@ -1,8 +1,8 @@
 from hybridagent import PraxisAgent
 from hybridagent import config as cfg
 from hybridagent.embeddings import EmbeddingClient
-from hybridagent.skills import Skill, SkillLibrary, distill_skill
 from hybridagent.persistence import Store
+from hybridagent.skills import Skill, SkillLibrary, distill_skill
 
 
 def _home(tmp_path, monkeypatch):

@@ -40,7 +40,7 @@ def _host_is_private(host: str) -> bool:
         # If DNS can't resolve, treat as unsafe; we'd rather refuse than blindly
         # hand the URL to urllib.
         return True
-    for family, _type, _proto, _canon, sockaddr in infos:
+    for _family, _type, _proto, _canon, sockaddr in infos:
         ip_str = sockaddr[0]
         try:
             ip = ipaddress.ip_address(ip_str)

@@ -1,11 +1,9 @@
 """Tests for Phase 13 integration polish: contradiction detection, scratchpad,
 ask() auto-refresh, health snapshot, evaluator warning."""
-import os
-import time
 
-import pytest
 
-from hybridagent import PraxisAgent, config as cfg
+from hybridagent import PraxisAgent
+from hybridagent import config as cfg
 from hybridagent.contradiction import detect
 from hybridagent.metrics import HealthMonitor
 from hybridagent.persistence import Store

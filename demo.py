@@ -8,7 +8,7 @@ and self-improving memory consolidation.
 from __future__ import annotations
 
 from hybridagent import PraxisAgent
-from hybridagent.tools import Tool, RiskClass
+from hybridagent.tools import RiskClass, Tool
 
 
 def main() -> None:

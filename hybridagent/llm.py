@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from . import config as cfg
 from .logging_util import get_logger
 from .providers import CATALOG, chat
-from .router import ModelRouter, classify_sensitivity, NORMAL
+from .router import NORMAL, ModelRouter, classify_sensitivity
 
 _log = get_logger("praxis.llm")
 

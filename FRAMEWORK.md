@@ -115,6 +115,7 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 | Safe wiki ingestion (scheme/IP allowlist, size cap) | `wiki_safe.py` |
 | Dual approval, JSON-schema validation, retention/decay | `broker.py`, `validation.py`, `memory.py` |
 | Contradiction detection, scratchpad, health metrics | `contradiction.py`, `scratchpad.py`, `metrics.py` |
+| Cached numpy vector index + WAL store | `vecsim.py`, `rag.py`, `persistence.py` |
 
 ---
 

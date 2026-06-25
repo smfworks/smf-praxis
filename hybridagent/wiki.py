@@ -8,9 +8,9 @@ and re-ingests only when the source changed or has never been ingested.
 from __future__ import annotations
 
 import hashlib
-import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import List
 
 from .ingest import extract_text
 from .rag import Rag
@@ -65,19 +65,25 @@ class KBSourceManager:
         sid = self.store.upsert_kb_source(
             uri=uri, source_type=stype, ns=ns, title=title,
             refresh_interval_seconds=refresh_interval_seconds, enabled=enabled)
-        return self.get(sid)
+        return self._require(sid)
 
     def get(self, source_id: str) -> KBSource | None:
         row = self.store.get_kb_source(source_id)
         return KBSource.from_row(row) if row else None
 
-    def list(self, enabled: bool | None = None) -> list[KBSource]:
+    def _require(self, source_id: str) -> KBSource:
+        src = self.get(source_id)
+        if src is None:
+            raise KeyError(source_id)
+        return src
+
+    def list(self, enabled: bool | None = None) -> List[KBSource]:
         return [KBSource.from_row(r) for r in self.store.list_kb_sources(enabled)]
 
-    def due(self) -> list[KBSource]:
+    def due(self) -> List[KBSource]:
         return [KBSource.from_row(r) for r in self.store.due_kb_sources()]
 
-    def refresh_due(self, rag: Rag | None = None) -> list[KBSource]:
+    def refresh_due(self, rag: Rag | None = None) -> List[KBSource]:
         out = []
         for src in self.due():
             out.append(self.refresh(src.source_id, rag=rag))
@@ -85,9 +91,7 @@ class KBSourceManager:
 
     def refresh(self, source_id: str, rag: Rag | None = None) -> KBSource:
         rag = rag or Rag(self.store)
-        src = self.get(source_id)
-        if src is None:
-            raise KeyError(source_id)
+        src = self._require(source_id)
         # Use the stable source_id as the RAG doc id so two sources with the
         # same human title can't clobber each other's vectors.
         doc_id = source_id
@@ -109,14 +113,15 @@ class KBSourceManager:
                     source_id, "refreshed", last_hash=digest,
                     error="", ingested=True)
             self.store.add_compliance_event("", "kb_source_refreshed", {
-                "source_id": source_id, "uri": src.uri, "status": self.get(source_id).status,
+                "source_id": source_id, "uri": src.uri,
+                "status": self._require(source_id).status,
             }, ref_id=source_id)
         except Exception as exc:
             self.store.update_kb_source_refresh(source_id, "error", error=str(exc))
             self.store.add_compliance_event("", "kb_source_error", {
                 "source_id": source_id, "uri": src.uri, "error": str(exc),
             }, ref_id=source_id)
-        return self.get(source_id)
+        return self._require(source_id)
 
     @staticmethod
     def _infer_type(uri: str) -> str:

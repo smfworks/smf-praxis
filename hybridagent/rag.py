@@ -14,9 +14,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .embeddings import EmbeddingClient, cosine
+from .embeddings import EmbeddingClient
 from .ingest import ExtractedDoc, extract_text
 from .logging_util import get_logger
+from .vecsim import VectorIndex
 
 _log = get_logger("praxis.rag")
 
@@ -72,6 +73,19 @@ class Rag:
         self.store = store
         self.embed = embedder or EmbeddingClient()
         self.ns = ns
+        # Per-namespace cached index: (version, metas, VectorIndex). Rebuilt
+        # only when the store's vector_version for the namespace changes.
+        self._index_cache: dict = {}
+
+    def _get_index(self, ns: str):
+        version = self.store.vector_version(ns)
+        cached = self._index_cache.get(ns)
+        if cached is not None and cached[0] == version:
+            return cached[1], cached[2]
+        metas, blobs = self.store.fetch_vectors(ns)
+        index = VectorIndex(blobs, version=version)
+        self._index_cache[ns] = (version, metas, index)
+        return metas, index
 
     # ----------------------------------------------------------------- ingest
     def ingest_text(self, text: str, source: str, kind: str = "document",
@@ -85,7 +99,7 @@ class Rag:
         prov = provenance or f"document:{source}"
         # Re-ingesting a doc replaces its old chunks (idempotent updates).
         self.store.delete_doc(ns, source)
-        for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
+        for i, (chunk, vec) in enumerate(zip(chunks, vectors, strict=True)):
             self.store.add_vector(ns, source, i, chunk, prov, kind, vec)
         _log.info("ingested %s: %d chunks into ns=%s", source, len(chunks), ns)
         return len(chunks)
@@ -108,25 +122,19 @@ class Rag:
         if not query.strip() or self.store.count_vectors(ns) == 0:
             return []
         qv = self.embed.embed_one(query)
-        qd = len(qv)
-        scored: list[RetrievedChunk] = []
-        mismatched = 0
-        for row in self.store.iter_vectors(ns):
-            if len(row["embedding"]) != qd:
-                mismatched += 1          # embedded with a different model/dim
-                continue
-            s = cosine(qv, row["embedding"])
-            if s > min_score:
-                scored.append(RetrievedChunk(
-                    text=row["text"], source=row["doc_id"], score=s,
-                    kind=row["kind"], provenance=row["provenance"]))
-        if mismatched:
+        metas, index = self._get_index(ns)
+        if index.skipped:
             _log.warning(
                 "ns=%s: skipped %d chunk(s) embedded with a different model "
                 "(dim != %d). Re-ingest after changing the embedding model.",
-                ns, mismatched, qd)
-        scored.sort(key=lambda c: c.score, reverse=True)
-        return scored[:k]
+                ns, index.skipped, index.dim)
+        out: list[RetrievedChunk] = []
+        for hit in index.query(qv, k=k, min_score=min_score):
+            row = metas[hit.index]
+            out.append(RetrievedChunk(
+                text=row["text"], source=row["doc_id"], score=hit.score,
+                kind=row["kind"], provenance=row["provenance"]))
+        return out
 
     def stats(self, ns: str | None = None) -> dict:
         ns = ns or self.ns

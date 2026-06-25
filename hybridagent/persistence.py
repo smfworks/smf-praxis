@@ -190,9 +190,20 @@ class Store:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._vec_versions: dict[str, int] = {}
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
+            # WAL lets concurrent readers proceed alongside a single writer
+            # (e.g. a heartbeat agent reading while `praxis approve` writes in a
+            # second process); busy_timeout backs off instead of raising
+            # "database is locked" under cross-process contention.
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA busy_timeout=5000")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+            except sqlite3.Error:  # pragma: no cover - exotic filesystems only
+                pass
             self._conn.executescript(_SCHEMA)
             self._migrate_locked()
             self._conn.commit()
@@ -255,7 +266,7 @@ class Store:
                 (tier, text, provenance, kind, salience, expires_at, ts),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+            return int(cur.lastrowid or 0)
 
     def load_memory(self, tier: str) -> list[dict]:
         with self._lock:
@@ -424,7 +435,7 @@ class Store:
                 (cycle_id, event_type, ref_id, json.dumps(payload), ts),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+            return int(cur.lastrowid or 0)
 
     def list_compliance_events(self, cycle_id: str | None = None,
                                limit: int = 500) -> list[dict]:
@@ -462,7 +473,31 @@ class Store:
                 (ns, doc_id, chunk_idx, text, provenance, kind, blob, ts),
             )
             self._conn.commit()
-            return int(cur.lastrowid)
+            self._vec_versions[ns] = self._vec_versions.get(ns, 0) + 1
+            return int(cur.lastrowid or 0)
+
+    def vector_version(self, ns: str) -> int:
+        """Monotonic counter bumped on every add/delete in ``ns``. Lets callers
+        cache a built index and rebuild only when the namespace changed."""
+        return self._vec_versions.get(ns, 0)
+
+    def fetch_vectors(self, ns: str) -> tuple[list[dict], list[bytes]]:
+        """Return (metadata, raw embedding blobs) for a namespace.
+
+        Blobs are returned undeserialized so an index can be built directly from
+        bytes (numpy ``frombuffer``) without per-row Python float allocation."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT doc_id,chunk_idx,text,provenance,kind,embedding,ts "
+                "FROM vectors WHERE ns=? ORDER BY id ASC", (ns,),
+            ).fetchall()
+        metas: list[dict] = []
+        blobs: list[bytes] = []
+        for r in rows:
+            d = dict(r)
+            blobs.append(bytes(d.pop("embedding")))
+            metas.append(d)
+        return metas, blobs
 
     def iter_vectors(self, ns: str) -> list[dict]:
         with self._lock:
@@ -508,6 +543,8 @@ class Store:
             cur = self._conn.execute(
                 "DELETE FROM vectors WHERE ns=? AND doc_id=?", (ns, doc_id))
             self._conn.commit()
+            if cur.rowcount:
+                self._vec_versions[ns] = self._vec_versions.get(ns, 0) + 1
             return cur.rowcount
 
     # --------------------------------------------------------------- tasks

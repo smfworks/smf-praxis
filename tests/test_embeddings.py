@@ -1,5 +1,5 @@
-from hybridagent.embeddings import EmbeddingClient, cosine
 from hybridagent import config as cfg
+from hybridagent.embeddings import EmbeddingClient, cosine
 
 
 def test_mock_embedding_is_deterministic():

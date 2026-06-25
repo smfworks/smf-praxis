@@ -1,7 +1,5 @@
 import time
 
-import pytest
-
 from hybridagent import PraxisAgent
 from hybridagent import config as cfg
 from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
