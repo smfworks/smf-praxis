@@ -21,7 +21,11 @@ import re
 from dataclasses import dataclass, field
 
 from . import config as cfg
+from .logging_util import get_logger
 from .providers import CATALOG, embed as provider_embed
+from .router import ModelRouter, classify_sensitivity, SENSITIVE
+
+_log = get_logger("praxis.embeddings")
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 DEFAULT_DIM = 256
@@ -56,9 +60,23 @@ class EmbeddingClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        if self._effective_mode() == "real":
+        if self._effective_mode() == "real" and not self._must_stay_local(texts):
             return self._embed_real(texts)
         return [self._mock_embed(t) for t in texts]
+
+    def _must_stay_local(self, texts: list[str]) -> bool:
+        """Keep sensitive content off a cloud embedder. If the configured embed
+        model isn't local and any input is sensitive, fall back to the local
+        mock embedder rather than transmitting the text (same invariant the
+        router enforces for chat)."""
+        model_ref = cfg.get_embed_model()
+        if not model_ref or ModelRouter.is_local_ref(model_ref):
+            return False
+        if any(classify_sensitivity(t) == SENSITIVE for t in texts):
+            _log.warning("sensitive content detected; embedding locally instead "
+                         "of sending to cloud embedder '%s'", model_ref)
+            return True
+        return False
 
     def embed_one(self, text: str) -> list[float]:
         return self.embed([text])[0]

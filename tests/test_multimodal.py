@@ -21,6 +21,32 @@ def test_is_media_detection():
     assert not is_media("a.txt") and not is_media("a.pdf")
 
 
+def test_auto_mode_stays_mock_without_a_vision_model(tmp_path, monkeypatch):
+    # A bare text model must NOT cause auto-mode to send an image to a chat model
+    # (which would invent a caption). It must stay mock => honest metadata.
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent import onboard
+    onboard.run_noninteractive("openrouter", "openai/gpt-4o-mini")   # text only
+    monkeypatch.delenv("PRAXIS_MM", raising=False)                   # auto
+    p = tmp_path / "x.png"
+    p.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    out = MediaClient().describe_image(p)
+    assert "Offline mock" in out
+
+
+def test_use_real_respects_role_model(tmp_path, monkeypatch):
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent import onboard
+    onboard.run_noninteractive("openrouter", "openai/gpt-4o-mini")
+    monkeypatch.delenv("PRAXIS_MM", raising=False)
+    mc = MediaClient()
+    assert mc._use_real("vision") is False                          # no vision role
+    data = cfg.load_config()
+    data["agents"]["roles"] = {"vision": "openai/gpt-4o"}
+    cfg.save_config(data)
+    assert mc._use_real("vision") is True                           # role configured
+
+
 def test_image_to_part(tmp_path):
     p = tmp_path / "x.png"
     p.write_bytes(b"\x89PNG\r\n\x1a\nfake")

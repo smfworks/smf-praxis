@@ -51,6 +51,25 @@ def test_skill_reload_does_not_reembed(tmp_path, monkeypatch):
     assert Counting.calls == base       # no re-embedding existing skills on load
 
 
+def test_out_of_band_skill_edit_is_reindexed(tmp_path, monkeypatch):
+    import os
+    import time
+    _home(tmp_path, monkeypatch)
+    store = Store.open()
+    lib = SkillLibrary(store=store)
+    lib.add(Skill(name="s1", trigger="alpha original trigger words"))
+    # Edit the SKILL.md directly on disk with new, distinctive content.
+    path = lib.path_for(lib.get("s1"))
+    path.write_text(Skill(name="s1",
+                          trigger="beta replaced keyword zulu yankee").to_markdown(),
+                    encoding="utf-8")
+    future = time.time() + 10
+    os.utime(path, (future, future))                # ensure mtime is newer
+    lib2 = SkillLibrary(store=store)                 # reload => should re-index
+    hits = lib2.retrieve("beta replaced keyword zulu yankee")
+    assert hits and hits[0].name == "s1"            # matches NEW content, not stale
+
+
 def test_library_semantic_retrieve(tmp_path, monkeypatch):
     _home(tmp_path, monkeypatch)
     lib = SkillLibrary(store=Store.open())
