@@ -17,3 +17,10 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# Mutation testing (cosmic-ray session db)
+mutation-session.sqlite
+mutation-session.sqlite.*
+
+# Hypothesis example database (property-test cache)
+.hypothesis/

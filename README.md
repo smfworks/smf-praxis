@@ -324,9 +324,29 @@ tenant) is in **[M365-SETUP.md](M365-SETUP.md)**.
 
 ## Tests & CI
 
-`pytest -q` runs the test suite. GitHub Actions
-(`.github/workflows/ci.yml`) runs tests on Python 3.10–3.12 plus a demo/CLI
-smoke test on every push and PR to `main`.
+`pytest -q` runs the suite. GitHub Actions (`.github/workflows/ci.yml`) enforces
+several gates on every push and PR to `main`:
+
+- **Lint + types** — `ruff check .` and `mypy hybridagent`.
+- **Tests + coverage** — the full suite on Python 3.10 / 3.11 / 3.12 with a
+  `--cov-fail-under=80` gate, plus a `demo.py` + `praxis demo` smoke test.
+- **Property / fuzz tests** (`tests/test_fuzz_parsers.py`) — Hypothesis hammers
+  the dependency-free document parsers and the RAG chunker with adversarial and
+  random input to prove they degrade gracefully and never crash.
+- **Provider wire tests** (`tests/test_provider_wire.py`) — an in-process stub
+  server exercises the real `urllib` chat/embeddings/retry path of the
+  OpenAI-/Ollama-compatible client.
+
+Two heavier suites run **on demand** rather than in the matrix:
+
+- **Real-Ollama integration** (`tests/test_ollama_integration.py`) — skipped
+  unless `PRAXIS_OLLAMA_TEST=1` with a local Ollama running; then it discovers a
+  model and does a live chat/embeddings round-trip.
+- **Governance mutation testing** (`scripts/mutation_test.py`, `mutation.toml`) —
+  cosmic-ray mutates `hybridagent/broker.py` and verifies the
+  `test_broker_mutation_guard` oracle kills the faults. Run it locally with
+  `pip install -e ".[mutation]"` then `python scripts/mutation_test.py`, or via
+  the manual **`workflow_dispatch`** `mutation` CI job (gated at ≤10% survival).
 
 ## Minimal usage
 
