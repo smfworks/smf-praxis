@@ -18,7 +18,12 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.4",
     "mypy>=1.8",
+    "hypothesis>=6.0",
 ]
+# Mutation testing for the governance core (run on demand, never in the matrix).
+# cosmic-ray is cross-platform and modern-Python clean (mutmut needs WSL on
+# Windows; mutatest is broken on 3.11+). See scripts/mutation_test.py.
+mutation = ["cosmic-ray>=8.3"]
 # Optional document parsers (RAG ingestion). Core stays dependency-free; install
 # this extra to ingest PDF / Word / PowerPoint / Excel / Outlook .msg files.
 docs = [

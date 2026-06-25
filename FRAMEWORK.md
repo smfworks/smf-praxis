@@ -146,3 +146,10 @@ single-colleague foundation.
 3. **Model router + multimodal** — role/sensitivity routing; image/audio/video intake. ✅
 4. **Grounding** — cite-or-abstain, structured outputs, verification pass. ✅
 5. **Skills + `/learn`** — persistent skill store, governed learn command, retrieval. ✅
+6.–15. **Memory, persistent tasks, LLM wiki, subagents, compliance spine, security
+   hardening, regulated controls, quality gates, RAG performance** — see the
+   README "Recent additions / quality" sections. ✅
+16. **Test hardening** — Hypothesis parser fuzzing (`tests/test_fuzz_parsers.py`),
+   provider wire tests against a stub server, a gated real-Ollama integration
+   test, and cosmic-ray mutation testing of the governance broker
+   (`scripts/mutation_test.py`, oracle `tests/test_broker_mutation_guard.py`). ✅

@@ -1,0 +1,26 @@
+# Cosmic Ray mutation-testing config for the governance core.
+#
+# The broker is Praxis's safety control plane, so its test suite must do more
+# than cover lines — it must *kill mutants*. This session mutates broker.py and
+# checks that tests/test_broker_mutation_guard.py fails for each injected fault.
+#
+#   python scripts/mutation_test.py            # baseline -> init -> exec -> report
+#   cr-rate --fail-over 10 mutation-session.sqlite   # gate: <=10% survival
+#
+# Keep the test-command tight (guard suite only) so each of the ~100 mutants
+# runs in a couple of seconds.
+[cosmic-ray]
+module-path = "hybridagent/broker.py"
+timeout = 60.0
+excluded-modules = []
+test-command = "python -m pytest tests/test_broker_mutation_guard.py -x -q -p no:cacheprovider"
+
+[cosmic-ray.distributor]
+name = "local"
+
+# NOTE: every `|` BinOp in broker.py is a PEP 604 type annotation (`X | None`),
+# and the module uses `from __future__ import annotations`, so those annotations
+# are strings that are never evaluated — the resulting `ReplaceBinaryOperator_
+# BitOr_*` mutants are equivalent and unkillable. cosmic-ray's cr-filter-operators
+# is broken in the current build, so scripts/mutation_test.py classifies and
+# excludes those survivors after the run instead of filtering them at init time.
