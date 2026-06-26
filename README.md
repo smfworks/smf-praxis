@@ -83,7 +83,7 @@ praxis onboard
 
 The wizard walks you through:
 1. **Existing-config detection** — Keep / Modify / Reset (like `openclaw onboard`).
-2. **Pick a provider** — Ollama · OpenRouter · GitHub Models · OpenAI · Anthropic · xAI (Grok) · Vercel AI Gateway · Custom (OpenAI-compatible).
+2. **Pick a provider** — Ollama · OpenAI · Anthropic · Google Gemini · xAI (Grok) · Mistral · Groq · DeepSeek · Perplexity · Together AI · Fireworks AI · OpenRouter · GitHub Models · Vercel AI Gateway · Custom (OpenAI-compatible).
 3. **Pick a model** — suggestions per provider (Ollama models are auto-discovered from the local host), or enter one manually.
 4. **Key storage** — environment-variable reference (recommended; nothing secret on disk) or paste-now (stored in `~/.praxis/auth-profiles.json`, gitignored).
 
