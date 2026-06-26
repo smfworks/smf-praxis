@@ -279,7 +279,7 @@ def _distill_template(goal: str, trace: list[str], name: str | None) -> Skill:
 
 
 def _distill_real(llm, goal: str, trace: list[str], name: str | None) -> Skill:
-    from .grounding import generate_json
+    from .structured import generate_json
     trace_text = "\n".join(f"- {t}" for t in trace) or "(no trace)"
     prompt = (
         f"Goal: {goal}\n\nObserved/planned steps:\n{trace_text}\n\n"

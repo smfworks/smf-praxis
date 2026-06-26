@@ -13,6 +13,7 @@ If installed via `pip install -e .` the entry point is `praxis`; otherwise run
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -76,6 +77,70 @@ def cmd_m365(_args: argparse.Namespace) -> int:
     print("least-privilege scopes:", health.get("requiredScopes"))
     print("status:", client.execute("m365_status"))
     return 0
+
+
+def cmd_mcp(_args: argparse.Namespace) -> int:
+    import asyncio
+    from .mcp_adapter import run_stdio_server
+    from .tools import default_registry
+    asyncio.run(run_stdio_server(default_registry(), name="praxis"))
+    return 0
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    from .daemon import Daemon, daemon_logs, daemon_status
+    action = args.action or "status"
+    if action == "start":
+        daemon = Daemon.from_env(work_dir=args.work_dir, status_port=args.port)
+        return daemon.start()
+    if action == "status":
+        status = daemon_status()
+        print(json.dumps(status, indent=2, default=str))
+        return 0
+    if action == "stop":
+        status = daemon_status()
+        if not status.get("running"):
+            print("daemon not running")
+            return 0
+        import urllib.request
+        port = status.get("port")
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/stop", timeout=5
+            )
+        except Exception as exc:
+            print(f"could not stop daemon: {exc}")
+            return 1
+        print("stop requested")
+        return 0
+    if action == "logs":
+        print(daemon_logs(lines=args.lines))
+        return 0
+    if action == "submit":
+        status = daemon_status()
+        if not status.get("running"):
+            print("daemon not running")
+            return 1
+        import urllib.request
+        port = status.get("port")
+        if port is None:
+            # Fall back to the on-disk port file if status didn't return it.
+            from .daemon import _read_pid
+            port = _read_pid()
+        body = json.dumps({"goal": args.goal, "max_attempts": args.max_attempts}).encode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/submit",
+            data=body, headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                print(resp.read().decode())
+        except Exception as exc:
+            print(f"could not submit: {exc}")
+            return 1
+        return 0
+    print(f"unknown daemon action: {action}")
+    return 1
 
 
 def cmd_remember(args: argparse.Namespace) -> int:
@@ -641,13 +706,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     pm = sub.add_parser("m365", help="check the M365 broker connection + signed-in status")
     pm.set_defaults(func=cmd_m365)
+
+    pmcp = sub.add_parser("mcp", help="run the Praxis MCP server over stdio")
+    pmcp.set_defaults(func=cmd_mcp)
+
+    pdm = sub.add_parser("daemon", help="long-running task worker")
+    pdm.add_argument("action", nargs="?", choices=["start", "stop", "status", "logs", "submit"],
+                     help="daemon action")
+    pdm.add_argument("--port", type=int, default=None, help="control HTTP port")
+    pdm.add_argument("--work-dir", default=None, help="working directory")
+    pdm.add_argument("--goal", default="", help="goal to submit (with submit action)")
+    pdm.add_argument("--max-attempts", type=int, default=3)
+    pdm.add_argument("--lines", type=int, default=100, help="log lines to fetch")
+    pdm.set_defaults(func=cmd_daemon)
+
     return parser
 
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo", "tui", "m365", "approvals", "approve",
-                   "ingest", "recall", "describe", "route", "ask",
+    if command in ("onboard", "demo", "tui", "m365", "mcp", "daemon",
+                   "approvals", "approve", "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance",
                    "skill-record", "skill-evaluate",
                    "subagent-run", "subagents",

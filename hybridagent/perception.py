@@ -43,7 +43,10 @@ class Perception:
             tool = self.registry.get(name)
             if not tool:
                 continue
-            content = tool.run(query=goal, name=goal)
+            try:
+                content = tool.run(query=goal, name=goal)
+            except TypeError:
+                content = tool.run(goal)
             flagged = self.broker.is_injection(content)
             sig = Signal(source=name, content=content, flagged_injection=flagged)
             signals.append(sig)

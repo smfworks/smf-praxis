@@ -12,7 +12,7 @@ import json
 import random
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 TERMINAL = {"completed", "failed", "cancelled"}
 RUNNABLE = {"pending", "retry"}
@@ -29,14 +29,29 @@ class TaskState:
     attempts: int = 0
     max_attempts: int = 3
     cycle_id: str = ""
+    result: dict = field(default_factory=dict)
+    output: str = ""
     error: str = ""
+    plan: str = ""
 
     @classmethod
     def from_row(cls, row: dict) -> "TaskState":
+        result = row.get("result") or {}
+        if not result:
+            result_json = row.get("result_json")
+            if result_json:
+                try:
+                    result = json.loads(result_json) if isinstance(result_json, str) else dict(result_json)
+                except Exception:
+                    result = {}
         return cls(
             task_id=row["task_id"], goal=row["goal"], status=row["status"],
             attempts=row["attempts"], max_attempts=row["max_attempts"],
-            cycle_id=row.get("cycle_id", ""), error=row.get("error", ""),
+            cycle_id=row.get("cycle_id", ""),
+            result=result,
+            output=row.get("output", ""),
+            error=row.get("error", ""),
+            plan=row.get("plan", ""),
         )
 
 
@@ -121,9 +136,13 @@ class TaskManager:
                 "actions": report.actions,
                 "pending_approvals": report.pending_approvals,
             }
+            plan_text = self._format_plan(report.plan)
+            output_text = self._format_output(report, plan_text)
             self.store.update_task(
                 task_id, status=status, cycle_id=report.cycle_id,
-                result_json=json.dumps(result), error="")
+                result_json=json.dumps(result), error="",
+                output=output_text, plan=plan_text,
+            )
             self.store.add_compliance_event(report.cycle_id, "task_finished", {
                 "task_id": task_id, "status": status,
                 "pending_approvals": len(report.pending_approvals),
@@ -131,15 +150,41 @@ class TaskManager:
         except Exception as exc:
             failed_terminal = attempts >= task.max_attempts
             status = "failed" if failed_terminal else "retry"
-            # Exponential backoff with jitter avoids thundering-herd when many
-            # tasks fail simultaneously and all retry at the same second.
             base = min(3600.0, 2.0 ** attempts)
             jitter = random.uniform(0, base * 0.25)
             next_retry = None if failed_terminal else now + base + jitter
+            output_text = f"Run {attempts} failed: {exc}"
             self.store.update_task(
-                task_id, status=status, next_retry_ts=next_retry, error=str(exc))
+                task_id, status=status, next_retry_ts=next_retry, error=str(exc),
+                output=output_text,
+            )
             self.store.add_compliance_event(task.cycle_id, "task_error", {
                 "task_id": task_id, "attempt": attempts,
                 "status": status, "error": str(exc),
             }, ref_id=task_id)
         return self._require(task_id)
+
+    @staticmethod
+    def _format_plan(plan) -> str:
+        if plan is None or not getattr(plan, "steps", None):
+            return "No plan generated."
+        lines = []
+        for i, step in enumerate(plan.steps, 1):
+            lines.append(f"{i}. {step.intent} [{step.tool}]")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_output(report, plan_text: str) -> str:
+        parts = []
+        if report.reflection:
+            parts.append(str(report.reflection))
+        if report.actions:
+            parts.append("Actions:\n" + "\n".join(f"  - {a}" for a in report.actions))
+        else:
+            parts.append("No actions were executed.")
+        if report.pending_approvals:
+            parts.append("Held for approval:")
+            for pa in report.pending_approvals:
+                parts.append(f"  - [{pa.get('risk')}] {pa.get('tool')} :: {pa.get('preview')}")
+        parts.append("Plan:\n" + plan_text)
+        return "\n\n".join(parts)

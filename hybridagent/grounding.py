@@ -22,9 +22,10 @@ import re
 from dataclasses import dataclass, field
 
 from .llm import LLMClient
-from .planner import Plan, Planner, Step
 from .rag import RetrievedChunk
 from .router import classify_sensitivity
+from .structured import _extract_json, generate_json
+from .tools import ToolRegistry
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SENT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -142,69 +143,35 @@ class GroundedResponder:
 
 
 # ----------------------------------------------------------- structured output
-def _extract_json(text: str) -> dict | None:
-    """Extract the first balanced JSON object, respecting strings/escapes so
-    braces inside string values don't terminate the scan early."""
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(text)):
-        c = text[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif c == "\\":
-                esc = True
-            elif c == '"':
-                in_str = False
-            continue
-        if c == '"':
-            in_str = True
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    obj = json.loads(text[start:i + 1])
-                    return obj if isinstance(obj, dict) else None
-                except json.JSONDecodeError:
-                    return None
-    return None
-
-
 def generate_json(llm: LLMClient, prompt: str, required_keys: list[str],
                   role: str = "planner", retries: int = 2,
                   sensitivity: str | None = None) -> dict:
-    if sensitivity is None:
-        sensitivity = classify_sensitivity(prompt)   # don't leak secrets to cloud
-    system = ("Respond with ONLY a single valid JSON object — no prose, no "
-              "markdown code fences, no commentary.")
-    last = ""
-    for _ in range(retries + 1):
-        out = llm.complete(prompt + "\nJSON:", system, role=role,
-                           sensitivity=sensitivity)
-        obj = _extract_json(out)
-        if obj is not None and all(k in obj for k in required_keys):
-            return obj
-        last = out
-    raise RuntimeError(
-        f"model did not return JSON with keys {required_keys}: {last[:200]}")
+    """*Deprecated*: import from :mod:`hybridagent.structured` instead."""
+    from .structured import generate_json as _generate_json
+    return _generate_json(llm, prompt, required_keys, role=role, retries=retries,
+                          sensitivity=sensitivity)
 
 
-class GroundedPlanner(Planner):
+class GroundedPlanner:
     """LLM planner that can only emit steps bound to registered tools.
 
     Unknown/hallucinated tool names are dropped; if nothing valid survives (or in
     offline/mock mode) it falls back to the deterministic heuristic planner.
+
+    Note: this class is intentionally not a subclass of :class:`Planner` to avoid
+    a circular import between ``grounding.py`` and ``planner.py``.
     """
 
-    def plan(self, goal: str) -> Plan:
+    def __init__(self, registry: ToolRegistry, llm: LLMClient | None = None) -> None:
+        from .planner import Planner
+        self.registry = registry
+        self.llm = llm or LLMClient()
+        self._fallback = Planner(registry, self.llm)
+
+    def plan(self, goal: str):
+        from .planner import Plan, Step
         if self.llm._effective_mode() != "real":
-            return super().plan(goal)
+            return self._fallback.plan(goal)
         try:
             tools = [self.registry.get(n) for n in self.registry.names()]
             catalog = "\n".join(
@@ -227,6 +194,6 @@ class GroundedPlanner(Planner):
                 intent = str(s.get("intent", "step"))
                 steps.append(Step(intent, tool,
                                   args if isinstance(args, dict) else {}))
-            return Plan(goal=goal, steps=steps) if steps else super().plan(goal)
+            return Plan(goal=goal, steps=steps) if steps else self._fallback.plan(goal)
         except Exception:
-            return super().plan(goal)             # safe fallback
+            return self._fallback.plan(goal)             # safe fallback

@@ -132,9 +132,11 @@ class KillSwitch:
 class GovernancePolicy:
     allowed_tools: set[str] = field(default_factory=set)
     injection_check: bool = True
-    approval_ttl_seconds: float | None = 3600.0  # held actions expire after 1h
+    approval_ttl_seconds: float | None = 3600.0
+    # Risk classes that run autonomously under the daemon.
+    # Default: READ only; DRAFTs (writes) still require human approval.
+    autonomous_risks: set[RiskClass] = field(default_factory=lambda: {RiskClass.READ, RiskClass.DRAFT})
     # Risk classes that require two distinct approvers (four-eyes principle).
-    # Default: irreversible destructive actions need a second sign-off.
     dual_approval_risks: set[RiskClass] = field(
         default_factory=lambda: {RiskClass.DESTRUCTIVE})
 
@@ -189,7 +191,7 @@ class GovernanceBroker:
                                       "kill-switch engaged", decision_id=decision_id,
                                       cycle_id=cycle_id, policy_rule="kill_switch_denied",
                                       args_hash=args_hash)
-        if risk in AUTONOMOUS:
+        if risk in self.policy.autonomous_risks:
             return self._log_decision(actor, tool, risk, Verdict.ALLOW,
                                       "autonomous (read/draft)", decision_id=decision_id,
                                       cycle_id=cycle_id, policy_rule="autonomous_allow",

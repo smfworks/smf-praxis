@@ -109,7 +109,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     next_retry_ts REAL,
     cycle_id TEXT NOT NULL DEFAULT '',
     result_json TEXT NOT NULL DEFAULT '{}',
-    error TEXT NOT NULL DEFAULT ''
+    error TEXT NOT NULL DEFAULT '',
+    output TEXT NOT NULL DEFAULT '',
+    plan TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_tasks_status ON tasks(status);
 
@@ -233,6 +235,10 @@ class Store:
             "access_count": "INTEGER NOT NULL DEFAULT 0",
             "last_access_ts": "REAL",
             "expires_at": "REAL",
+        })
+        self._ensure_columns_locked("tasks", {
+            "output": "TEXT NOT NULL DEFAULT ''",
+            "plan": "TEXT NOT NULL DEFAULT ''",
         })
 
     def _ensure_columns_locked(self, table: str, columns: dict[str, str]) -> None:
@@ -597,7 +603,7 @@ class Store:
     def update_task(self, task_id: str, **fields) -> bool:
         allowed = {
             "status", "attempts", "next_retry_ts", "cycle_id", "result_json",
-            "error", "updated_ts"
+            "error", "updated_ts", "output", "plan"
         }
         fields.setdefault("updated_ts", time.time())
         updates = {k: v for k, v in fields.items() if k in allowed}

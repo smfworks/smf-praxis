@@ -13,14 +13,16 @@ governance broker:
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from .broker import GovernanceBroker, GovernancePolicy, RiskClass, Verdict
 from .llm import LLMClient
 from .memory import Memory
 from .perception import Perception, Signal
-from .planner import Plan, Planner
+from .planner import LLMPlanner, Plan, Planner
 from .reflection import ReflectionResult, Reflector
 from .tools import ToolRegistry, default_registry
 
@@ -33,6 +35,7 @@ class CycleReport:
     pending_approvals: list[dict] = field(default_factory=list)
     injection_flags: list[str] = field(default_factory=list)
     reflection: ReflectionResult | None = None
+    plan: Any | None = None
 
     def summary(self) -> str:
         return (
@@ -49,6 +52,8 @@ class PraxisAgent:
         llm: LLMClient | None = None,
         memory: Memory | None = None,
         store=None,
+        mcp_servers: list[dict] | None = None,
+        planner=None,
     ) -> None:
         self.store = store
         self.registry = registry or default_registry()
@@ -72,15 +77,38 @@ class PraxisAgent:
             self.skills = SkillLibrary(store=store, embedder=embedder)
         self.perception = Perception(self.registry, self.broker, self.memory,
                                      rag=self.rag, skills=self.skills)
-        self.planner = Planner(self.registry, self.llm)
+        self.planner = planner if planner is not None else LLMPlanner(self.registry, self.llm)
         self.reflector = Reflector(self.memory, self.llm)
+        # Optionally import tools from external MCP servers.
+        self.mcp_servers = mcp_servers or []
+        if self.mcp_servers:
+            import asyncio
+            from .mcp_adapter import MCPClient
+            async def _load() -> None:
+                client = MCPClient()
+                for cfg in self.mcp_servers:
+                    await client.load_server(
+                        self.registry,
+                        command=cfg["command"],
+                        args=cfg.get("args", []),
+                        env=cfg.get("env"),
+                        server_name=cfg.get("name", "external"),
+                    )
+            asyncio.run(_load())
+            # Refresh broker allowlist with discovered tools.
+            self.broker.policy.allowed_tools.update(self.registry.names())
 
     @classmethod
     def persistent(cls, registry: ToolRegistry | None = None,
-                   llm: LLMClient | None = None) -> "PraxisAgent":
+                   llm: LLMClient | None = None,
+                   mcp_servers: list[dict] | None = None,
+                   work_dir: str | None = None) -> "PraxisAgent":
         """Build an agent backed by the on-disk store (~/.praxis/praxis.db)."""
         from .persistence import Store
-        return cls(registry=registry, llm=llm, store=Store.open())
+        if work_dir:
+            os.environ.setdefault("PRAXIS_WORK_DIR", work_dir)
+        return cls(registry=registry, llm=llm, store=Store.open(),
+                   mcp_servers=mcp_servers)
 
     # ----------------------------------------------------- durable seeding
     def learn(self, fact: str, kind: str = "preference", provenance: str = "user") -> None:
@@ -113,6 +141,7 @@ class PraxisAgent:
 
         # 2. PLAN.
         plan: Plan = self.planner.plan(goal)
+        report.plan = plan
         self._event(report.cycle_id, "plan", {
             "steps": [
                 {"intent": s.intent, "tool": s.tool, "args_hash": self._hash_text(str(s.args))}
