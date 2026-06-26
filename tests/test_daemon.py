@@ -385,3 +385,57 @@ def test_daemon_upload_is_post_only(tmp_store, mock_agent, tmp_path):
         assert got_status == 404
     finally:
         daemon._stop_status_server()
+
+
+def test_dashboard_serves_upload_ui(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        with urllib.request.urlopen(f"{base}/") as resp:
+            assert resp.headers.get_content_type() == "text/html"
+            html = resp.read().decode("utf-8")
+        # The Files panel + drag/drop picker must be wired into the dashboard...
+        assert 'id="drop"' in html
+        assert 'id="fileInput"' in html
+        assert "function initUpload" in html
+        assert "initUpload();" in html
+        # ...and it must post to the upload endpoint.
+        assert "/upload" in html
+    finally:
+        daemon._stop_status_server()
+
+
+def test_daemon_upload_accepts_multiple_files(tmp_store, mock_agent, tmp_path):
+    work = tmp_path / "multi"
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        work_dir=str(work), status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        boundary = "----praxisMulti"
+        parts = [
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{name}"\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+            f"{content}\r\n"
+            for name, content in (("a.txt", "alpha"), ("b.txt", "beta"))
+        ]
+        body = ("".join(parts) + f"--{boundary}--\r\n").encode()
+        req = urllib.request.Request(
+            f"{base}/upload", data=body, method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            out = json.loads(resp.read().decode())
+        assert out["uploaded"] == 2
+        assert sorted(out["files"]) == ["a.txt", "b.txt"]
+        assert (work / "a.txt").read_text() == "alpha"
+        assert (work / "b.txt").read_text() == "beta"
+    finally:
+        daemon._stop_status_server()

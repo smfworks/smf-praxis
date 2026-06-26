@@ -264,6 +264,23 @@ select:focus, .txt:focus { border-color: var(--accent); }
 pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .74rem; color: var(--faint); max-height: 11rem; overflow-y: auto; margin: 0; }
 .empty { color: var(--faint); font-size: .85rem; }
 
+/* file upload */
+.dropzone { border: 1.5px dashed var(--border); border-radius: .7rem; padding: 1.1rem .8rem; text-align: center; cursor: pointer; transition: all .15s ease; background: var(--bg); }
+.dropzone:hover, .dropzone:focus-visible { border-color: var(--accent); outline: none; }
+.dropzone.dragover { border-color: var(--accent); background: rgba(91,141,239,.08); box-shadow: 0 0 0 3px rgba(91,141,239,.15); }
+.dz-icon { font-size: 1.35rem; line-height: 1; color: var(--accent); }
+.dz-text { font-size: .85rem; margin-top: .3rem; color: var(--text); }
+.dz-link { color: var(--accent); text-decoration: underline; }
+.dz-sub { font-size: .72rem; color: var(--faint); margin-top: .2rem; }
+#uploads { margin-top: .6rem; }
+.uprow { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; font-size: .8rem; padding: .45rem .55rem; border: 1px solid var(--border); border-radius: .5rem; margin-top: .5rem; background: var(--bg2); }
+.uprow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uprow .sz { color: var(--faint); font-size: .72rem; }
+.uprow .st { font-size: .72rem; min-width: 2.6rem; text-align: right; }
+.uprow .st.ok { color: var(--ok); } .uprow .st.bad { color: var(--bad); } .uprow .st.pending { color: var(--muted); }
+.upbar { flex-basis: 100%; height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.upbar > i { display: block; height: 100%; width: 0; background: linear-gradient(135deg, var(--accent), var(--accent2)); transition: width .2s ease; }
+
 #toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(2rem); background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: .6rem 1rem; border-radius: .7rem; box-shadow: var(--shadow); font-size: .85rem; opacity: 0; transition: all .25s ease; pointer-events: none; z-index: 50; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
@@ -309,6 +326,16 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
         <button class="primary" onclick="applyModel()">Use</button>
       </div>
       <div class="hint" id="keyHint"></div>
+    </div>
+    <div class="panel pad">
+      <h2>Files</h2>
+      <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="Upload files">
+        <input id="fileInput" type="file" multiple hidden />
+        <div class="dz-icon">⬆</div>
+        <div class="dz-text">Drop files here or <span class="dz-link">browse</span></div>
+        <div class="dz-sub">Saved to the agent's work directory</div>
+      </div>
+      <div id="uploads"></div>
     </div>
     <div class="panel pad">
       <h2>Queue</h2>
@@ -486,6 +513,51 @@ async function loadModel(){ const m = await api('/api/model'); document.getEleme
 let _toastT;
 function showToast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(_toastT); _toastT = setTimeout(()=>t.classList.remove('show'), 2600); }
 
+/* ---------- file upload ---------- */
+function humanSize(n){ if(n < 1024) return n+' B'; if(n < 1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+function uploadOne(file){
+  const up = document.getElementById('uploads');
+  const row = document.createElement('div'); row.className = 'uprow';
+  const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = file.name; nm.title = file.name;
+  const sz = document.createElement('span'); sz.className = 'sz'; sz.textContent = humanSize(file.size);
+  const st = document.createElement('span'); st.className = 'st pending'; st.textContent = '0%';
+  const bar = document.createElement('div'); bar.className = 'upbar'; const fill = document.createElement('i'); bar.appendChild(fill);
+  row.append(nm, sz, st, bar); up.prepend(row);
+  const fd = new FormData(); fd.append('file', file, file.name);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload');
+  xhr.upload.onprogress = e => {
+    if(e.lengthComputable){ const pct = Math.round(e.loaded / e.total * 100); fill.style.width = pct+'%'; st.textContent = pct+'%'; }
+  };
+  xhr.onload = () => {
+    let res = {}; try { res = JSON.parse(xhr.responseText || '{}'); } catch(_) {}
+    const errs = res.errors || [];
+    if(xhr.status >= 200 && xhr.status < 300 && (res.uploaded || 0) > 0 && !errs.length){
+      fill.style.width = '100%'; st.className = 'st ok'; st.textContent = '✓ saved';
+    } else {
+      st.className = 'st bad'; st.textContent = '✗ failed';
+      st.title = errs.join('; ') || res.error || ('HTTP '+xhr.status);
+      showToast('Upload failed: '+file.name);
+    }
+  };
+  xhr.onerror = () => { st.className = 'st bad'; st.textContent = '✗ failed'; showToast('Upload failed: '+file.name); };
+  xhr.send(fd);
+}
+function uploadFiles(files){ Array.from(files).forEach(uploadOne); }
+function initUpload(){
+  const dz = document.getElementById('drop'); const fi = document.getElementById('fileInput');
+  if(!dz || !fi) return;
+  dz.addEventListener('click', () => fi.click());
+  dz.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fi.click(); } });
+  fi.addEventListener('change', () => { if(fi.files.length){ uploadFiles(fi.files); fi.value = ''; } });
+  ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('dragover'); }));
+  ['dragleave','dragend','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('dragover'); }));
+  dz.addEventListener('drop', e => { const dt = e.dataTransfer; if(dt && dt.files && dt.files.length) uploadFiles(dt.files); });
+  // Prevent the browser from navigating away when a file is dropped off-target.
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+}
+
 /* ---------- sidebar refresh ---------- */
 async function refresh(){
   const st = await api('/status');
@@ -538,6 +610,7 @@ loadProviders();
 loadModel();
 refresh();
 connectEvents();
+initUpload();
 setInterval(refresh, 4000);
 </script>
 </body>
