@@ -122,3 +122,22 @@ def test_embeddings_reassemble_in_index_order(base_url):
     vecs = embed(provider=_OLLAMA, model="nomic-embed-text",
                  texts=["a", "b"], api_key=None, base_url=base_url, timeout=5.0)
     assert vecs == [[0.1, 0.2], [0.3, 0.4]]   # re-sorted by index, not wire order
+
+
+def test_chat_messages_roundtrip_over_the_wire(base_url):
+    from hybridagent.providers import chat_messages
+    out = chat_messages(provider=_OLLAMA, model="llama3.2",
+                        messages=[{"role": "user", "content": "hi"},
+                                  {"role": "assistant", "content": "hello"},
+                                  {"role": "user", "content": "ping"}],
+                        system="be terse", api_key=None,
+                        base_url=base_url, timeout=5.0)
+    assert out == "pong"
+
+
+def test_chat_messages_malformed_response_raises(base_url):
+    from hybridagent.providers import chat_messages
+    with pytest.raises(RuntimeError):
+        chat_messages(provider=_OLLAMA, model="badshape",
+                      messages=[{"role": "user", "content": "ping"}],
+                      api_key=None, base_url=base_url, timeout=5.0)

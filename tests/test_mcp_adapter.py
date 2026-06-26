@@ -10,12 +10,17 @@ import pytest
 
 from hybridagent.broker import RiskClass
 from hybridagent.mcp_adapter import (
+    _HAS_MCP,
     _make_sync_runner,
     annotations_from_risk,
     build_mcp_server,
     risk_from_annotations,
 )
 from hybridagent.tools import Tool, ToolRegistry, default_registry
+
+requires_mcp = pytest.mark.skipif(
+    not _HAS_MCP, reason="optional 'mcp' package not installed"
+)
 
 
 @pytest.fixture
@@ -38,31 +43,46 @@ def echo_tool():
     )
 
 
-@pytest.mark.asyncio
-async def test_mcp_server_lists_tools(empty_registry, echo_tool):
-    empty_registry.register(echo_tool)
-    server = build_mcp_server(empty_registry, name="test-praxis", version="0.0.1")
-    # Trigger list_tools handler to populate the server's tool cache.
+@requires_mcp
+def test_mcp_server_lists_tools(empty_registry, echo_tool):
+    import asyncio
+
     from mcp.types import ListToolsRequest
-    req = ListToolsRequest(method="tools/list")
-    res = await server.request_handlers[ListToolsRequest](req)
-    assert "echo" in server._tool_cache
-    assert server._tool_cache["echo"].name == "echo"
-    assert server._tool_cache["echo"].inputSchema["required"] == ["message"]
+
+    async def _run() -> None:
+        empty_registry.register(echo_tool)
+        server = build_mcp_server(empty_registry, name="test-praxis", version="0.0.1")
+        # Trigger list_tools handler to populate the server's tool cache.
+        req = ListToolsRequest(method="tools/list")
+        await server.request_handlers[ListToolsRequest](req)
+        assert "echo" in server._tool_cache
+        assert server._tool_cache["echo"].name == "echo"
+        assert server._tool_cache["echo"].inputSchema["required"] == ["message"]
+
+    asyncio.run(_run())
 
 
-@pytest.mark.asyncio
-async def test_mcp_server_calls_tool(empty_registry, echo_tool):
-    empty_registry.register(echo_tool)
-    server = build_mcp_server(empty_registry, name="test-praxis")
-    # Prime the cache by listing tools.
+@requires_mcp
+def test_mcp_server_calls_tool(empty_registry, echo_tool):
+    import asyncio
+
     from mcp.types import CallToolRequest, ListToolsRequest
-    await server.request_handlers[ListToolsRequest](ListToolsRequest(method="tools/list"))
-    req = CallToolRequest(method="tools/call", params={"name": "echo", "arguments": {"message": "hello"}})
-    server_result = await server.request_handlers[CallToolRequest](req)
-    result = server_result.root
-    assert len(result.content) == 1
-    assert result.content[0].text == "echo: hello"
+
+    async def _run() -> None:
+        empty_registry.register(echo_tool)
+        server = build_mcp_server(empty_registry, name="test-praxis")
+        # Prime the cache by listing tools.
+        await server.request_handlers[ListToolsRequest](ListToolsRequest(method="tools/list"))
+        req = CallToolRequest(
+            method="tools/call",
+            params={"name": "echo", "arguments": {"message": "hello"}},
+        )
+        server_result = await server.request_handlers[CallToolRequest](req)
+        result = server_result.root
+        assert len(result.content) == 1
+        assert result.content[0].text == "echo: hello"
+
+    asyncio.run(_run())
 
 
 def test_risk_class_mapping():
@@ -87,6 +107,7 @@ def test_risk_class_mapping_from_annotations():
     assert risk_from_annotations("any", FakeAnnotationsDestructive()) is RiskClass.DESTRUCTIVE
 
 
+@requires_mcp
 def test_annotations_from_risk_round_trip():
     ann = annotations_from_risk(RiskClass.READ, title="read")
     assert ann.readOnlyHint is True

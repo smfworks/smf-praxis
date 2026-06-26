@@ -30,10 +30,11 @@ try:
     from mcp.server import Server as MCPServer
     from mcp.server.stdio import stdio_server
     from mcp.types import (
-        CallToolRequest,
         TextContent,
-        Tool as MCPTool,
         ToolAnnotations,
+    )
+    from mcp.types import (
+        Tool as MCPTool,
     )
     _HAS_MCP = True
 except Exception:  # pragma: no cover - defensive when mcp is not installed

@@ -133,8 +133,10 @@ class GovernancePolicy:
     allowed_tools: set[str] = field(default_factory=set)
     injection_check: bool = True
     approval_ttl_seconds: float | None = 3600.0
-    # Risk classes that run autonomously under the daemon.
-    # Default: READ only; DRAFTs (writes) still require human approval.
+    # Risk classes that run autonomously (no human approval). Per the framework
+    # principle "autonomy for preparation, approval for consequence", both READ
+    # and DRAFT are autonomous: a draft only prepares content and never sends.
+    # SEND/DESTRUCTIVE are always held for approval. Mirrors the AUTONOMOUS set.
     autonomous_risks: set[RiskClass] = field(default_factory=lambda: {RiskClass.READ, RiskClass.DRAFT})
     # Risk classes that require two distinct approvers (four-eyes principle).
     dual_approval_risks: set[RiskClass] = field(

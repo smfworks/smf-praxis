@@ -4,17 +4,15 @@ import json
 import threading
 import time
 import urllib.request
-from pathlib import Path
 
 import pytest
 
 from hybridagent.agent import PraxisAgent
-from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
+from hybridagent.broker import RiskClass
 from hybridagent.daemon import Daemon, DaemonState, _find_port, _read_state, _write_state
 from hybridagent.llm import LLMClient
 from hybridagent.persistence import Store
 from hybridagent.planner import Plan, Planner, Step
-from hybridagent.task_manager import TaskManager
 from hybridagent.tools import Tool, ToolRegistry
 
 
@@ -240,3 +238,40 @@ def test_daemon_orphan_recovery(tmp_store, mock_agent):
     task = daemon.manager.get("orphan-1")
     assert task is not None
     assert task.status == "retry"
+
+
+def test_daemon_chat_and_model_endpoints(tmp_store, mock_agent, monkeypatch, tmp_path):
+    # Isolate config so /api/model reads an empty (mock) config, not the host's.
+    monkeypatch.setenv("PRAXIS_HOME", str(tmp_path / ".praxis"))
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1,
+        idle_interval=0.1, status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        # multi-turn chat round-trips through the mock LLM
+        payload = json.dumps({"messages": [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "hello praxis dashboard"},
+        ]}).encode()
+        req = urllib.request.Request(f"{base}/api/chat", data=payload,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        with urllib.request.urlopen(req) as resp:
+            chat = json.loads(resp.read().decode())
+        assert "hello praxis dashboard" in chat["text"]
+        assert "model" in chat
+        # model info is read-only and well-formed
+        with urllib.request.urlopen(f"{base}/api/model") as resp:
+            info = json.loads(resp.read().decode())
+        assert "model" in info and "configured" in info
+        # provider catalog exposes the expanded cloud picker
+        with urllib.request.urlopen(f"{base}/api/providers") as resp:
+            provs = json.loads(resp.read().decode())
+        ids = [p["id"] for p in provs]
+        for pid in ("ollama", "openai", "google", "groq", "mistral"):
+            assert pid in ids
+    finally:
+        daemon._stop_status_server()

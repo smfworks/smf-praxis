@@ -15,8 +15,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .structured import generate_json
 from .llm import LLMClient
+from .structured import generate_json
 from .tools import ToolRegistry
 from .validation import ValidationError, validate_tool_args
 

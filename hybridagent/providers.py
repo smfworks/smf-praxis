@@ -82,6 +82,59 @@ CATALOG: dict[str, Provider] = {
         suggested_models=["grok-2-latest", "grok-2-mini", "grok-beta"],
         notes="xAI Console API key (XAI_API_KEY); OpenAI-compatible endpoint.",
     ),
+    "google": Provider(
+        id="google", label="Google Gemini",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        compatibility="openai", key_env="GEMINI_API_KEY", needs_key=True,
+        suggested_models=["gemini-2.0-flash", "gemini-2.0-flash-lite",
+                          "gemini-1.5-pro", "gemini-1.5-flash"],
+        notes="Google AI Studio key (GEMINI_API_KEY); OpenAI-compatible endpoint.",
+    ),
+    "mistral": Provider(
+        id="mistral", label="Mistral AI",
+        base_url="https://api.mistral.ai/v1", compatibility="openai",
+        key_env="MISTRAL_API_KEY", needs_key=True,
+        suggested_models=["mistral-large-latest", "mistral-small-latest",
+                          "open-mistral-nemo", "codestral-latest"],
+    ),
+    "groq": Provider(
+        id="groq", label="Groq (fast inference)",
+        base_url="https://api.groq.com/openai/v1", compatibility="openai",
+        key_env="GROQ_API_KEY", needs_key=True,
+        suggested_models=["llama-3.3-70b-versatile", "llama-3.1-8b-instant",
+                          "mixtral-8x7b-32768", "gemma2-9b-it"],
+        notes="Groq Cloud key (GROQ_API_KEY); very low-latency inference.",
+    ),
+    "deepseek": Provider(
+        id="deepseek", label="DeepSeek",
+        base_url="https://api.deepseek.com/v1", compatibility="openai",
+        key_env="DEEPSEEK_API_KEY", needs_key=True,
+        suggested_models=["deepseek-chat", "deepseek-reasoner"],
+        notes="DeepSeek Platform key (DEEPSEEK_API_KEY).",
+    ),
+    "perplexity": Provider(
+        id="perplexity", label="Perplexity (Sonar)",
+        base_url="https://api.perplexity.ai", compatibility="openai",
+        key_env="PERPLEXITY_API_KEY", needs_key=True,
+        suggested_models=["sonar", "sonar-pro", "sonar-reasoning"],
+        notes="Perplexity key (PERPLEXITY_API_KEY); web-grounded Sonar models.",
+    ),
+    "together": Provider(
+        id="together", label="Together AI",
+        base_url="https://api.together.xyz/v1", compatibility="openai",
+        key_env="TOGETHER_API_KEY", needs_key=True,
+        suggested_models=["meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                          "Qwen/Qwen2.5-72B-Instruct-Turbo",
+                          "mistralai/Mixtral-8x7B-Instruct-v0.1"],
+    ),
+    "fireworks": Provider(
+        id="fireworks", label="Fireworks AI",
+        base_url="https://api.fireworks.ai/inference/v1", compatibility="openai",
+        key_env="FIREWORKS_API_KEY", needs_key=True,
+        suggested_models=["accounts/fireworks/models/llama-v3p3-70b-instruct",
+                          "accounts/fireworks/models/qwen2p5-72b-instruct",
+                          "accounts/fireworks/models/deepseek-v3"],
+    ),
     "vercel-ai-gateway": Provider(
         id="vercel-ai-gateway", label="Vercel AI Gateway",
         base_url="https://ai-gateway.vercel.sh/v1", compatibility="openai",
@@ -100,8 +153,9 @@ CATALOG: dict[str, Provider] = {
     ),
 }
 
-ORDER = ["ollama", "openrouter", "github", "openai", "anthropic",
-         "xai", "vercel-ai-gateway", "custom"]
+ORDER = ["ollama", "openai", "anthropic", "google", "xai", "mistral", "groq",
+         "deepseek", "perplexity", "together", "fireworks", "openrouter",
+         "github", "vercel-ai-gateway", "custom"]
 
 
 def discover_ollama_models(base_url: str, timeout: float = 3.0) -> list[str]:
@@ -193,6 +247,84 @@ def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
                "messages": [{"role": "user", "content": prompt}]}
     if system:
         payload["system"] = system
+    data = _post(f"{root}/messages", headers, payload, timeout)
+    blocks = data.get("content")
+    if not isinstance(blocks, list):
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    return "".join(block.get("text", "") for block in blocks)
+
+
+def chat_messages(provider: Provider, model: str, messages: list[dict],
+                  system: str | None = None, api_key: str | None = None,
+                  base_url: str | None = None, timeout: float = 60.0,
+                  temperature: float = 0.3, max_tokens: int = 1024) -> str:
+    """Multi-turn chat completion.
+
+    ``messages`` is an ordered list of ``{"role": "user"|"assistant"|"system",
+    "content": str}`` turns; ``system`` is an optional leading system prompt
+    merged ahead of the conversation. Routes to the provider's wire protocol.
+    """
+    root = (base_url or provider.base_url).rstrip("/")
+    if provider.compatibility == "anthropic":
+        return _chat_messages_anthropic(root, model, messages, system, api_key,
+                                        timeout, temperature, max_tokens)
+    return _chat_messages_openai(root, model, messages, system, api_key,
+                                 timeout, temperature, max_tokens)
+
+
+def _normalize_turns(messages: list[dict]) -> list[dict]:
+    """Coerce arbitrary message dicts into clean {role, content} turns."""
+    out: list[dict] = []
+    for m in messages or []:
+        role = str(m.get("role", "user"))
+        if role not in ("system", "user", "assistant"):
+            role = "user"
+        out.append({"role": role, "content": str(m.get("content", ""))})
+    return out
+
+
+def _chat_messages_openai(root: str, model: str, messages: list[dict],
+                          system: str | None, api_key: str | None, timeout: float,
+                          temperature: float, max_tokens: int) -> str:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    wire: list[dict] = []
+    if system:
+        wire.append({"role": "system", "content": system})
+    wire.extend(_normalize_turns(messages))
+    data = _post(f"{root}/chat/completions", headers,
+                 {"model": model, "messages": wire,
+                  "temperature": temperature, "max_tokens": max_tokens}, timeout)
+    try:
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
+
+
+def _chat_messages_anthropic(root: str, model: str, messages: list[dict],
+                             system: str | None, api_key: str | None,
+                             timeout: float, temperature: float,
+                             max_tokens: int) -> str:
+    headers = {"Content-Type": "application/json",
+               "anthropic-version": "2023-06-01"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    # Anthropic takes the system prompt as a top-level field and only
+    # user/assistant turns in ``messages`` — hoist any system turns out.
+    sys_parts = [system] if system else []
+    conv: list[dict] = []
+    for turn in _normalize_turns(messages):
+        if turn["role"] == "system":
+            sys_parts.append(turn["content"])
+            continue
+        conv.append(turn)
+    payload: dict = {"model": model, "max_tokens": max_tokens,
+                     "temperature": temperature,
+                     "messages": conv or [{"role": "user", "content": ""}]}
+    merged_system = "\n\n".join(p for p in sys_parts if p)
+    if merged_system:
+        payload["system"] = merged_system
     data = _post(f"{root}/messages", headers, payload, timeout)
     blocks = data.get("content")
     if not isinstance(blocks, list):

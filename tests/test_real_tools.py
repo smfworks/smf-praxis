@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
 from hybridagent.real_tools import fetch_url, list_dir, read_file, search_web, write_file
-from hybridagent.tools import ToolRegistry, default_registry
+from hybridagent.tools import default_registry
 
 
 def test_read_write_list_roundtrip():

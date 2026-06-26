@@ -25,6 +25,15 @@ from .logging_util import get_logger
 
 _log = get_logger("praxis.skills")
 
+# Tolerance (seconds) for the "did this SKILL.md change on disk?" freshness
+# check. The stored embedding timestamp comes from time.time(), which on Windows
+# is quantized to the ~16 ms system clock tick, while the filesystem mtime is
+# finer-grained. Without a margin, a skill embedded in the same tick it was
+# written can read as "newer than its own embedding" and get needlessly
+# re-embedded on every reload (and flake the no-reembed test). A genuine
+# out-of-band edit is seconds newer, so a small margin preserves that signal.
+_FRESHNESS_EPSILON_S = 2.0
+
 
 def _slug(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -137,7 +146,8 @@ class SkillLibrary:
                 # re-embedding every skill on each construction (an API call per
                 # skill against a real embedder) while still catching edits made
                 # directly to a SKILL.md file out of band.
-                if md.stat().st_mtime > self.rag.store.doc_latest_ts("skills", sk.name):
+                stored_ts = self.rag.store.doc_latest_ts("skills", sk.name)
+                if md.stat().st_mtime > stored_ts + _FRESHNESS_EPSILON_S:
                     self._index(sk)
             except Exception as exc:
                 _log.warning("failed to load skill %s: %s", md, exc)

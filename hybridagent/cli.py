@@ -81,6 +81,7 @@ def cmd_m365(_args: argparse.Namespace) -> int:
 
 def cmd_mcp(_args: argparse.Namespace) -> int:
     import asyncio
+
     from .mcp_adapter import run_stdio_server
     from .tools import default_registry
     asyncio.run(run_stdio_server(default_registry(), name="praxis"))

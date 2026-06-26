@@ -22,7 +22,7 @@ from .broker import GovernanceBroker, GovernancePolicy, RiskClass, Verdict
 from .llm import LLMClient
 from .memory import Memory
 from .perception import Perception, Signal
-from .planner import LLMPlanner, Plan, Planner
+from .planner import LLMPlanner, Plan
 from .reflection import ReflectionResult, Reflector
 from .tools import ToolRegistry, default_registry
 
@@ -83,6 +83,7 @@ class PraxisAgent:
         self.mcp_servers = mcp_servers or []
         if self.mcp_servers:
             import asyncio
+
             from .mcp_adapter import MCPClient
             async def _load() -> None:
                 client = MCPClient()

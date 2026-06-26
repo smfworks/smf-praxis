@@ -17,14 +17,16 @@ Three mechanisms, all offline-capable:
 """
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 
 from .llm import LLMClient
 from .rag import RetrievedChunk
 from .router import classify_sensitivity
-from .structured import _extract_json, generate_json
+from .structured import (  # noqa: F401  (re-exported for backwards compat)
+    _extract_json,
+    generate_json,
+)
 from .tools import ToolRegistry
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -143,15 +145,6 @@ class GroundedResponder:
 
 
 # ----------------------------------------------------------- structured output
-def generate_json(llm: LLMClient, prompt: str, required_keys: list[str],
-                  role: str = "planner", retries: int = 2,
-                  sensitivity: str | None = None) -> dict:
-    """*Deprecated*: import from :mod:`hybridagent.structured` instead."""
-    from .structured import generate_json as _generate_json
-    return _generate_json(llm, prompt, required_keys, role=role, retries=retries,
-                          sensitivity=sensitivity)
-
-
 class GroundedPlanner:
     """LLM planner that can only emit steps bound to registered tools.
 

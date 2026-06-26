@@ -7,7 +7,7 @@ working directory) so a remote planner cannot escape onto arbitrary host paths.
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 def _work_dir() -> Path:
@@ -22,7 +22,15 @@ def _resolve(relative: str) -> Path:
     """
     root = _work_dir()
     raw = Path(relative)
-    if raw.is_absolute():
+    # Detect absolute paths consistently across operating systems. On Windows,
+    # Path("/etc/passwd").is_absolute() is False (no drive), so a POSIX-style
+    # absolute path would slip past a naive is_absolute() check. Test every
+    # flavor: a leading separator, a Windows drive/UNC root, and a POSIX root.
+    if (raw.is_absolute()
+            or relative.startswith(("/", "\\"))
+            or PureWindowsPath(relative).is_absolute()
+            or PureWindowsPath(relative).drive
+            or PurePosixPath(relative).is_absolute()):
         raise ValueError(f"absolute paths not allowed: {relative}")
     # resolve() collapses .. segments; check the final path is still under root.
     resolved = (root / raw).resolve()

@@ -44,6 +44,10 @@ multimodal = [
 # Faster vector search for large knowledge bases (optional; pure-Python fallback
 # is used when absent).
 fast = ["numpy>=1.24"]
+# Model Context Protocol adapter — expose Praxis tools as an MCP server and/or
+# consume external MCP servers. Optional; hybridagent.mcp_adapter degrades
+# gracefully (clear ImportError) when this extra is not installed.
+mcp = ["mcp>=1.0"]
 
 [project.scripts]
 praxis = "hybridagent.cli:main"
