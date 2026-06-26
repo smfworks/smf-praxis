@@ -1,8 +1,10 @@
 """Tests for the persistent daemon runtime."""
 
+import http.client
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 
 import pytest
@@ -273,5 +275,113 @@ def test_daemon_chat_and_model_endpoints(tmp_store, mock_agent, monkeypatch, tmp
         ids = [p["id"] for p in provs]
         for pid in ("ollama", "openai", "google", "groq", "mistral"):
             assert pid in ids
+    finally:
+        daemon._stop_status_server()
+
+
+def _read_sse(port, received, deadline_s=5.0):
+    """Connect to /events and collect raw SSE lines until the task event's data
+    line (the one carrying the payload) arrives or the deadline passes."""
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=deadline_s)
+        conn.request("GET", "/events")
+        resp = conn.getresponse()
+        deadline = time.time() + deadline_s
+        saw_task = False
+        while time.time() < deadline:
+            line = resp.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace")
+            received.append(text)
+            if text.startswith("event: task"):
+                saw_task = True
+            elif saw_task and text.startswith("data:"):
+                break
+        conn.close()
+    except Exception:  # pragma: no cover - reader is best-effort
+        pass
+
+
+def test_daemon_sse_delivers_to_each_client_and_no_leak(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1,
+        idle_interval=0.1, status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    # Emitting with no subscribers must be a no-op (regression guard against the
+    # old unbounded shared queue that grew forever when nobody was listening).
+    daemon.emit_event("task", {"task_id": "ignored", "status": "running"})
+    assert daemon._sse_client_count() == 0
+
+    daemon.running = True  # required for the _serve_sse loop to stream
+    daemon._start_status_server()
+    try:
+        # Two concurrent clients must each receive a full copy of every event
+        # (the old single-Queue design split events across consumers).
+        got_a: list[str] = []
+        got_b: list[str] = []
+        readers = [
+            threading.Thread(target=_read_sse, args=(daemon.status_port, got_a), daemon=True),
+            threading.Thread(target=_read_sse, args=(daemon.status_port, got_b), daemon=True),
+        ]
+        for t in readers:
+            t.start()
+        # Wait until both connections have registered before emitting (events are
+        # fire-and-forget, so a pre-registration emit would be lost).
+        for _ in range(60):
+            if daemon._sse_client_count() >= 2:
+                break
+            time.sleep(0.05)
+        assert daemon._sse_client_count() == 2
+
+        daemon.emit_event("task", {"task_id": "task-xyz", "status": "running"})
+        for t in readers:
+            t.join(timeout=5)
+
+        for blob in ("".join(got_a), "".join(got_b)):
+            assert "event: connected" in blob
+            assert "event: task" in blob
+            assert "task-xyz" in blob
+    finally:
+        daemon._stop_status_server()
+    # Shutdown sentinel must unblock and drop every subscriber (no connection leak).
+    assert daemon._sse_client_count() == 0
+
+
+def test_daemon_upload_is_post_only(tmp_store, mock_agent, tmp_path):
+    work = tmp_path / "uploads"
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        work_dir=str(work), status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        boundary = "----praxisTestBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="hello.txt"\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+            "hello praxis\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+        req = urllib.request.Request(
+            f"{base}/upload", data=body, method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            out = json.loads(resp.read().decode())
+        assert out["uploaded"] == 1
+        assert out["files"] == ["hello.txt"]
+        assert out["errors"] == []
+        assert (work / "hello.txt").read_text() == "hello praxis"
+
+        # A GET to /upload must no longer be routed to the upload handler.
+        got_status = None
+        try:
+            urllib.request.urlopen(urllib.request.Request(f"{base}/upload", method="GET"))
+        except urllib.error.HTTPError as exc:
+            got_status = exc.code
+        assert got_status == 404
     finally:
         daemon._stop_status_server()

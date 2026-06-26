@@ -44,6 +44,10 @@ _LOG_FILE = cfg.home_dir() / "daemon.log"
 _STATE_FILE = cfg.home_dir() / "daemon.state.json"
 _PID_PORT_FILE = cfg.home_dir() / "daemon.port"
 
+# How long an idle SSE connection waits before emitting a keep-alive comment.
+# Bounds the worst-case shutdown latency for a connection blocked on its queue.
+_SSE_HEARTBEAT_SECONDS = 15.0
+
 # Persona for the conversational chat surface (/api/chat). Kept short; the rich
 # governance/agent behavior lives in the task pipeline, this is a direct,
 # helpful conversation with the configured model.
@@ -514,12 +518,26 @@ async function approve(id){
   const res = await api('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id})});
   showToast(res.approved ? ('Approved '+id) : ('Could not approve'+(res.error?': '+res.error:''))); refresh();
 }
+function connectEvents(){
+  try {
+    const es = new EventSource('/events');
+    es.addEventListener('task', (e) => {
+      try {
+        const ev = JSON.parse(e.data); const p = ev.payload || {};
+        showToast('Task '+(p.task_id||'')+' → '+(p.status||''));
+      } catch(_) {}
+      refresh();
+    });
+    // EventSource auto-reconnects on error; the 4s poll below stays as a fallback.
+  } catch(_) { /* SSE unsupported — polling still keeps the UI fresh. */ }
+}
 
 /* ---------- boot ---------- */
 showWelcome();
 loadProviders();
 loadModel();
 refresh();
+connectEvents();
 setInterval(refresh, 4000);
 </script>
 </body>
@@ -528,9 +546,6 @@ setInterval(refresh, 4000);
 
 
 class _StatusHandler(BaseHTTPRequestHandler):
-    # Clients that hold an open SSE connection. Closed when the daemon stops.
-    sse_clients: list["_StatusHandler"] = []
-
     def __init__(self, daemon: "Daemon", *args, **kwargs) -> None:
         self.daemon = daemon
         super().__init__(*args, **kwargs)
@@ -600,6 +615,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                     return
                 self._json_response(model_result)
                 return
+            if self.path == "/upload":
+                self._handle_upload()
+                return
             self.send_response(404)
             self.end_headers()
         except Exception as exc:
@@ -648,9 +666,6 @@ class _StatusHandler(BaseHTTPRequestHandler):
             elif self.path == "/events":
                 self._serve_sse()
                 return
-            elif self.path == "/upload":
-                self._handle_upload()
-                return
             elif self.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
@@ -671,22 +686,34 @@ class _StatusHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        _StatusHandler.sse_clients.append(self)
-        self.wfile.write(b"event: connected\ndata: \"ok\"\n\n")
+        # An SSE stream is a terminal response; don't let the handler try to
+        # parse a pipelined request afterward (which would read a dead socket).
+        self.close_connection = True
+        # Each connection gets its own queue so emit_event can fan out to every
+        # subscriber. Only this thread writes to this socket, avoiding the
+        # interleaved-frame corruption of the old shared-queue design.
+        queue = self.daemon._sse_subscribe()
         try:
+            self.wfile.write(b"event: connected\ndata: \"ok\"\n\n")
+            self.wfile.flush()
             while self.daemon.running and not self.wfile.closed:
-                event = self.daemon.event_queue.get(timeout=10)
-                if event is not None:
-                    self.wfile.write(f"event: {event.get('type', 'message')}\n".encode())
-                    self.wfile.write(f"data: {json.dumps(event, default=str)}\n\n".encode())
+                try:
+                    event = queue.get(timeout=_SSE_HEARTBEAT_SECONDS)
+                except Empty:
+                    # Keep the connection warm and surface dead peers (a write
+                    # to a closed socket raises and breaks the loop).
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                    continue
+                if event is None:  # shutdown sentinel
+                    break
+                self.wfile.write(f"event: {event.get('type', 'message')}\n".encode())
+                self.wfile.write(f"data: {json.dumps(event, default=str)}\n\n".encode())
                 self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, Empty, OSError):
+        except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
-            try:
-                _StatusHandler.sse_clients.remove(self)
-            except ValueError:
-                pass
+            self.daemon._sse_unsubscribe(queue)
 
     def _handle_upload(self) -> None:
         content_type = self.headers.get("Content-Type", "")
@@ -778,7 +805,10 @@ class Daemon:
         self._server_thread: threading.Thread | None = None
         self._consecutive_errors = 0
         self._log_buffer: list[str] = []
-        self.event_queue: Queue[dict[str, _T]] = Queue()
+        # Open SSE subscriber queues, one per /events connection. Guarded by
+        # _sse_lock because request handlers run on independent threads.
+        self._sse_clients: list[Queue[dict[str, _T] | None]] = []
+        self._sse_lock = threading.Lock()
         self.state = _read_state()
         self.state.running = False
         self._setup_signal_handlers()
@@ -789,16 +819,37 @@ class Daemon:
         root.mkdir(parents=True, exist_ok=True)
         return root / Path(filename).name
 
+    def _sse_subscribe(self) -> "Queue[dict[str, _T] | None]":
+        q: "Queue[dict[str, _T] | None]" = Queue()
+        with self._sse_lock:
+            self._sse_clients.append(q)
+        return q
+
+    def _sse_unsubscribe(self, q: "Queue[dict[str, _T] | None]") -> None:
+        with self._sse_lock:
+            try:
+                self._sse_clients.remove(q)
+            except ValueError:
+                pass
+
+    def _sse_client_count(self) -> int:
+        with self._sse_lock:
+            return len(self._sse_clients)
+
+    def _close_sse_clients(self) -> None:
+        """Unblock and drop every open SSE connection (used on shutdown)."""
+        with self._sse_lock:
+            clients = list(self._sse_clients)
+            self._sse_clients.clear()
+        for q in clients:
+            q.put(None)
+
     def emit_event(self, event_type: str, payload: dict[str, _T]) -> None:
         event = {"type": event_type, "ts": time.time(), "payload": payload}
-        self.event_queue.put(event)
-        for client in list(_StatusHandler.sse_clients):
-            try:
-                client.wfile.write(f"event: {event_type}\n".encode())
-                client.wfile.write(f"data: {json.dumps(event, default=str)}\n\n".encode())
-                client.wfile.flush()
-            except Exception:
-                pass
+        with self._sse_lock:
+            clients = list(self._sse_clients)
+        for q in clients:
+            q.put(event)
 
     @classmethod
     def from_env(cls, work_dir: str | None = None,
@@ -845,6 +896,7 @@ class Daemon:
         self._server_thread.start()
 
     def _stop_status_server(self) -> None:
+        self._close_sse_clients()
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
