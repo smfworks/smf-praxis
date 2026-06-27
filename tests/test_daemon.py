@@ -1,6 +1,7 @@
 """Tests for the persistent daemon runtime."""
 
 import http.client
+import io
 import json
 import threading
 import time
@@ -11,7 +12,15 @@ import pytest
 
 from hybridagent.agent import PraxisAgent
 from hybridagent.broker import RiskClass
-from hybridagent.daemon import Daemon, DaemonState, _find_port, _read_state, _write_state
+from hybridagent.daemon import (
+    Daemon,
+    DaemonState,
+    _find_port,
+    _parse_multipart_stream,
+    _read_state,
+    _UploadError,
+    _write_state,
+)
 from hybridagent.llm import LLMClient
 from hybridagent.persistence import Store
 from hybridagent.planner import Plan, Planner, Step
@@ -439,3 +448,121 @@ def test_daemon_upload_accepts_multiple_files(tmp_store, mock_agent, tmp_path):
         assert (work / "b.txt").read_text() == "beta"
     finally:
         daemon._stop_status_server()
+
+
+def test_parse_multipart_stream_handles_chunk_boundaries(tmp_path):
+    boundary = b"BOUND"
+    # Binary payload with embedded CRLFs and a near-miss of the delimiter
+    # ("\r\n--BOUN" without the trailing "D") to exercise the rolling-buffer tail.
+    payload = b"alpha\r\n--BOUN not-a-boundary\r\nomega" + bytes(range(256)) * 8
+    body = (
+        b"--BOUND\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="data.bin"\r\n'
+        b"Content-Type: application/octet-stream\r\n\r\n"
+        + payload
+        + b"\r\n--BOUND--\r\n"
+    )
+    # A tiny chunk size forces the delimiter to straddle many reads.
+    saved, errors = _parse_multipart_stream(
+        io.BytesIO(body), boundary, len(body),
+        lambda name: tmp_path / name, chunk_size=7,
+    )
+    assert saved == ["data.bin"]
+    assert errors == []
+    assert (tmp_path / "data.bin").read_bytes() == payload
+    # Streaming writes via a temp file that must be renamed away on success.
+    assert not (tmp_path / "data.bin.part").exists()
+
+
+def test_parse_multipart_stream_rejects_truncated_body(tmp_path):
+    boundary = b"BOUND"
+    # Body that opens a part but never closes it with the final boundary.
+    body = (
+        b"--BOUND\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="x.txt"\r\n\r\n'
+        b"incomplete"
+    )
+    with pytest.raises(_UploadError):
+        _parse_multipart_stream(
+            io.BytesIO(body), boundary, len(body), lambda name: tmp_path / name)
+
+
+def test_daemon_upload_rejects_oversized(tmp_store, mock_agent, tmp_path):
+    work = tmp_path / "capped"
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        work_dir=str(work), max_upload_bytes=64,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        boundary = "----praxisBig"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="big.bin"\r\n\r\n'
+            + ("X" * 4096)
+            + f"\r\n--{boundary}--\r\n"
+        ).encode()
+        req = urllib.request.Request(
+            f"{base}/upload", data=body, method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        code = None
+        try:
+            urllib.request.urlopen(req)
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        assert code == 413
+        # Nothing should have been written past the cap.
+        assert not (work / "big.bin").exists()
+    finally:
+        daemon._stop_status_server()
+
+
+def test_daemon_upload_requires_boundary(tmp_store, mock_agent, tmp_path):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        work_dir=str(tmp_path / "nb"),
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        req = urllib.request.Request(
+            f"{base}/upload", data=b"whatever", method="POST",
+            headers={"Content-Type": "multipart/form-data"},  # no boundary
+        )
+        code = None
+        try:
+            urllib.request.urlopen(req)
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        assert code == 400
+    finally:
+        daemon._stop_status_server()
+
+
+def test_offer_drops_oldest_when_full():
+    from queue import Queue
+
+    from hybridagent.daemon import _offer
+
+    q: "Queue[int]" = Queue(maxsize=2)
+    for i in range(5):
+        _offer(q, i)              # never blocks, even though capacity is 2
+    assert q.qsize() == 2
+    assert [q.get_nowait(), q.get_nowait()] == [3, 4]   # only the newest survive
+
+
+def test_parse_multipart_rejects_oversized_headers(tmp_path):
+    from hybridagent.daemon import _MAX_PART_HEADER
+
+    boundary = b"BOUND"
+    # A part whose header block never sends CRLFCRLF and runs past the header cap
+    # must be rejected rather than buffered in full.
+    giant = b"X" * (_MAX_PART_HEADER * 2)
+    body = b"--BOUND\r\n" + giant
+    with pytest.raises(_UploadError):
+        _parse_multipart_stream(io.BytesIO(body), boundary, len(body),
+                                lambda name: tmp_path / name)

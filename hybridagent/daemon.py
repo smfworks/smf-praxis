@@ -14,6 +14,7 @@ worker that:
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -24,8 +25,8 @@ import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from queue import Empty, Queue
-from typing import Any
+from queue import Empty, Full, Queue
+from typing import Any, Callable
 
 from . import config as cfg
 from .agent import PraxisAgent
@@ -47,6 +48,45 @@ _PID_PORT_FILE = cfg.home_dir() / "daemon.port"
 # How long an idle SSE connection waits before emitting a keep-alive comment.
 # Bounds the worst-case shutdown latency for a connection blocked on its queue.
 _SSE_HEARTBEAT_SECONDS = 15.0
+# Per-connection SSE event backlog cap. A stalled client drops its oldest queued
+# events rather than growing without bound (live events are advisory, not durable).
+_SSE_QUEUE_MAXSIZE = 1024
+
+# Maximum size (bytes) accepted for a single multipart upload request. Overridable
+# per-Daemon or via the PRAXIS_MAX_UPLOAD_BYTES environment variable.
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MiB
+# Read granularity for streaming an upload body to disk.
+_UPLOAD_CHUNK = 65536
+# Cap a single part's header block so a body that never sends the header/body
+# separator (CRLFCRLF) cannot buffer the whole (capped) request in memory.
+_MAX_PART_HEADER = 64 * 1024  # 64 KiB
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def _offer(q: "Queue[Any]", item: Any) -> None:
+    """Put ``item`` on a bounded queue, dropping the oldest entry if it is full.
+
+    Live SSE events are advisory: a stalled or dead subscriber must never block
+    the emitter, so we make room by discarding the oldest queued event.
+    """
+    try:
+        q.put_nowait(item)
+    except Full:
+        try:
+            q.get_nowait()
+        except Empty:
+            pass
+        try:
+            q.put_nowait(item)
+        except Full:
+            pass
+
 
 # Persona for the conversational chat surface (/api/chat). Kept short; the rich
 # governance/agent behavior lives in the task pipeline, this is a direct,
@@ -618,6 +658,135 @@ setInterval(refresh, 4000);
 """
 
 
+class _UploadError(Exception):
+    """Raised when a multipart/form-data body is malformed or truncated."""
+
+
+def _parse_multipart_stream(
+    rfile: io.BufferedIOBase,
+    boundary: bytes,
+    length: int,
+    dest_for: Callable[[str], Path],
+    *,
+    chunk_size: int = _UPLOAD_CHUNK,
+) -> tuple[list[str], list[str]]:
+    """Stream a multipart/form-data body to disk without buffering whole files.
+
+    Reads exactly ``length`` bytes from ``rfile`` (the connection may be
+    keep-alive, so we must never read past the declared body), scans for the
+    ``boundary`` delimiter with a rolling buffer kept to roughly ``chunk_size``
+    bytes, and writes each file part to ``dest_for(filename)`` via a temporary
+    ``.part`` file renamed into place once the part completes. Non-file fields
+    are consumed and ignored. Returns ``(saved_names, errors)`` and raises
+    :class:`_UploadError` if the body is structurally malformed or truncated.
+    """
+    needle = b"\r\n--" + boundary
+    keep = len(needle) - 1
+    buf = bytearray()
+    remaining = length
+
+    def more() -> bool:
+        nonlocal remaining
+        if remaining <= 0:
+            return False
+        chunk = rfile.read(min(chunk_size, remaining))
+        if not chunk:
+            remaining = 0
+            return False
+        remaining -= len(chunk)
+        buf.extend(chunk)
+        return True
+
+    opening = b"--" + boundary
+    while len(buf) < len(opening) and more():
+        pass
+    if buf[: len(opening)] != opening:
+        raise _UploadError("missing opening boundary")
+    del buf[: len(opening)]
+
+    saved_names: list[str] = []
+    errors: list[str] = []
+    while True:
+        while len(buf) < 2 and more():
+            pass
+        if buf[:2] == b"--":
+            break  # closing delimiter: no more parts
+        if buf[:2] == b"\r\n":
+            del buf[:2]
+        while (b"\r\n\r\n" not in buf and len(buf) <= _MAX_PART_HEADER
+               and more()):
+            pass
+        if b"\r\n\r\n" not in buf:
+            raise _UploadError("unterminated or oversized part headers")
+        split = buf.index(b"\r\n\r\n")
+        header = bytes(buf[:split])
+        del buf[: split + 4]
+
+        name_match = re.search(rb'filename="([^"]*)"', header)
+        filename = ""
+        if name_match is not None:
+            filename = Path(name_match.group(1).decode("utf-8", "replace")).name
+
+        dest_file = None
+        tmp: Path | None = None
+        final: Path | None = None
+        write_error: str | None = None
+        if name_match is not None and filename:
+            try:
+                final = dest_for(filename)
+                tmp = final.with_name(final.name + ".part")
+                dest_file = open(tmp, "wb")
+            except OSError as exc:
+                write_error = f"{filename}: {exc}"
+                dest_file = None
+
+        # Stream the part body to disk until the next boundary delimiter,
+        # retaining a short tail so a delimiter split across reads is not missed.
+        while True:
+            idx = buf.find(needle)
+            if idx != -1:
+                out = bytes(buf[:idx])
+                del buf[: idx + len(needle)]
+                done = True
+            else:
+                cut = len(buf) - keep
+                out = bytes(buf[:cut]) if cut > 0 else b""
+                if cut > 0:
+                    del buf[:cut]
+                done = False
+            if out and dest_file is not None:
+                try:
+                    dest_file.write(out)
+                except OSError as exc:
+                    write_error = f"{filename}: {exc}"
+                    dest_file.close()
+                    dest_file = None
+                    if tmp is not None:
+                        tmp.unlink(missing_ok=True)
+            if done:
+                break
+            if not more():
+                if dest_file is not None:
+                    dest_file.close()
+                    if tmp is not None:
+                        tmp.unlink(missing_ok=True)
+                raise _UploadError("unterminated part body")
+
+        if dest_file is not None:
+            dest_file.close()
+            assert tmp is not None and final is not None
+            try:
+                os.replace(tmp, final)
+                saved_names.append(filename)
+            except OSError as exc:
+                errors.append(f"{filename}: {exc}")
+                tmp.unlink(missing_ok=True)
+        elif write_error is not None:
+            errors.append(write_error)
+
+    return saved_names, errors
+
+
 class _StatusHandler(BaseHTTPRequestHandler):
     def __init__(self, daemon: "Daemon", *args, **kwargs) -> None:
         self.daemon = daemon
@@ -789,42 +958,43 @@ class _StatusHandler(BaseHTTPRequestHandler):
             self.daemon._sse_unsubscribe(queue)
 
     def _handle_upload(self) -> None:
+        # Uploads terminate their connection: we may reject before draining the
+        # body, and the parser stops at the closing delimiter (leaving the
+        # trailing epilogue unread), so keep-alive reuse would misframe.
+        self.close_connection = True
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"expected multipart/form-data")
+            self._json_response({"error": "expected multipart/form-data"}, status=400)
             return
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        # Very small multipart parser: find boundary and file part.
-        boundary = content_type.split("boundary=", 1)[1].encode()
-        parts = body.split(b"--" + boundary)
-        uploaded = 0
-        saved_names: list[str] = []
-        errors: list[str] = []
-        for part in parts:
-            if b'Content-Disposition' not in part or b'filename="' not in part:
-                continue
-            header, _, data = part.partition(b"\r\n\r\n")
-            # Strip trailing CRLF before the boundary delimiter.
-            data = data.rsplit(b"\r\n", 1)[0]
-            name_match = re.search(rb'filename="([^"]+)"', header)
-            if not name_match:
-                continue
-            filename = name_match.group(1).decode("utf-8", errors="replace")
-            # Sanitize filename: basename only, no path traversal.
-            filename = Path(filename).name
-            if not filename:
-                continue
-            dest = self.daemon.work_dir_upload(filename)
-            try:
-                dest.write_bytes(data)
-                uploaded += 1
-                saved_names.append(filename)
-            except Exception as exc:
-                errors.append(f"{filename}: {exc}")
-        self._json_response({"uploaded": uploaded, "files": saved_names, "errors": errors})
+        boundary_match = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', content_type)
+        if not boundary_match:
+            self._json_response({"error": "missing multipart boundary"}, status=400)
+            return
+        boundary = (boundary_match.group(1) or boundary_match.group(2)).strip().encode()
+        length_hdr = self.headers.get("Content-Length")
+        if length_hdr is None:
+            self._json_response({"error": "Content-Length required"}, status=411)
+            return
+        try:
+            length = int(length_hdr)
+        except ValueError:
+            self._json_response({"error": "invalid Content-Length"}, status=400)
+            return
+        if length < 0:
+            self._json_response({"error": "invalid Content-Length"}, status=400)
+            return
+        max_bytes = self.daemon.max_upload_bytes
+        if length > max_bytes:
+            self._json_response(
+                {"error": f"upload exceeds the {max_bytes}-byte limit"}, status=413)
+            return
+        try:
+            saved, errors = _parse_multipart_stream(
+                self.rfile, boundary, length, self.daemon.work_dir_upload)
+        except _UploadError as exc:
+            self._json_response({"error": f"malformed upload: {exc}"}, status=400)
+            return
+        self._json_response({"uploaded": len(saved), "files": saved, "errors": errors})
 
     def _json_response(self, payload: dict, status: int = 200) -> None:
         self.send_response(status)
@@ -860,6 +1030,7 @@ class Daemon:
         status_host: str = _DEFAULT_HOST,
         status_port: int | None = None,
         work_dir: str | None = None,
+        max_upload_bytes: int | None = None,
     ) -> None:
         self.store = store
         self.agent = agent
@@ -871,6 +1042,10 @@ class Daemon:
         self.status_host = status_host
         self.status_port = status_port or _find_port(status_host)
         self.work_dir = work_dir
+        self.max_upload_bytes = (
+            max_upload_bytes if max_upload_bytes is not None
+            else _env_int("PRAXIS_MAX_UPLOAD_BYTES", _MAX_UPLOAD_BYTES)
+        )
         self.log = get_logger("praxis.daemon")
         self.running = False
         self._stop_event = threading.Event()
@@ -893,7 +1068,7 @@ class Daemon:
         return root / Path(filename).name
 
     def _sse_subscribe(self) -> "Queue[dict[str, _T] | None]":
-        q: "Queue[dict[str, _T] | None]" = Queue()
+        q: "Queue[dict[str, _T] | None]" = Queue(maxsize=_SSE_QUEUE_MAXSIZE)
         with self._sse_lock:
             self._sse_clients.append(q)
         return q
@@ -915,14 +1090,14 @@ class Daemon:
             clients = list(self._sse_clients)
             self._sse_clients.clear()
         for q in clients:
-            q.put(None)
+            _offer(q, None)
 
     def emit_event(self, event_type: str, payload: dict[str, _T]) -> None:
         event = {"type": event_type, "ts": time.time(), "payload": payload}
         with self._sse_lock:
             clients = list(self._sse_clients)
         for q in clients:
-            q.put(event)
+            _offer(q, event)
 
     @classmethod
     def from_env(cls, work_dir: str | None = None,
