@@ -697,3 +697,30 @@ def transcribe(provider: Provider, model: str, audio_path: str,
     except urllib.error.URLError as e:
         raise RuntimeError(f"transcribe unreachable: {e.reason}") from e
     return data.get("text", "")
+
+
+def synthesize_speech(provider: Provider, model: str, text: str,
+                      voice: str = "alloy", api_key: str | None = None,
+                      base_url: str | None = None,
+                      timeout: float = 60.0) -> tuple[bytes, str]:
+    """Text-to-speech via an OpenAI-compatible /audio/speech endpoint.
+
+    Returns ``(audio_bytes, mime)``. Raises ``RuntimeError`` on transport/HTTP
+    errors so the caller can fall back to an offline placeholder.
+    """
+    root = (base_url or provider.base_url).rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {"model": model, "input": text, "voice": voice}
+    req = urllib.request.Request(f"{root}/audio/speech",
+                                 data=json.dumps(payload).encode(),
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read(), resp.headers.get("Content-Type", "audio/mpeg")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:200]
+        raise RuntimeError(f"TTS HTTP {e.code}: {detail}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"TTS unreachable: {e.reason}") from e

@@ -325,6 +325,38 @@ with a vision model (`agents.roles.vision`) and speech-to-text (local Whisper or
 `agents.roles.transcribe`) to caption/transcribe for real. Extracted text flows
 into the same RAG + perception pipeline, injection-screened like any document.
 
+## Voice (configurable)
+
+Voice is an **operator-selectable** capability under agent config
+(`agents.voice` in praxis.json), exactly like `agents.roles` / `agents.tiers`.
+The dashboard's **Voice** panel lets the operator pick a mode; turn-based and
+realtime are two backends behind one interface, so the governed agent loop and
+the broker are unchanged either way.
+
+- **off** — voice disabled.
+- **turn** — push-to-talk in (speech-to-text via the multimodal transcribe seam)
+  and spoken replies out (text-to-speech via an OpenAI-compatible `/audio/speech`
+  call). Degrades to an honest offline preview (metadata STT + a silent WAV) when
+  no STT/TTS provider is configured.
+- **realtime** — advertised in the selector but **not yet enabled**; it reports a
+  clear reason until a WebSocket/WebRTC bridge is wired, so it drops in behind the
+  same interface later with no operator-facing change.
+
+```json
+"agents": {
+  "voice": {
+    "mode": "turn",
+    "stt": { "provider": "openai", "model": "whisper-1" },
+    "tts": { "provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy" }
+  }
+}
+```
+
+Endpoints: `GET/POST /api/voice` (status + mode), `POST /api/transcribe`
+(audio→text), `POST /api/speak` (text→audio). Tool calls during a voice turn
+still route through the broker — consequential actions are held for approval like
+any other turn.
+
 ## Knowledge base (RAG)
 
 Praxis grounds its work in your documents. Ingested files are chunked, embedded,

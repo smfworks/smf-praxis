@@ -126,3 +126,20 @@ def resolve_api_key(provider_id: str) -> str | None:
 
 def is_configured() -> bool:
     return get_default_model() is not None
+
+
+def get_voice_config() -> dict:
+    """Operator-selected voice settings (agents.voice in praxis.json)."""
+    return load_config().get("agents", {}).get("voice", {}) or {}
+
+
+def set_voice_config(voice: dict) -> Path:
+    cfg = load_config()
+    cfg.setdefault("agents", {})["voice"] = voice
+    return save_config(cfg)
+
+
+def set_voice_mode(mode: str) -> Path:
+    cfg = load_config()
+    cfg.setdefault("agents", {}).setdefault("voice", {})["mode"] = mode
+    return save_config(cfg)

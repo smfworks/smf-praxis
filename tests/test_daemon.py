@@ -768,3 +768,66 @@ def test_daemon_chat_agent_endpoint(tmp_store, mock_agent):
         assert "approval" not in types
     finally:
         daemon._stop_status_server()
+
+
+def test_daemon_voice_status_and_mode(tmp_store, mock_agent, tmp_path, monkeypatch):
+    from hybridagent import config as cfg
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))  # isolate config
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        with urllib.request.urlopen(f"{base}/api/voice") as resp:
+            status = json.loads(resp.read().decode())
+        assert status["mode"] == "off"
+        assert any(m["id"] == "realtime" and not m["available"]
+                   for m in status["modes"])
+        req = urllib.request.Request(
+            f"{base}/api/voice", data=json.dumps({"mode": "turn"}).encode(),
+            method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode())
+        assert result["mode"] == "turn"
+    finally:
+        daemon._stop_status_server()
+
+
+def test_daemon_speak_returns_audio(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        req = urllib.request.Request(
+            f"{base}/api/speak", data=json.dumps({"text": "hello there"}).encode(),
+            method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as resp:
+            ctype = resp.headers.get_content_type()
+            audio = resp.read()
+        assert ctype in ("audio/wav", "audio/mpeg")
+        assert len(audio) > 0
+    finally:
+        daemon._stop_status_server()
+
+
+def test_daemon_transcribe_endpoint(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        req = urllib.request.Request(
+            f"{base}/api/transcribe", data=b"\x00\x01\x02fake-audio",
+            method="POST", headers={"Content-Type": "audio/webm"})
+        with urllib.request.urlopen(req) as resp:
+            res = json.loads(resp.read().decode())
+        assert "text" in res
+    finally:
+        daemon._stop_status_server()

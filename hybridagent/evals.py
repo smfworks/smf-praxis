@@ -246,6 +246,22 @@ def _eval_concurrent_orchestration() -> tuple[bool, str]:
             store.close()
 
 
+def _eval_voice_backend_selection() -> tuple[bool, str]:
+    from .voice import (
+        OFF,
+        REALTIME,
+        TURN,
+        VoiceConfig,
+        get_voice_backend,
+        voice_status,
+    )
+    modes = {m["id"]: m for m in voice_status()["modes"]}
+    ok = (modes[OFF]["available"] and modes[TURN]["available"]
+          and modes[REALTIME]["available"] is False
+          and get_voice_backend(VoiceConfig(mode=TURN)).mode == TURN)
+    return ok, f"turn={modes[TURN]['available']} realtime={modes[REALTIME]['available']}"
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -277,6 +293,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("orchestration.concurrent_runs", "orchestration",
              "Multiple scoped subagents run concurrently and all persist.",
              _eval_concurrent_orchestration),
+    EvalCase("voice.backend_selection", "voice",
+             "Voice modes are selectable; realtime is advertised but not yet enabled.",
+             _eval_voice_backend_selection),
 ]
 
 

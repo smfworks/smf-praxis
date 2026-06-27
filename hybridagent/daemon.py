@@ -307,6 +307,15 @@ pre.code:hover .copy { opacity: 1; }
 .send-btn { display: grid; place-items: center; width: 2.7rem; height: 2.7rem; border: none; border-radius: .8rem; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; cursor: pointer; flex: none; box-shadow: 0 6px 16px rgba(91,141,239,.35); transition: transform .12s; }
 .send-btn:hover { transform: translateY(-1px); }
 .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.mic-btn { display: grid; place-items: center; width: 2.7rem; height: 2.7rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--bg); color: var(--text); cursor: pointer; flex: none; font-size: 1.05rem; transition: all .12s; }
+.mic-btn:hover { border-color: var(--accent); }
+.mic-btn.recording { background: rgba(255,90,95,.18); border-color: var(--bad); color: var(--bad); animation: micpulse 1.2s infinite; }
+@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,90,95,.45); } 50% { box-shadow: 0 0 0 7px rgba(255,90,95,0); } }
+.vmodes { display: flex; gap: .3rem; }
+.vmode { flex: 1; border: 1px solid var(--border); background: var(--bg); color: var(--muted); padding: .4rem .3rem; border-radius: .6rem; font-size: .78rem; cursor: pointer; text-align: center; transition: all .12s; }
+.vmode:hover:not(:disabled) { color: var(--text); border-color: var(--faint); }
+.vmode.active { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border-color: transparent; }
+.vmode:disabled { opacity: .45; cursor: not-allowed; }
 
 /* chat history rail */
 .hist { display: flex; flex-direction: column; height: calc(100vh - 6.5rem); min-height: 30rem; overflow: hidden; }
@@ -403,6 +412,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
     <div id="messages" class="messages"></div>
     <form class="composer" onsubmit="sendMessage(event)">
       <textarea id="message" rows="1" placeholder="Message Praxis…  (Enter to send, Shift+Enter for newline)" autocomplete="off"></textarea>
+      <button class="mic-btn" id="mic" type="button" title="Push to talk" onclick="toggleMic()" hidden>🎙</button>
       <button class="send-btn" id="send" type="submit" title="Send">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
       </button>
@@ -422,6 +432,11 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
         <button class="primary" onclick="applyModel()">Use</button>
       </div>
       <div class="hint" id="keyHint"></div>
+    </div>
+    <div class="panel pad">
+      <h2>Voice</h2>
+      <div class="vmodes" id="vmodes"></div>
+      <div class="hint" id="voiceHint">Voice is off.</div>
     </div>
     <div class="panel pad">
       <h2>Files</h2>
@@ -676,6 +691,7 @@ async function streamChat(conv, wire, typing){
   flush();
   conv.messages.push({role:'assistant', content: acc, model: model, ts: Date.now()});
   conv.updated = Date.now(); persistConversations(); renderHistList();
+  speak(acc);
 }
 
 async function agentChat(conv, wire, typing){
@@ -718,6 +734,7 @@ async function agentChat(conv, wire, typing){
   appendAgent(out, model);
   conv.messages.push({role:'assistant', content: out, model: model, ts: Date.now()});
   conv.updated = Date.now(); persistConversations(); renderHistList();
+  speak(out);
 }
 
 async function sendMessage(ev){
@@ -830,6 +847,74 @@ function initUpload(){
   window.addEventListener('drop', e => e.preventDefault());
 }
 
+/* ---------- voice ---------- */
+let voiceMode = 'off';
+let _recorder = null, _chunks = [], _recording = false;
+async function loadVoice(){
+  const v = await api('/api/voice');
+  voiceMode = v.mode || 'off';
+  const el = document.getElementById('vmodes'); if(!el) return;
+  el.innerHTML = '';
+  (v.modes||[]).forEach(m => {
+    const b = document.createElement('button'); b.type = 'button';
+    b.className = 'vmode' + (m.id===voiceMode ? ' active' : '');
+    b.textContent = m.label; b.disabled = !m.available; b.title = m.reason || '';
+    b.onclick = () => setVoiceMode(m.id);
+    el.appendChild(b);
+  });
+  const cur = (v.modes||[]).find(m => m.id===voiceMode) || {};
+  document.getElementById('voiceHint').textContent = voiceMode==='off'
+    ? 'Voice is off.' : (cur.reason || 'Push-to-talk in; spoken replies out.');
+  updateMicVisibility();
+}
+async function setVoiceMode(mode){
+  const v = await api('/api/voice', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode})});
+  if(v.error){ showToast('Voice: '+v.error); return; }
+  voiceMode = v.mode || 'off'; showToast('Voice → '+voiceMode); loadVoice();
+}
+function updateMicVisibility(){
+  const mic = document.getElementById('mic'); if(!mic) return;
+  mic.hidden = (voiceMode === 'off') || !(navigator.mediaDevices && window.MediaRecorder);
+}
+async function toggleMic(){
+  if(_recording){ stopMic(); return; }
+  if(!(navigator.mediaDevices && window.MediaRecorder)){ showToast('Mic not supported here'); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    _recorder = new MediaRecorder(stream); _chunks = [];
+    _recorder.ondataavailable = e => { if(e.data && e.data.size) _chunks.push(e.data); };
+    _recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      document.getElementById('mic').classList.remove('recording');
+      await transcribeBlob(new Blob(_chunks, {type: _recorder.mimeType || 'audio/webm'}));
+    };
+    _recorder.start(); _recording = true;
+    document.getElementById('mic').classList.add('recording');
+  } catch(e){ showToast('Mic error: '+e); }
+}
+function stopMic(){ if(_recorder && _recording){ _recording = false; try { _recorder.stop(); } catch(_){} } }
+async function transcribeBlob(blob){
+  showToast('Transcribing…');
+  try {
+    const resp = await fetch('/api/transcribe', {method:'POST', headers:{'Content-Type': blob.type || 'audio/webm'}, body: blob});
+    const res = await resp.json().catch(()=>({}));
+    const ta = document.getElementById('message');
+    if(res.text){ ta.value = (ta.value ? ta.value + ' ' : '') + res.text; autoGrow(ta); ta.focus(); }
+    if((res.detail||'').includes('offline')) showToast('STT offline preview — set agents.voice.stt for real transcription');
+  } catch(e){ showToast('Transcribe failed: '+e); }
+}
+async function speak(text){
+  if(voiceMode === 'off' || !text) return;
+  try {
+    const resp = await fetch('/api/speak', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
+    if(!resp.ok) return;
+    const mime = resp.headers.get('Content-Type') || 'audio/wav';
+    const url = URL.createObjectURL(new Blob([await resp.arrayBuffer()], {type: mime}));
+    const audio = new Audio(url); audio.onended = () => URL.revokeObjectURL(url);
+    audio.play().catch(()=>{});
+  } catch(_){}
+}
+
 /* ---------- sidebar refresh ---------- */
 async function refresh(){
   const st = await api('/status');
@@ -885,6 +970,7 @@ loadModel();
 refresh();
 connectEvents();
 initUpload();
+loadVoice();
 setInterval(refresh, 4000);
 </script>
 </body>
@@ -1097,6 +1183,22 @@ class _StatusHandler(BaseHTTPRequestHandler):
                     return
                 self._json_response(model_result)
                 return
+            if self.path == "/api/voice":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                try:
+                    voice_result = self.daemon.set_voice_mode(payload.get("mode", ""))
+                except ValueError as exc:
+                    self._json_response({"error": str(exc)}, status=400)
+                    return
+                self._json_response(voice_result)
+                return
+            if self.path == "/api/transcribe":
+                self._handle_transcribe()
+                return
+            if self.path == "/api/speak":
+                self._handle_speak()
+                return
             if self.path == "/upload":
                 self._handle_upload()
                 return
@@ -1143,6 +1245,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/providers":
                 body = json.dumps(self.daemon.providers_catalog(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/voice":
+                body = json.dumps(self.daemon.voice_status(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/events":
@@ -1273,6 +1379,41 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 emit({"type": "error", "error": str(exc)})
             except OSError:
                 pass
+
+    def _handle_transcribe(self) -> None:
+        # The browser POSTs the recorded audio blob as the raw request body with
+        # its own Content-Type (e.g. audio/webm). Speech-to-text, return JSON.
+        self.close_connection = True
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        mime = self.headers.get("Content-Type", "audio/webm")
+        audio = self.rfile.read(length) if length > 0 else b""
+        try:
+            result = self.daemon.transcribe(audio, mime)
+        except Exception as exc:
+            self._json_response({"error": str(exc)}, status=500)
+            return
+        self._json_response(result)
+
+    def _handle_speak(self) -> None:
+        # Text-to-speech: returns audio bytes the browser can play.
+        self.close_connection = True
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            payload = json.loads(self.rfile.read(length).decode() or "{}")
+        except ValueError:
+            payload = {}
+        text = str(payload.get("text", ""))[:4000]
+        try:
+            res = self.daemon.synthesize(text)
+        except Exception as exc:
+            self._json_response({"error": str(exc)}, status=500)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", res.mime or "audio/wav")
+        self.send_header("Content-Length", str(len(res.audio)))
+        self.send_header("X-Voice-Detail", res.detail or "")
+        self.end_headers()
+        self.wfile.write(res.audio)
 
     def _handle_upload(self) -> None:
         # Uploads terminate their connection: we may reject before draining the
@@ -1656,6 +1797,26 @@ class Daemon:
             "configured": model is not None,
             "embed_model": cfg.get_embed_model(),
         }
+
+    def voice_status(self) -> dict:
+        from . import voice
+        return voice.voice_status()
+
+    def set_voice_mode(self, mode: str) -> dict:
+        from . import voice
+        if mode not in voice.MODES:
+            raise ValueError(f"unknown voice mode '{mode}'")
+        cfg.set_voice_mode(mode)
+        return voice.voice_status()
+
+    def transcribe(self, audio: bytes, mime: str = "audio/webm") -> dict:
+        from . import voice
+        res = voice.transcribe_audio(audio, mime)
+        return {"text": res.text, "detail": res.detail}
+
+    def synthesize(self, text: str) -> Any:
+        from . import voice
+        return voice.synthesize_text(text)
 
     def providers_catalog(self) -> list[dict]:
         """Provider picker payload for the dashboard (no secrets)."""
