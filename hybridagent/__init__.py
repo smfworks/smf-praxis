@@ -11,6 +11,7 @@ from .agent import PraxisAgent
 from .bm25 import BM25Index
 from .broker import Decision, GovernanceBroker, GovernancePolicy, KillSwitch, RiskClass
 from .compliance import ComplianceFinding, ComplianceReport, ComplianceReporter
+from .content_guard import GuardedContent, guard_tool_result
 from .contradiction import Contradiction
 from .contradiction import detect as detect_contradictions
 from .debate import Candidate, DebatePanel, DebateResult
@@ -73,6 +74,7 @@ __all__ = [
     "DebatePanel", "DebateResult", "Candidate",
     "MCPClient", "StdioTransport", "mcp_tools", "risk_for_tool",
     "RegressionReport", "compare_reports",
+    "GuardedContent", "guard_tool_result",
     "BM25Index",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",

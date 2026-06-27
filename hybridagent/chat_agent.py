@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from .broker import GovernanceBroker, Verdict
+from .content_guard import guard_tool_result
 from .tools import ToolRegistry
 from .validation import ValidationError, validate_tool_args
 
@@ -135,13 +136,19 @@ class GovernedChatAgent:
                     except Exception as exc:  # a tool failure must not crash chat
                         result = f"ERROR: {exc}"
                     safe = self.broker.redact(result)
+                    # Tool output is untrusted external content: if it carries an
+                    # injection, quarantine it before it re-enters the model.
+                    flagged = self.broker.is_injection(result)
+                    guarded = guard_tool_result(safe, flagged=flagged)
                     if self.memory is not None:
                         try:
                             self.memory.note_working(safe, provenance=f"chat-action:{name}")
                         except Exception:
                             pass
-                    yield AgentEvent("tool_result", {"tool": name, "preview": safe[:240]})
-                    history.append(_tool_result(cid, name, safe))
+                    yield AgentEvent("tool_result", {
+                        "tool": name, "preview": safe[:240],
+                        "injection_flagged": flagged})
+                    history.append(_tool_result(cid, name, guarded.content))
                 elif decision.verdict is Verdict.NEEDS_APPROVAL:
                     held = True
                     yield AgentEvent("approval", {
