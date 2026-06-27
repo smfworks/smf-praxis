@@ -390,6 +390,29 @@ def cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan_run(args: argparse.Namespace) -> int:
+    from .plan_execute import PlanExecutor
+    agent = _make_agent(args)
+    # Plan steps are broker-authorized; make sure the registry's tools are allowed.
+    agent.broker.policy.allowed_tools.update(agent.registry.names())
+    report = PlanExecutor(agent.registry, agent.broker, store=agent.store,
+                          max_replans=args.max_replans).execute(args.goal)
+    tags = {"step_done": "[ok]  ", "step_held": "[hold]", "step_denied": "[deny]",
+            "step_failed": "[fail]", "step_skipped": "[skip]", "replan": "[plan]"}
+    for ev in report.events:
+        if ev.type in ("plan", "final"):
+            continue
+        sid = ev.data.get("id", "")
+        detail = ev.data.get("intent") or ev.data.get("reason") or ""
+        print(f"  {tags.get(ev.type, ev.type):6} {sid:5} {detail}")
+    print(report.summary())
+    held = report.held_approvals()
+    if held:
+        print("held for approval: " + ", ".join(held)
+              + "  (approve with 'praxis approve <id>')")
+    return 1 if report.status == "failed" else 0
+
+
 def cmd_debate(args: argparse.Namespace) -> int:
     from .debate import DebatePanel
     from .llm import LLMClient
@@ -818,6 +841,14 @@ def build_parser() -> argparse.ArgumentParser:
     pdeb.add_argument("--verbose", action="store_true",
                       help="show each solver's candidate and verification mark")
     pdeb.set_defaults(func=cmd_debate)
+
+    ppe = sub.add_parser(
+        "plan-run", help="decompose a goal into governed steps and execute them")
+    ppe.add_argument("goal", help="the goal to plan and execute")
+    ppe.add_argument("--max-replans", type=int, default=1,
+                     help="how many times a failed step may be replanned (default 1)")
+    ppe.add_argument("--m365", action="store_true", help="use the M365 toolset")
+    ppe.set_defaults(func=cmd_plan_run)
 
     pask = sub.add_parser("ask", help="grounded Q&A over the KB + memory (cite or abstain)")
     pask.add_argument("question", help="the question to answer from sources")

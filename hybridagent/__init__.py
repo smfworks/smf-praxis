@@ -45,6 +45,7 @@ from .orchestrator import (
 )
 from .perception import Perception, Signal
 from .persistence import Store
+from .plan_execute import ExecutionReport, PlanExecutor, PlanStep, to_plan_steps
 from .planner import Plan, Planner, Step
 from .rag import Rag, RetrievedChunk, chunk_text
 from .reflection import Reflector
@@ -67,6 +68,7 @@ __all__ = [
     "GovernanceBroker", "GovernancePolicy", "Decision", "RiskClass", "KillSwitch",
     "Tool", "ToolRegistry", "default_registry",
     "Planner", "Step", "Plan",
+    "PlanExecutor", "PlanStep", "ExecutionReport", "to_plan_steps",
     "Perception", "Signal",
     "Reflector",
     "LLMClient",

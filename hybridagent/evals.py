@@ -450,6 +450,53 @@ def _eval_debate_consensus() -> tuple[bool, str]:
     return ok, f"answer={result.answer!r} votes={result.votes}"
 
 
+def _eval_plan_execute_replans_on_failure() -> tuple[bool, str]:
+    from .plan_execute import PlanExecutor, PlanStep
+    from .planner import Step as PStep
+
+    def _boom(**k):
+        raise RuntimeError("boom")
+
+    good = Tool("good_tool", RiskClass.READ, "works", lambda **k: "ok")
+    bad = Tool("bad_tool", RiskClass.READ, "raises", _boom)
+    reg = _registry(good, bad)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"good_tool", "bad_tool"}))
+    steps = [PlanStep(id="s1", intent="try the flaky tool", tool="bad_tool", args={})]
+
+    def replan(goal, failed, reason, remaining):
+        return [PStep("recover via good_tool", "good_tool", {})]
+
+    report = PlanExecutor(reg, broker, replan=replan, max_replans=1).execute(
+        "do the multi-step job", steps=steps)
+    recovered = any(s.tool == "good_tool" and s.status == "done" for s in report.steps)
+    ok = report.replans == 1 and report.status == "completed" and recovered
+    return ok, report.summary()
+
+
+def _eval_plan_execute_holds_consequential_step() -> tuple[bool, str]:
+    from .plan_execute import PlanExecutor, PlanStep
+
+    read = Tool("get_data", RiskClass.READ, "read", lambda **k: "data",
+                parameters=None)
+    send = Tool("send_it", RiskClass.SEND, "send", lambda **k: "SENT",
+                parameters=None)
+    reg = _registry(read, send)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"get_data", "send_it"}))
+    # s1 (read) -> s2 (send, held) -> s3 (depends on the held send, must be skipped)
+    steps = [
+        PlanStep(id="s1", intent="read", tool="get_data", args={}),
+        PlanStep(id="s2", intent="send", tool="send_it", args={}, depends_on=["s1"]),
+        PlanStep(id="s3", intent="follow-up", tool="get_data", args={},
+                 depends_on=["s2"]),
+    ]
+    report = PlanExecutor(reg, broker).execute("read then send", steps=steps)
+    by_id = {s.id: s.status for s in report.steps}
+    ok = (by_id["s1"] == "done" and by_id["s2"] == "held"
+          and by_id["s3"] == "skipped" and report.status == "needs_approval"
+          and len(report.held_approvals()) == 1)
+    return ok, f"statuses={by_id} status={report.status}"
+
+
 def _eval_mcp_governs_external_tools() -> tuple[bool, str]:
     from .chat_agent import GovernedChatAgent
     from .mcp_client import MCPClient, mcp_tools
@@ -559,6 +606,12 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("mcp.governs_external_tools", "mcp",
              "An external MCP tool is risk-classified and a destructive one is held "
              "for approval, not auto-executed.", _eval_mcp_governs_external_tools),
+    EvalCase("planning.replans_on_failure", "planning",
+             "Plan-and-execute replans around a failed step and completes the goal.",
+             _eval_plan_execute_replans_on_failure),
+    EvalCase("planning.holds_consequential_step", "planning",
+             "A consequential plan step is held for approval and its dependents are "
+             "skipped, not auto-run.", _eval_plan_execute_holds_consequential_step),
 ]
 
 
