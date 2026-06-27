@@ -14,7 +14,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
+import socket
+import ssl
 from typing import Any
+from urllib.parse import urlparse
 
 # Magic GUID from RFC 6455 used to derive Sec-WebSocket-Accept.
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -43,9 +47,10 @@ def is_ws_upgrade(headers) -> bool:
 class WebSocketConn:
     """A framed WebSocket connection over rfile/wfile (the hijacked socket)."""
 
-    def __init__(self, rfile: Any, wfile: Any) -> None:
+    def __init__(self, rfile: Any, wfile: Any, mask: bool = False) -> None:
         self.rfile = rfile
         self.wfile = wfile
+        self.mask = mask
         self.open = True
 
     def _read_exactly(self, n: int) -> bytes:
@@ -89,15 +94,20 @@ class WebSocketConn:
 
     def send(self, data: bytes, opcode: int = OP_TEXT) -> None:
         header = bytearray([0x80 | opcode])  # FIN + opcode
+        mask_bit = 0x80 if self.mask else 0
         n = len(data)
         if n < 126:
-            header.append(n)
+            header.append(mask_bit | n)
         elif n < 65536:
-            header.append(126)
+            header.append(mask_bit | 126)
             header += n.to_bytes(2, "big")
         else:
-            header.append(127)
+            header.append(mask_bit | 127)
             header += n.to_bytes(8, "big")
+        if self.mask:  # client -> server frames must be masked
+            key = os.urandom(4)
+            header += key
+            data = bytes(b ^ key[i % 4] for i, b in enumerate(data))
         self.wfile.write(bytes(header) + data)
         self.wfile.flush()
 
@@ -118,3 +128,36 @@ class WebSocketConn:
         except OSError:
             pass
         self.open = False
+
+
+def ws_connect(url: str, headers: dict | None = None,
+               timeout: float = 30.0) -> WebSocketConn:
+    """Open a client WebSocket (ws:// or wss://) and return a masked
+    :class:`WebSocketConn`. Raises ``RuntimeError`` if the handshake fails."""
+    parsed = urlparse(url)
+    secure = parsed.scheme == "wss"
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if secure else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    sock: Any = socket.create_connection((host, port), timeout=timeout)
+    if secure:
+        ctx = ssl.create_default_context()
+        sock = ctx.wrap_socket(sock, server_hostname=host)
+    key = base64.b64encode(os.urandom(16)).decode()
+    request = [f"GET {path} HTTP/1.1", f"Host: {host}:{port}",
+               "Upgrade: websocket", "Connection: Upgrade",
+               f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
+    for hkey, hval in (headers or {}).items():
+        request.append(f"{hkey}: {hval}")
+    sock.sendall(("\r\n".join(request) + "\r\n\r\n").encode())
+    rfile = sock.makefile("rb")
+    status = rfile.readline()
+    if b" 101" not in status:
+        raise RuntimeError(f"WebSocket handshake failed: {status!r}")
+    while True:  # consume the remaining response headers
+        line = rfile.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+    return WebSocketConn(rfile, sock.makefile("wb"), mask=True)

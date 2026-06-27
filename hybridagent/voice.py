@@ -22,8 +22,10 @@ import io
 import json
 import os
 import tempfile
+import threading
 import wave
 from dataclasses import dataclass
+from typing import Any
 
 from . import config as cfg
 
@@ -43,6 +45,7 @@ class VoiceConfig:
     tts_voice: str = "alloy"
     realtime_provider: str = ""
     realtime_model: str = ""
+    realtime_url: str = ""
     push_to_talk: bool = True
 
     @classmethod
@@ -61,6 +64,7 @@ class VoiceConfig:
             tts_voice=tts.get("voice", "alloy"),
             realtime_provider=rt.get("provider", ""),
             realtime_model=rt.get("model", ""),
+            realtime_url=rt.get("url", ""),
             push_to_talk=bool(v.get("pushToTalk", True)),
         )
 
@@ -341,3 +345,238 @@ class RealtimeBridge:
                         "data": base64.b64encode(res.audio).decode(),
                         "detail": res.detail})
         self._send({"type": "done"})
+
+
+_OAI_REALTIME_URL = "wss://api.openai.com/v1/realtime"
+
+
+def _pcm16_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
+class OpenAIRealtimeUpstream:
+    """Bridge the Praxis realtime channel to the OpenAI Realtime API.
+
+    Relays user text/audio up and the model's transcript/text/audio down, and
+    routes every model function call through the GovernanceBroker — read/draft
+    execute, send/destructive are held for approval, disallowed/killed are
+    denied — returning the governed outcome to the model as a
+    ``function_call_output``. Audio deltas (PCM16) are wrapped as WAV so the
+    browser plays them with the same path as turn-based TTS. The browser-facing
+    event protocol is identical to the loopback bridge, so the dashboard is
+    unchanged.
+    """
+
+    def __init__(self, agent, conn, *, model: str, api_key: str,
+                 base_url: str | None = None, system: str | None = None) -> None:
+        self.agent = agent
+        self.conn = conn              # browser-facing WebSocketConn
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url or _OAI_REALTIME_URL
+        self.system = system or _REALTIME_SYSTEM
+        self.up: Any = None                # upstream WebSocketConn (OpenAI)
+        self._up_lock = threading.Lock()
+
+    def _down(self, obj: dict) -> None:
+        try:
+            self.conn.send_text(json.dumps(obj, default=str))
+        except OSError:
+            pass
+
+    def _up_send(self, obj: dict) -> None:
+        with self._up_lock:
+            if self.up is not None:
+                try:
+                    self.up.send_text(json.dumps(obj))
+                except OSError:
+                    pass
+
+    def _oai_tools(self) -> list[dict]:
+        out: list[dict] = []
+        for t in self.agent.registry.catalog():
+            out.append({"type": "function", "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters
+                        or {"type": "object", "properties": {}}})
+        return out
+
+    def run(self) -> None:
+        from .wsutil import ws_connect
+        try:
+            self.up = ws_connect(
+                f"{self.base_url}?model={self.model}",
+                headers={"Authorization": f"Bearer {self.api_key}",
+                         "OpenAI-Beta": "realtime=v1"})
+        except Exception as exc:  # connect/auth failure -> tell the browser
+            self._down({"type": "error", "error": f"realtime connect failed: {exc}"})
+            self._down({"type": "done"})
+            return
+        self._up_send({"type": "session.update", "session": {
+            "instructions": self.system, "tools": self._oai_tools(),
+            "modalities": ["text", "audio"], "output_audio_format": "pcm16"}})
+        self._down({"type": "ready", "mode": "openai"})
+        up_thread = threading.Thread(target=self._pump_upstream, daemon=True)
+        up_thread.start()
+        self._pump_browser()
+        with self._up_lock:
+            if self.up is not None:
+                try:
+                    self.up.close()
+                except OSError:
+                    pass
+        up_thread.join(timeout=2)
+
+    def _pump_browser(self) -> None:
+        from .wsutil import OP_CLOSE, OP_PING
+        while True:
+            frame = self.conn.recv()
+            if frame is None:
+                break
+            opcode, data = frame
+            if opcode == OP_CLOSE:
+                break
+            if opcode == OP_PING:
+                self.conn.pong(data)
+                continue
+            try:
+                ev = json.loads(data.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            etype = ev.get("type")
+            if etype == "text":
+                self._up_send({"type": "conversation.item.create", "item": {
+                    "type": "message", "role": "user",
+                    "content": [{"type": "input_text",
+                                 "text": str(ev.get("text", ""))}]}})
+            elif etype == "audio":
+                self._up_send({"type": "input_audio_buffer.append",
+                               "audio": ev.get("data", "")})
+            elif etype == "commit":
+                self._up_send({"type": "response.create"})
+            elif etype == "stop":
+                break
+
+    def _pump_upstream(self) -> None:
+        from .wsutil import OP_CLOSE, OP_PING
+        audio: list[str] = []
+        while True:
+            frame = self.up.recv() if self.up is not None else None
+            if frame is None:
+                break
+            opcode, data = frame
+            if opcode == OP_CLOSE:
+                break
+            if opcode == OP_PING:
+                with self._up_lock:
+                    if self.up is not None:
+                        self.up.pong(data)
+                continue
+            try:
+                ev = json.loads(data.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            self._on_upstream_event(ev, audio)
+
+    def _on_upstream_event(self, ev: dict, audio: list[str]) -> None:
+        etype = ev.get("type", "")
+        if etype in ("response.text.delta", "response.audio_transcript.delta"):
+            self._down({"type": "delta", "text": ev.get("delta", "")})
+        elif etype == "response.audio.delta":
+            if ev.get("delta"):
+                audio.append(ev["delta"])
+        elif etype == "response.audio.done":
+            self._flush_audio(audio)
+            audio.clear()
+        elif etype == "response.function_call_arguments.done":
+            self._handle_function_call(ev)
+        elif etype == "response.done":
+            self._down({"type": "done"})
+        elif etype == "error":
+            self._down({"type": "error", "error": str(ev.get("error", ev))})
+
+    def _flush_audio(self, chunks: list[str]) -> None:
+        try:
+            pcm = b"".join(base64.b64decode(c) for c in chunks if c)
+        except (ValueError, TypeError):
+            return
+        if not pcm:
+            return
+        wav = _pcm16_to_wav(pcm)
+        self._down({"type": "audio", "mime": "audio/wav",
+                    "data": base64.b64encode(wav).decode()})
+
+    def _function_output(self, call_id: str, output: str) -> None:
+        self._up_send({"type": "conversation.item.create", "item": {
+            "type": "function_call_output", "call_id": call_id, "output": output}})
+        self._up_send({"type": "response.create"})
+
+    def _handle_function_call(self, ev: dict) -> None:
+        from .broker import Verdict
+        from .validation import ValidationError, validate_tool_args
+        name = str(ev.get("name", ""))
+        call_id = str(ev.get("call_id") or ev.get("id", ""))
+        try:
+            args = json.loads(ev.get("arguments") or "{}")
+        except ValueError:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        tool = self.agent.registry.get(name)
+        broker = self.agent.broker
+        if tool is None:
+            self._down({"type": "denied", "tool": name, "reason": "unknown tool"})
+            self._function_output(call_id, f"ERROR: unknown tool '{name}'")
+            return
+        try:
+            validate_tool_args(tool, args)
+        except ValidationError as exc:
+            self._down({"type": "denied", "tool": name, "risk": tool.risk.value,
+                        "reason": f"schema: {exc}"})
+            self._function_output(call_id, f"SCHEMA-DENIED: {exc}")
+            return
+        decision = broker.authorize(
+            actor="praxis-voice", tool=name, risk=tool.risk, args=args,
+            preview=f"{name}({args})", provenance="voice",
+            rationale=f"Realtime requested {tool.risk.value} tool '{name}'.")
+        self._down({"type": "tool_call", "tool": name, "risk": tool.risk.value,
+                    "verdict": decision.verdict.value})
+        if decision.verdict is Verdict.ALLOW:
+            try:
+                result = str(tool.run(**args))
+            except Exception as exc:
+                result = f"ERROR: {exc}"
+            safe = broker.redact(result)
+            self._down({"type": "tool_result", "tool": name, "preview": safe[:240]})
+            self._function_output(call_id, safe)
+        elif decision.verdict is Verdict.NEEDS_APPROVAL:
+            self._down({"type": "approval", "tool": name, "risk": tool.risk.value,
+                        "approval_id": decision.approval_id})
+            self._function_output(
+                call_id,
+                f"HELD for approval (id={decision.approval_id}); not executed.")
+        else:
+            reason = broker.redact(decision.reason)
+            self._down({"type": "denied", "tool": name, "risk": tool.risk.value,
+                        "reason": reason})
+            self._function_output(call_id, f"DENIED: {reason}")
+
+
+def run_realtime(agent, conn) -> None:
+    """Pick the realtime upstream: the OpenAI Realtime bridge when a realtime
+    model + key are configured, otherwise the offline governed loopback."""
+    config = VoiceConfig.load()
+    if config.realtime_provider and config.realtime_model:
+        api_key = cfg.resolve_api_key(config.realtime_provider)
+        if api_key:
+            OpenAIRealtimeUpstream(
+                agent, conn, model=config.realtime_model, api_key=api_key,
+                base_url=config.realtime_url or None).run()
+            return
+    RealtimeBridge(agent, conn).run()

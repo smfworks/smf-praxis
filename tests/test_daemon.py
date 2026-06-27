@@ -947,3 +947,65 @@ def test_realtime_ws_endpoint_governed_turn(tmp_store, mock_agent, monkeypatch):
         assert "audio" in types and types[-1] == "done"
     finally:
         daemon._stop_status_server()
+
+
+class _CaptureWS:
+    """A WebSocketConn-like that records JSON sent and yields nothing on recv."""
+
+    def __init__(self):
+        self.sent = []
+
+    def send_text(self, text):
+        self.sent.append(json.loads(text))
+
+    def recv(self):
+        return None
+
+    def pong(self, data=b""):
+        pass
+
+    def close(self):
+        pass
+
+
+def _oai_upstream(agent):
+    from hybridagent.voice import OpenAIRealtimeUpstream
+    up = OpenAIRealtimeUpstream(agent, _CaptureWS(), model="gpt-realtime", api_key="k")
+    up.up = _CaptureWS()
+    return up
+
+
+def test_openai_upstream_holds_send(mock_agent):
+    up = _oai_upstream(mock_agent)
+    up._handle_function_call({"name": "send", "call_id": "c1",
+                              "arguments": json.dumps({"message": "hi"})})
+    down = [e["type"] for e in up.conn.sent]
+    assert "tool_call" in down and "approval" in down and "tool_result" not in down
+    # The model is told it was held, not executed, and the broker queued it.
+    assert any(m.get("item", {}).get("type") == "function_call_output"
+               and "HELD" in m["item"]["output"] for m in up.up.sent)
+    assert len(mock_agent.broker.pending) == 1
+
+
+def test_openai_upstream_executes_draft(mock_agent):
+    up = _oai_upstream(mock_agent)
+    up._handle_function_call({"name": "echo", "call_id": "c2",
+                              "arguments": json.dumps({"message": "hi"})})
+    down = [e["type"] for e in up.conn.sent]
+    assert "tool_call" in down and "tool_result" in down
+    assert any(m.get("item", {}).get("type") == "function_call_output"
+               for m in up.up.sent)
+
+
+def test_openai_upstream_translates_events(mock_agent):
+    up = _oai_upstream(mock_agent)
+    audio = []
+    up._on_upstream_event({"type": "response.text.delta", "delta": "On it."}, audio)
+    up._on_upstream_event({"type": "response.function_call_arguments.done",
+                           "name": "send", "call_id": "c1",
+                           "arguments": json.dumps({"message": "x"})}, audio)
+    up._on_upstream_event({"type": "response.done"}, audio)
+    types = [e["type"] for e in up.conn.sent]
+    assert types[0] == "delta"
+    assert "tool_call" in types and "approval" in types
+    assert types[-1] == "done"

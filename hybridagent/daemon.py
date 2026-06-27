@@ -1885,10 +1885,10 @@ class Daemon:
         return voice.synthesize_text(text)
 
     def run_realtime_session(self, conn: Any) -> None:
-        from .voice import RealtimeBridge
+        from . import voice
         self._ensure_agent()
         assert self.agent is not None
-        RealtimeBridge(self.agent, conn).run()
+        voice.run_realtime(self.agent, conn)
 
     def providers_catalog(self) -> list[dict]:
         """Provider picker payload for the dashboard (no secrets)."""

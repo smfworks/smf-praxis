@@ -63,3 +63,50 @@ def test_is_ws_upgrade():
                           "Sec-WebSocket-Key": "abc"})
     assert not is_ws_upgrade({"Upgrade": "h2c", "Connection": "Upgrade"})
     assert not is_ws_upgrade({"Upgrade": "websocket", "Connection": "keep-alive"})
+
+
+def test_ws_connect_client_server_roundtrip():
+    import socket
+    import threading
+
+    from hybridagent.wsutil import accept_key, ws_connect
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def serve():
+        conn, _ = srv.accept()
+        rf = conn.makefile("rb")
+        req = b""
+        while not req.endswith(b"\r\n\r\n"):
+            line = rf.readline()
+            if not line:
+                break
+            req += line
+        key = ""
+        for line in req.split(b"\r\n"):
+            if line.lower().startswith(b"sec-websocket-key:"):
+                key = line.split(b":", 1)[1].strip().decode()
+        conn.sendall(
+            ("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+             "Connection: Upgrade\r\nSec-WebSocket-Accept: "
+             + accept_key(key) + "\r\n\r\n").encode())
+        ws = WebSocketConn(rf, conn.makefile("wb"))  # server side: unmasked
+        op, data = ws.recv()                          # read the masked client frame
+        ws.send(data, op)                             # echo it back
+        conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        client = ws_connect(f"ws://127.0.0.1:{port}/realtime")
+        client.send_text("ping-pong")
+        op, data = client.recv()
+        assert op == OP_TEXT and data == b"ping-pong"
+        client.close()
+    finally:
+        thread.join(timeout=5)
+        srv.close()

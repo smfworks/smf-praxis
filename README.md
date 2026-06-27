@@ -346,6 +346,15 @@ the broker are unchanged either way.
   upstream today; an OpenAI Realtime audio-streaming bridge can replace the
   per-turn responder behind the same protocol with no client change.
 
+When `agents.voice.realtime` is configured with a provider/model and key, the
+daemon connects to the **OpenAI Realtime API** over a hand-rolled WebSocket
+client and bridges it: user turns go up, transcript/text/audio come down, and
+**every model function call is routed through the broker** (read/draft execute,
+send/destructive are held) before the governed result is returned to the model.
+PCM16 audio is wrapped to WAV so the browser plays it with the same path as
+turn-based. Continuous microphone PCM streaming is the remaining production
+finish; text-in with spoken audio-out works today.
+
 ```json
 "agents": {
   "voice": {
