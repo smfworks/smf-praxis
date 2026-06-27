@@ -15,6 +15,7 @@ from .content_guard import GuardedContent, guard_tool_result
 from .contradiction import Contradiction
 from .contradiction import detect as detect_contradictions
 from .debate import Candidate, DebatePanel, DebateResult
+from .deepthink import DeepThink, DeepThinkResult
 from .embeddings import EmbeddingClient
 from .eval_history import RegressionReport, compare_reports
 from .grounding import (
@@ -80,6 +81,7 @@ __all__ = [
     "ReflexiveChatAgent", "ReflexionConfig",
     "AnswerVerifier", "VerifiedChatAgent", "VerificationConfig",
     "DebatePanel", "DebateResult", "Candidate",
+    "DeepThink", "DeepThinkResult",
     "MCPClient", "StdioTransport", "mcp_tools", "risk_for_tool",
     "augment_registry_with_mcp",
     "RegressionReport", "compare_reports",

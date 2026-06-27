@@ -433,6 +433,27 @@ def cmd_debate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_think(args: argparse.Namespace) -> int:
+    from .deepthink import DeepThink
+    from .llm import LLMClient
+    llm = LLMClient()
+
+    def solver(task: str, directive: str) -> str:
+        return llm.chat([{"role": "user", "content": task}],
+                        system=directive or None, role="general")
+
+    res = DeepThink(solver, rounds=args.rounds).solve(args.question, force=args.force)
+    print(res.answer)
+    print()
+    if res.engaged:
+        mark = "verified" if res.approved else "flagged by reviewer"
+        print(f"— deep-think: {res.rounds} round(s), {res.votes} solver(s) agreed, "
+              f"{mark}")
+    else:
+        print("— single pass (not classified hard; use --force to deliberate)")
+    return 0
+
+
 def cmd_router_train(args: argparse.Namespace) -> int:
     from .orchestrator import Orchestrator
     from .persistence import Store
@@ -849,6 +870,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help="how many times a failed step may be replanned (default 1)")
     ppe.add_argument("--m365", action="store_true", help="use the M365 toolset")
     ppe.set_defaults(func=cmd_plan_run)
+
+    pth = sub.add_parser(
+        "think", help="deep-think: multi-round deliberation on a hard question")
+    pth.add_argument("question", help="the question to deliberate on")
+    pth.add_argument("--rounds", type=int, default=2,
+                     help="max debate rounds when there is no consensus (default 2)")
+    pth.add_argument("--force", action="store_true",
+                     help="deliberate even if the question isn't classified hard")
+    pth.set_defaults(func=cmd_think)
 
     pask = sub.add_parser("ask", help="grounded Q&A over the KB + memory (cite or abstain)")
     pask.add_argument("question", help="the question to answer from sources")

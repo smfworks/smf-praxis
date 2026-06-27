@@ -516,6 +516,23 @@ def _eval_debate_consensus() -> tuple[bool, str]:
     return ok, f"answer={result.answer!r} votes={result.votes}"
 
 
+def _eval_deepthink_deliberates() -> tuple[bool, str]:
+    from .deepthink import DeepThink
+    round1 = iter(["alpha is the answer", "beta is correct", "gamma perhaps"])
+
+    def solver(task, directive):
+        if "Other attempts" in directive:  # round 2: solvers see each other and converge
+            return "On reflection, the answer is alpha."
+        return next(round1)
+
+    # A hard goal engages deliberation; round 1 has no consensus -> round 2 converges.
+    res = DeepThink(solver, rounds=2).solve(
+        "Analyze the trade-offs and design the optimal architecture")
+    ok = (res.engaged and res.rounds == 2 and res.votes == 3
+          and "alpha" in res.answer.lower())
+    return ok, f"engaged={res.engaged} rounds={res.rounds} votes={res.votes}"
+
+
 def _eval_plan_execute_replans_on_failure() -> tuple[bool, str]:
     from .plan_execute import PlanExecutor, PlanStep
     from .planner import Step as PStep
@@ -681,6 +698,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("debate.consensus_selects_majority", "debate",
              "Best-of-N debate selects the majority-agreement answer across solvers.",
              _eval_debate_consensus),
+    EvalCase("reasoning.deepthink_deliberates", "reasoning",
+             "Deep-think engages on a hard goal and a second debate round resolves a "
+             "no-consensus first round.", _eval_deepthink_deliberates),
     EvalCase("mcp.governs_external_tools", "mcp",
              "An external MCP tool is risk-classified and a destructive one is held "
              "for approval, not auto-executed.", _eval_mcp_governs_external_tools),
