@@ -206,6 +206,26 @@ def _eval_secret_redaction() -> tuple[bool, str]:
     return ("sk-live-ABC123" not in out and "REDACTED" in out), f"out={out!r}"
 
 
+def _eval_difficulty_routing() -> tuple[bool, str]:
+    from .router import HARD, SIMPLE, STANDARD, classify_difficulty
+    hard = classify_difficulty("Analyze the trade-offs and design an architecture")
+    simple = classify_difficulty("hi there")
+    standard = classify_difficulty("what is the current project status report")
+    ok = hard == HARD and simple == SIMPLE and standard == STANDARD
+    return ok, f"hard={hard} simple={simple} standard={standard}"
+
+
+def _eval_context_compaction() -> tuple[bool, str]:
+    from .context import compact_messages, total_chars
+    msgs = [{"role": "user" if i % 2 == 0 else "assistant",
+             "content": f"turn {i} " + "x" * 400} for i in range(30)]
+    out = compact_messages(msgs, max_chars=1000, keep_recent=6,
+                           summarize=lambda t: "summary")
+    ok = (len(out) == 7 and out[0]["role"] == "system"
+          and out[-6:] == msgs[-6:] and total_chars(out) < total_chars(msgs))
+    return ok, f"in={len(msgs)} out={len(out)} chars={total_chars(out)}"
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -228,6 +248,12 @@ BUILTIN_EVALS: list[EvalCase] = [
              _eval_injection_flagged),
     EvalCase("safety.secret_redaction", "safety",
              "Secrets are redacted from governed output.", _eval_secret_redaction),
+    EvalCase("routing.difficulty_tiers", "routing",
+             "Request difficulty is classified for best-model routing.",
+             _eval_difficulty_routing),
+    EvalCase("context.compaction", "context",
+             "An over-budget conversation is compacted (recent kept, older summarized).",
+             _eval_context_compaction),
 ]
 
 

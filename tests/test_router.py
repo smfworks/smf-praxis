@@ -1,7 +1,16 @@
 from hybridagent import config as cfg
 from hybridagent import onboard
 from hybridagent.llm import LLMClient
-from hybridagent.router import NORMAL, SENSITIVE, ModelRouter, classify_sensitivity
+from hybridagent.router import (
+    HARD,
+    NORMAL,
+    SENSITIVE,
+    SIMPLE,
+    STANDARD,
+    ModelRouter,
+    classify_difficulty,
+    classify_sensitivity,
+)
 
 
 def _home(tmp_path, monkeypatch):
@@ -82,3 +91,48 @@ def test_fallback_walks_candidate_list(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_complete_with_ref", fake_call)
     out = llm.complete("hello")
     assert out == "ok via openai/gpt-4o-mini"   # fell back to the default
+
+
+_TIERS = {"fast": "ollama/llama3.1", "balanced": "openai/gpt-4o-mini",
+          "strong": "openai/gpt-4o"}
+
+
+def test_classify_difficulty_buckets():
+    assert classify_difficulty("hi there") == SIMPLE
+    assert classify_difficulty("thanks!") == SIMPLE
+    assert classify_difficulty("Analyze the trade-offs of this architecture") == HARD
+    assert classify_difficulty("```python\nprint(1)\n```") == HARD
+    assert classify_difficulty("x" * 700) == HARD
+    assert classify_difficulty("what is the current project status report") == STANDARD
+
+
+def test_select_prefers_tier_by_difficulty(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    onboard.run_noninteractive("openai", "gpt-4o-mini")
+    data = cfg.load_config()
+    data["agents"]["tiers"] = dict(_TIERS)
+    cfg.save_config(data)
+    r = ModelRouter()
+    assert r.select("general", NORMAL, HARD)[0] == "openai/gpt-4o"
+    assert r.select("general", NORMAL, SIMPLE)[0] == "ollama/llama3.1"
+    # No difficulty -> behaviour unchanged (default leads).
+    assert r.select("general", NORMAL)[0] == "openai/gpt-4o-mini"
+
+
+def test_sensitivity_pins_local_over_tier(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    onboard.run_noninteractive("openai", "gpt-4o-mini")
+    data = cfg.load_config()
+    data["agents"]["tiers"] = dict(_TIERS)
+    cfg.save_config(data)
+    r = ModelRouter()
+    # A 'hard' turn whose strong tier is a cloud model must still not leak.
+    sens = r.select("general", SENSITIVE, HARD)
+    assert sens and all(ModelRouter.is_local_ref(x) for x in sens)
+
+
+def test_no_tiers_is_backward_compatible(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    onboard.run_noninteractive("openai", "gpt-4o-mini")
+    r = ModelRouter()
+    assert r.select("general", NORMAL, HARD) == ["openai/gpt-4o-mini"]

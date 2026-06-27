@@ -331,6 +331,16 @@ def cmd_route(args: argparse.Namespace) -> int:
             exp = r.explain(role, sens)
             tag = " [local]" if exp["primary_is_local"] else ""
             print(f"{role:<12} {sens:<11} {exp['candidates']}{tag}")
+    from . import config as cfg
+    tiers = cfg.load_config().get("agents", {}).get("tiers", {})
+    if tiers:
+        print()
+        print("difficulty tiers (agents.tiers): "
+              f"fast={tiers.get('fast', '-')}  "
+              f"balanced={tiers.get('balanced', '-')}  "
+              f"strong={tiers.get('strong', '-')}")
+        print("hard turns prefer 'strong', simple turns 'fast'; "
+              "sensitivity still pins to a local model.")
     return 0
 
 

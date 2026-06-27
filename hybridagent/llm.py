@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from . import config as cfg
 from .logging_util import get_logger
 from .providers import CATALOG, chat, chat_messages, chat_messages_stream, chat_messages_tools
-from .router import NORMAL, ModelRouter, classify_sensitivity
+from .router import NORMAL, ModelRouter, classify_difficulty, classify_sensitivity
 
 _log = get_logger("praxis.llm")
 
@@ -40,11 +40,32 @@ def _mock_fill_args(schema: dict) -> dict:
     return out
 
 
+def _difficulty_of(payload: object) -> str:
+    """Classify request difficulty from a prompt string or a messages list
+    (user turns only) so routing can prefer a stronger or faster model."""
+    if isinstance(payload, list):
+        text = "\n".join(str(m.get("content", "")) for m in payload
+                         if isinstance(m, dict) and m.get("role") == "user")
+    else:
+        text = str(payload or "")
+    return classify_difficulty(text)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
 @dataclass
 class LLMClient:
     model: str = "praxis-local"
     mode: str = field(default_factory=lambda: os.environ.get("PRAXIS_LLM", "auto"))
     router: ModelRouter = field(default_factory=ModelRouter)
+    context_char_budget: int = field(
+        default_factory=lambda: _env_int("PRAXIS_CTX_BUDGET", 24000))
+    keep_recent_turns: int = 8
 
     def _effective_mode(self) -> str:
         if self.mode in ("mock", "real"):
@@ -75,6 +96,7 @@ class LLMClient:
         combined conversation is sensitivity-classified so secrets are never
         routed to a cloud provider (they fall back to a local/offline model).
         """
+        messages = self._maybe_compact(messages)
         convo = "\n".join(str(m.get("content", "")) for m in messages)
         if sensitivity is None:
             sensitivity = classify_sensitivity((system or "") + "\n" + convo)
@@ -91,6 +113,7 @@ class LLMClient:
         provider. Offline (mock) mode still "streams" by chunking the mock reply
         so the UI behaves identically with or without a provider configured.
         """
+        messages = self._maybe_compact(messages)
         convo = "\n".join(str(m.get("content", "")) for m in messages)
         if sensitivity is None:
             sensitivity = classify_sensitivity((system or "") + "\n" + convo)
@@ -115,6 +138,15 @@ class LLMClient:
         if self._effective_mode() == "real":
             return self._tools_messages(messages, tools, system, role, sensitivity)
         return self._mock_chat_tools(messages, tools, system)
+
+    def _maybe_compact(self, messages: list[dict]) -> list[dict]:
+        """Compact an over-budget conversation: keep recent turns, summarize the
+        rest. Applied to the chat surfaces only (not the tool loop, where
+        tool-call / tool-result pairing must stay intact)."""
+        from .context import compact_messages
+        return compact_messages(
+            messages, max_chars=self.context_char_budget,
+            keep_recent=self.keep_recent_turns, summarize=self.summarize)
 
     # -------------------------------------------------------------------- mock
     def _mock_complete(self, prompt: str, system: str | None) -> str:
@@ -172,7 +204,7 @@ class LLMClient:
     # ------------------------------------------------------------------- route
     def _route(self, prompt: str, system: str | None,
                role: str, sensitivity: str) -> str:
-        candidates = self.router.select(role, sensitivity)
+        candidates = self.router.select(role, sensitivity, _difficulty_of(prompt))
         if not candidates:
             raise RuntimeError(
                 "No provider configured. Run 'praxis onboard' to pick a "
@@ -216,7 +248,7 @@ class LLMClient:
     # ----------------------------------------------------------- chat (multi-turn)
     def _route_messages(self, messages: list[dict], system: str | None,
                         role: str, sensitivity: str) -> str:
-        candidates = self.router.select(role, sensitivity)
+        candidates = self.router.select(role, sensitivity, _difficulty_of(messages))
         if not candidates:
             raise RuntimeError(
                 "No provider configured. Run 'praxis onboard' to pick a "
@@ -260,7 +292,7 @@ class LLMClient:
     # ------------------------------------------------------- chat (streaming)
     def _stream_messages(self, messages: list[dict], system: str | None,
                          role: str, sensitivity: str) -> Iterator[str]:
-        candidates = self.router.select(role, sensitivity)
+        candidates = self.router.select(role, sensitivity, _difficulty_of(messages))
         if not candidates:
             raise RuntimeError(
                 "No provider configured. Run 'praxis onboard' to pick a "
@@ -314,7 +346,7 @@ class LLMClient:
     # ------------------------------------------------------- chat (tool-calling)
     def _tools_messages(self, messages: list[dict], tools: list[dict],
                         system: str | None, role: str, sensitivity: str) -> dict:
-        candidates = self.router.select(role, sensitivity)
+        candidates = self.router.select(role, sensitivity, _difficulty_of(messages))
         if not candidates:
             raise RuntimeError(
                 "No provider configured. Run 'praxis onboard' to pick a "
