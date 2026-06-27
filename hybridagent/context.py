@@ -35,7 +35,10 @@ def compact_messages(messages: list[dict], *, max_chars: int = 24000,
     ``max_chars <= 0``, which disables compaction).
     """
     msgs = list(messages or [])
-    if max_chars <= 0 or len(msgs) <= keep_recent or total_chars(msgs) <= max_chars:
+    if max_chars <= 0 or total_chars(msgs) <= max_chars:
+        return msgs
+    keep_recent = max(0, keep_recent)
+    if keep_recent and len(msgs) <= keep_recent:
         return msgs
 
     lead_system: list[dict] = []
@@ -43,11 +46,15 @@ def compact_messages(messages: list[dict], *, max_chars: int = 24000,
     while body and body[0].get("role") == "system":
         lead_system.append(body[0])
         body = body[1:]
-    if len(body) <= keep_recent:
+    if keep_recent and len(body) <= keep_recent:
         return msgs
 
-    older = body[:-keep_recent]
-    recent = body[-keep_recent:]
+    if keep_recent:
+        older = body[:-keep_recent]
+        recent = body[-keep_recent:]
+    else:  # keep_recent == 0 -> summarize everything
+        older = body
+        recent = []
     transcript = "\n".join(
         f"{m.get('role', 'user')}: {m.get('content', '')}" for m in older)
     if summarize is not None:

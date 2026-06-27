@@ -33,3 +33,12 @@ def test_compact_preserves_leading_system():
 def test_compact_disabled_when_budget_zero():
     msgs = [{"role": "user", "content": "x" * 5000} for _ in range(10)]
     assert compact_messages(msgs, max_chars=0, keep_recent=2) == msgs
+
+
+def test_compact_keep_recent_zero_summarizes_all():
+    msgs = [{"role": "user", "content": "x" * 500} for _ in range(8)]
+    out = compact_messages(msgs, max_chars=800, keep_recent=0,
+                           summarize=lambda t: "S")
+    # keep_recent=0 means "summarize everything" -> just the summary note.
+    assert len(out) == 1 and out[0]["role"] == "system" and "S" in out[0]["content"]
+    assert total_chars(out) < total_chars(msgs)

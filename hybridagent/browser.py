@@ -13,6 +13,7 @@ governance is identical either way.
 """
 from __future__ import annotations
 
+import queue
 import re
 import threading
 from html.parser import HTMLParser
@@ -80,16 +81,44 @@ class BrowserSession:
         self._pw: Any = None
         self._browser: Any = None
         self._lock = threading.Lock()
+        self._jobs: Any = None
+        self._worker: Any = None
         self.allow_playwright = allow_playwright
         self.url = ""
         self.title = ""
         self.text = ""
 
-    def _playwright(self) -> bool:
+    def _on_worker(self, fn: Any) -> Any:
+        """Run ``fn`` on a single dedicated thread that owns all Playwright
+        objects. The sync API is thread-affine and the daemon serves each
+        connection on its own thread, so every Playwright call must be
+        marshalled to one owning thread."""
+        if self._worker is None:
+            self._jobs = queue.Queue()
+            self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+            self._worker.start()
+        box: dict = {}
+        done = threading.Event()
+        self._jobs.put((fn, box, done))
+        done.wait()
+        if "exc" in box:
+            raise box["exc"]
+        return box.get("result")
+
+    def _worker_loop(self) -> None:
+        while True:
+            fn, box, done = self._jobs.get()
+            try:
+                box["result"] = fn()
+            except Exception as exc:
+                box["exc"] = exc
+            finally:
+                done.set()
+
+    def _start_playwright(self) -> bool:
+        """Start Playwright (runs on the worker thread)."""
         if self._page is not None:
             return True
-        if not self.allow_playwright:
-            return False
         try:
             from playwright.sync_api import sync_playwright  # type: ignore
             self._pw = sync_playwright().start()
@@ -100,16 +129,22 @@ class BrowserSession:
             self._page = self._browser = self._pw = None
             return False
 
+    def _have_browser(self) -> bool:
+        if not self.allow_playwright:
+            return False
+        return bool(self._on_worker(self._start_playwright))
+
     def navigate(self, url: str) -> str:
         from urllib.parse import urlparse
         if urlparse(url).scheme not in ("http", "https"):
             return f"[browser] unsupported URL scheme: {url!r}"
         with self._lock:
-            if self._playwright():
-                self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                self.url = self._page.url
-                self.title = self._page.title()
-                self.text = self._page.inner_text("body")[:20000]
+            if self._have_browser():
+                def _go() -> tuple[str, str, str]:
+                    self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    return (self._page.url, self._page.title(),
+                            self._page.inner_text("body")[:20000])
+                self.url, self.title, self.text = self._on_worker(_go)
             else:
                 html = _http_get(url)
                 self.url = url
@@ -133,32 +168,42 @@ class BrowserSession:
 
     def click(self, target: str) -> str:
         with self._lock:
-            if not self._playwright():
+            if not self._have_browser():
                 return ("[browser] interaction requires the optional [browser] "
                         "extra (pip install praxis-agent[browser])")
-            self._page.click(target, timeout=10000)
-            self.text = self._page.inner_text("body")[:20000]
-            self.url = self._page.url
+
+            def _click() -> tuple[str, str]:
+                self._page.click(target, timeout=10000)
+                return (self._page.url, self._page.inner_text("body")[:20000])
+            self.url, self.text = self._on_worker(_click)
         return f"[browser] clicked {target!r}; now at {self.url}"
 
     def type_text(self, target: str, text: str) -> str:
         with self._lock:
-            if not self._playwright():
+            if not self._have_browser():
                 return ("[browser] interaction requires the optional [browser] "
                         "extra (pip install praxis-agent[browser])")
-            self._page.fill(target, text)
+            self._on_worker(lambda: self._page.fill(target, text))
         return f"[browser] typed {len(text)} chars into {target!r}"
 
     def close(self) -> None:
         with self._lock:
+            if self._worker is None:
+                return
+
+            def _close() -> None:
+                try:
+                    if self._browser is not None:
+                        self._browser.close()
+                    if self._pw is not None:
+                        self._pw.stop()
+                except Exception:
+                    pass
+                self._page = self._browser = self._pw = None
             try:
-                if self._browser is not None:
-                    self._browser.close()
-                if self._pw is not None:
-                    self._pw.stop()
+                self._on_worker(_close)
             except Exception:
                 pass
-            self._page = self._browser = self._pw = None
 
 
 _SESSION = BrowserSession()

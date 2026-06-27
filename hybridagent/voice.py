@@ -444,14 +444,16 @@ class OpenAIRealtimeUpstream:
         self._down({"type": "ready", "mode": "openai"})
         up_thread = threading.Thread(target=self._pump_upstream, daemon=True)
         up_thread.start()
-        self._pump_browser()
-        with self._up_lock:
-            if self.up is not None:
-                try:
-                    self.up.close()
-                except OSError:
-                    pass
-        up_thread.join(timeout=2)
+        try:
+            self._pump_browser()
+        finally:
+            with self._up_lock:
+                if self.up is not None:
+                    try:
+                        self.up.close()
+                    except OSError:
+                        pass
+            up_thread.join(timeout=3)
 
     def _pump_browser(self) -> None:
         from .wsutil import OP_CLOSE, OP_PING
@@ -486,23 +488,35 @@ class OpenAIRealtimeUpstream:
     def _pump_upstream(self) -> None:
         from .wsutil import OP_CLOSE, OP_PING
         audio: list[str] = []
-        while True:
-            frame = self.up.recv() if self.up is not None else None
-            if frame is None:
-                break
-            opcode, data = frame
-            if opcode == OP_CLOSE:
-                break
-            if opcode == OP_PING:
-                with self._up_lock:
-                    if self.up is not None:
-                        self.up.pong(data)
-                continue
+        try:
+            while True:
+                try:
+                    frame = self.up.recv() if self.up is not None else None
+                except OSError:
+                    break
+                if frame is None:
+                    break
+                opcode, data = frame
+                if opcode == OP_CLOSE:
+                    break
+                if opcode == OP_PING:
+                    with self._up_lock:
+                        if self.up is not None:
+                            self.up.pong(data)
+                    continue
+                try:
+                    ev = json.loads(data.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                self._on_upstream_event(ev, audio)
+        except Exception as exc:  # never let the bridge thread die silently
+            self._down({"type": "error", "error": str(exc)})
+        finally:
+            # Unblock the browser-side pump so the session can't hang.
             try:
-                ev = json.loads(data.decode("utf-8", "replace"))
-            except ValueError:
-                continue
-            self._on_upstream_event(ev, audio)
+                self.conn.close()
+            except OSError:
+                pass
 
     def _on_upstream_event(self, ev: dict, audio: list[str]) -> None:
         etype = ev.get("type", "")

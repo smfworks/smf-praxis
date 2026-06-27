@@ -47,10 +47,12 @@ def is_ws_upgrade(headers) -> bool:
 class WebSocketConn:
     """A framed WebSocket connection over rfile/wfile (the hijacked socket)."""
 
-    def __init__(self, rfile: Any, wfile: Any, mask: bool = False) -> None:
+    def __init__(self, rfile: Any, wfile: Any, mask: bool = False,
+                 sock: Any = None) -> None:
         self.rfile = rfile
         self.wfile = wfile
         self.mask = mask
+        self.sock = sock
         self.open = True
 
     def _read_exactly(self, n: int) -> bytes:
@@ -64,11 +66,11 @@ class WebSocketConn:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    def recv(self) -> tuple[int, bytes] | None:
-        """Read one frame. Returns ``(opcode, payload)`` or ``None`` on close/EOF."""
+    def _read_frame(self) -> tuple[bool, int, bytes] | None:
         head = self._read_exactly(2)
         if len(head) < 2:
             return None
+        fin = bool(head[0] & 0x80)
         opcode = head[0] & 0x0F
         masked = bool(head[1] & 0x80)
         length = head[1] & 0x7F
@@ -90,7 +92,33 @@ class WebSocketConn:
             return None
         if masked:
             data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-        return opcode, data
+        return fin, opcode, bytes(data)
+
+    def recv(self) -> tuple[int, bytes] | None:
+        """Read one logical message, reassembling fragmented frames.
+
+        Returns ``(opcode, payload)`` or ``None`` on close/EOF. Control frames
+        (close/ping/pong) are never fragmented and are returned immediately;
+        data messages split across continuation frames (opcode 0x0) are
+        concatenated until the FIN bit is set.
+        """
+        first = self._read_frame()
+        if first is None:
+            return None
+        fin, opcode, data = first
+        if opcode in (OP_CLOSE, OP_PING, OP_PONG):
+            return opcode, data
+        buffer = bytearray(data)
+        while not fin:
+            nxt = self._read_frame()
+            if nxt is None:
+                return None
+            nfin, nopcode, ndata = nxt
+            if nopcode in (OP_CLOSE, OP_PING, OP_PONG):
+                return nopcode, ndata  # interleaved control frame (rare)
+            buffer.extend(ndata)
+            fin = nfin
+        return opcode, bytes(buffer)
 
     def send(self, data: bytes, opcode: int = OP_TEXT) -> None:
         header = bytearray([0x80 | opcode])  # FIN + opcode
@@ -123,11 +151,22 @@ class WebSocketConn:
     def close(self) -> None:
         if not self.open:
             return
+        self.open = False
         try:
             self.send(b"", OP_CLOSE)
         except OSError:
             pass
-        self.open = False
+        # Shut down the underlying socket (when owned) so a blocking recv() in
+        # another thread unblocks and the connection is released promptly.
+        if self.sock is not None:
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                self.sock.close()
+            except OSError:
+                pass
 
 
 def ws_connect(url: str, headers: dict | None = None,
@@ -160,4 +199,4 @@ def ws_connect(url: str, headers: dict | None = None,
         line = rfile.readline()
         if line in (b"\r\n", b"\n", b""):
             break
-    return WebSocketConn(rfile, sock.makefile("wb"), mask=True)
+    return WebSocketConn(rfile, sock.makefile("wb"), mask=True, sock=sock)

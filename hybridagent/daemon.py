@@ -1458,7 +1458,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
                          accept_key(self.headers.get("Sec-WebSocket-Key", "")))
         self.end_headers()
         self.wfile.flush()
-        conn = WebSocketConn(self.rfile, self.wfile)
+        conn = WebSocketConn(self.rfile, self.wfile, sock=self.connection)
         try:
             self.daemon.run_realtime_session(conn)
         except (BrokenPipeError, ConnectionResetError, OSError):

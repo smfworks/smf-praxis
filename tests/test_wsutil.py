@@ -110,3 +110,15 @@ def test_ws_connect_client_server_roundtrip():
     finally:
         thread.join(timeout=5)
         srv.close()
+
+
+def test_recv_reassembles_fragments():
+    def frame(fin, opcode, payload):
+        return bytes([(0x80 if fin else 0) | opcode, len(payload)]) + payload
+
+    # A text message split across a first frame (FIN=0) and a continuation
+    # frame (opcode 0x0, FIN=1) must be reassembled into one logical message.
+    raw = frame(False, OP_TEXT, b"hel") + frame(True, 0x0, b"lo")
+    conn = WebSocketConn(io.BytesIO(raw), io.BytesIO())
+    op, data = conn.recv()
+    assert op == OP_TEXT and data == b"hello"
