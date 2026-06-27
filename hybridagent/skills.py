@@ -211,18 +211,36 @@ class SkillLibrary:
             ]
             if out:
                 return out
-        # Lexical fallback over triggers/names.
-        q = set(re.findall(r"[a-z0-9]+", goal.lower()))
-        scored = []
-        for sk in self.skills.values():
-            if not active(sk):
-                continue
-            toks = set(re.findall(r"[a-z0-9]+", f"{sk.name} {sk.trigger}".lower()))
-            overlap = len(q & toks)
-            if overlap:
-                scored.append((overlap, sk))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [sk for _, sk in scored[:k]]
+        # Lexical fallback over name/trigger/body via BM25 (no embedder needed).
+        from .bm25 import BM25Index
+        active_skills = [sk for sk in self.skills.values() if active(sk)]
+        if not active_skills:
+            return []
+        index = BM25Index.build(
+            (sk.name, f"{sk.name} {sk.trigger} {sk.body}") for sk in active_skills)
+        by_name = {sk.name: sk for sk in active_skills}
+        return [by_name[name] for name, _ in index.search(goal, k=k)
+                if name in by_name]
+
+    def recall_context(self, goal: str, k: int = 2, max_chars: int = 900) -> str:
+        """A compact block of the most relevant learned procedures (or ``''``).
+
+        Suitable for prepending to a chat system prompt so the agent applies its
+        own distilled skills to a recurring task — the procedural-memory half of
+        the self-improvement loop.
+        """
+        blocks: list[str] = []
+        used = 0
+        for sk in self.retrieve(goal, k=k):
+            block = f"### {sk.name}\nWhen: {sk.trigger}\n{sk.body}".strip()
+            if used + len(block) > max_chars:
+                break
+            blocks.append(block)
+            used += len(block)
+        if not blocks:
+            return ""
+        return ("Relevant learned procedures (apply if they fit; governance still "
+                "applies to every step):\n\n" + "\n\n".join(blocks))
 
     # -------------------------------------------------------------- outcomes
     def record_outcome(self, skill_name: str, goal: str, outcome: str,

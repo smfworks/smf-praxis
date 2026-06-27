@@ -422,6 +422,27 @@ def _eval_bm25_recall() -> tuple[bool, str]:
     return (ranked_first and no_match), f"top={top}"
 
 
+def _eval_skill_recall_injects_procedure() -> tuple[bool, str]:
+    from pathlib import Path
+
+    from .skills import Skill, SkillLibrary
+    lib = SkillLibrary(store=None, root=Path("__praxis_eval_no_such_skills_dir__"))
+    lib.skills = {
+        "expense-report": Skill(
+            name="expense-report", trigger="filing an expense or reimbursement",
+            body="1. Gather receipts. 2. Draft the expense form. 3. Submit for approval."),
+        "customer-followup": Skill(
+            name="customer-followup", trigger="following up with a customer",
+            body="1. Review notes. 2. Draft a recap email. 3. Send after approval."),
+    }
+    goal = "file an expense reimbursement for my travel receipts"
+    top = lib.retrieve(goal, k=1)
+    ctx = lib.recall_context(goal)
+    ok = (bool(top) and top[0].name == "expense-report"
+          and "Relevant learned procedures" in ctx and "Gather receipts" in ctx)
+    return ok, f"top={[s.name for s in top]}"
+
+
 def _eval_verification_catches_false_claim() -> tuple[bool, str]:
     from .chat_agent import GovernedChatAgent
     from .verifier import VerifiedChatAgent
@@ -626,6 +647,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("retrieval.bm25_ranks", "retrieval",
              "BM25 ranks the discriminative document first and returns nothing for "
              "an out-of-vocabulary query.", _eval_bm25_recall),
+    EvalCase("skills.recall_injects_procedure", "skills",
+             "A relevant learned skill is retrieved and formatted as procedural "
+             "guidance for the goal.", _eval_skill_recall_injects_procedure),
     EvalCase("verification.catches_false_claim", "verification",
              "A held action falsely reported as completed is caught and revised.",
              _eval_verification_catches_false_claim),

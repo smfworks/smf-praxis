@@ -1907,6 +1907,7 @@ class Daemon:
             # denied action is rejected and revised once.
             engine = VerifiedChatAgent(engine, max_revisions=vc.max_revisions)
         grounded = self._ground_with_memory(system or _AGENT_SYSTEM, messages)
+        grounded = self._ground_with_skills(grounded, messages)
         for event in engine.run(messages, system=grounded):
             yield {"type": event.type, **event.data}
 
@@ -1930,6 +1931,33 @@ class Daemon:
             return system
         try:
             ctx = self.agent.memory.recall_context(last_user)
+        except Exception:
+            ctx = ""
+        return f"{ctx}\n\n{system}" if ctx else system
+
+    def _ground_with_skills(self, system: str, messages: list[dict]) -> str:
+        """Prepend relevant learned procedures (skills) to the turn's context.
+
+        Surfaces the agent's own distilled, non-quarantined skills for the latest
+        user goal so recurring tasks benefit from prior learning. A missing skill
+        library, no user turn, or ``agents.skillRecall=false`` (or
+        ``PRAXIS_SKILL_RECALL=0``) leave the system prompt unchanged.
+        """
+        if self.agent is None:
+            return system
+        skills = getattr(self.agent, "skills", None)
+        if skills is None:
+            return system
+        if os.environ.get("PRAXIS_SKILL_RECALL", "").lower() in ("0", "false", "off"):
+            return system
+        if not cfg.load_config().get("agents", {}).get("skillRecall", True):
+            return system
+        last_user = next((str(m.get("content", "")) for m in reversed(messages)
+                          if m.get("role") == "user"), "")
+        if not last_user.strip():
+            return system
+        try:
+            ctx = skills.recall_context(last_user)
         except Exception:
             ctx = ""
         return f"{ctx}\n\n{system}" if ctx else system
