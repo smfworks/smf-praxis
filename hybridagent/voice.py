@@ -293,6 +293,8 @@ class RealtimeBridge:
         from .wsutil import OP_CLOSE, OP_PING
         self._send({"type": "ready", "mode": "loopback"})
         pending: list[str] = []
+        audio: list[str] = []
+        audio_mime = "audio/webm"
         turns = 0
         while turns < self.MAX_TURNS:
             frame = self.conn.recv()
@@ -311,17 +313,35 @@ class RealtimeBridge:
             etype = ev.get("type")
             if etype == "text":
                 pending.append(str(ev.get("text", "")))
+            elif etype == "audio":
+                if ev.get("data"):
+                    audio.append(str(ev["data"]))
+                    audio_mime = ev.get("mime", audio_mime)
             elif etype == "stop":
                 break
             elif etype == "commit":
                 text = " ".join(p for p in pending if p).strip()
                 pending = []
+                if not text and audio:
+                    text = self._transcribe(audio, audio_mime)
+                    if text:
+                        self._send({"type": "transcript", "text": text})
+                audio = []
                 if not text:
                     continue
                 self.messages.append({"role": "user", "content": text})
                 self._respond()
                 turns += 1
         self.conn.close()
+
+    def _transcribe(self, chunks: list[str], mime: str) -> str:
+        try:
+            raw = b"".join(base64.b64decode(c) for c in chunks if c)
+        except (ValueError, TypeError):
+            return ""
+        if not raw:
+            return ""
+        return transcribe_audio(raw, mime).text
 
     def _respond(self) -> None:
         from .chat_agent import GovernedChatAgent

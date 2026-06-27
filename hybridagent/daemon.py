@@ -745,7 +745,7 @@ function playAudioB64(b64, mime){
     const a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); a.play().catch(()=>{});
   } catch(_){}
 }
-function realtimeTurn(conv, text, typing){
+function realtimeTurn(conv, input, typing){
   return new Promise((resolve) => {
     let steps = null, finalText = '', finished = false; const cards = {};
     function ensureSteps(){ if(steps) return; if(typing){ typing.remove(); typing = null; } const row = document.createElement('div'); row.className = 'msg agent'; row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="steps"></div></div>'; messagesEl.appendChild(row); steps = row.querySelector('.steps'); }
@@ -755,12 +755,13 @@ function realtimeTurn(conv, text, typing){
     let ws;
     try { ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/api/voice/realtime'); }
     catch(e){ finalText = 'Realtime error: ' + e; finish(); return; }
-    ws.onopen = () => { ws.send(JSON.stringify({type:'text', text})); ws.send(JSON.stringify({type:'commit'})); };
+    ws.onopen = () => { if(input && input.audio){ ws.send(JSON.stringify({type:'audio', data: input.audio, mime: input.mime||'audio/webm'})); } else { ws.send(JSON.stringify({type:'text', text: (input&&input.text)||''})); } ws.send(JSON.stringify({type:'commit'})); };
     ws.onerror = () => { finalText = finalText || 'Realtime connection failed.'; finish(); };
     ws.onclose = () => finish();
     ws.onmessage = (e) => {
       let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
-      if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
+      if(ev.type === 'transcript'){ appendUser(ev.text || ''); }
+      else if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
       else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
       else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
       else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
@@ -784,7 +785,7 @@ async function sendMessage(ev){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
-      await realtimeTurn(conv, text, typing);
+      await realtimeTurn(conv, {text}, typing);
     } else if(mode === 'chat'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
@@ -926,7 +927,8 @@ async function toggleMic(){
     _recorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       document.getElementById('mic').classList.remove('recording');
-      await transcribeBlob(new Blob(_chunks, {type: _recorder.mimeType || 'audio/webm'}));
+      const blob = new Blob(_chunks, {type: _recorder.mimeType || 'audio/webm'});
+      if(voiceMode === 'realtime'){ await micRealtime(blob); } else { await transcribeBlob(blob); }
     };
     _recorder.start(); _recording = true;
     document.getElementById('mic').classList.add('recording');
@@ -942,6 +944,22 @@ async function transcribeBlob(blob){
     if(res.text){ ta.value = (ta.value ? ta.value + ' ' : '') + res.text; autoGrow(ta); ta.focus(); }
     if((res.detail||'').includes('offline')) showToast('STT offline preview — set agents.voice.stt for real transcription');
   } catch(e){ showToast('Transcribe failed: '+e); }
+}
+async function micRealtime(blob){
+  showToast('Transcribing…');
+  let text = '';
+  try {
+    const resp = await fetch('/api/transcribe', {method:'POST', headers:{'Content-Type': blob.type || 'audio/webm'}, body: blob});
+    const res = await resp.json().catch(()=>({}));
+    text = res.text || '';
+  } catch(e){ showToast('Transcribe failed: '+e); return; }
+  if(!text){ showToast('No speech detected'); return; }
+  appendUser(text);
+  const conv = ensureConversation();
+  conv.messages.push({role:'user', content:text, ts: Date.now()});
+  conv.updated = Date.now(); persistConversations(); renderHistList();
+  const typing = appendTyping(); setBusy(true);
+  try { await realtimeTurn(conv, {text}, typing); } finally { setBusy(false); }
 }
 async function speak(text){
   if(voiceMode === 'off' || !text) return;

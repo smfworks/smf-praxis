@@ -872,6 +872,24 @@ def test_realtime_bridge_governs_tools(mock_agent):
     assert conn.open is False
 
 
+def test_realtime_bridge_transcribes_audio(mock_agent):
+    import base64
+
+    from hybridagent.voice import RealtimeBridge
+    blob = base64.b64encode(b"\x00\x01\x02fake-audio").decode()
+    inbound = [
+        (0x1, json.dumps({"type": "audio", "data": blob, "mime": "audio/webm"}).encode()),
+        (0x1, json.dumps({"type": "commit"}).encode()),
+        (0x1, json.dumps({"type": "stop"}).encode()),
+    ]
+    conn = _FakeWSConn(inbound)
+    RealtimeBridge(mock_agent, conn).run()
+    types = [e["type"] for e in conn.sent]
+    # Audio was transcribed (offline metadata) and surfaced, then answered.
+    assert "transcript" in types
+    assert "final" in types and "done" in types
+
+
 def _ws_handshake(host, port, path="/api/voice/realtime"):
     import base64 as _b64
     import os as _os
