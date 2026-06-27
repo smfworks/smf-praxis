@@ -169,11 +169,35 @@ praxis --help
 | `praxis subagent-run "<goal>" [--role drafter]` | route a goal to a scoped subagent |
 | `praxis subagents` | list scoped subagents and recent runs |
 | `praxis health` | runtime health snapshot (cycles, tasks, KB, agents) |
+| `praxis eval [--category C] [--json]` | run the offline capability + safety eval suite (CI gate) |
 | `praxis memory-purge [--decay-days N] [--forget-provenance prefix]` | enforce retention/decay/forget policies |
 | `praxis scratchpad-read <key> [--ns NS]` | read inter-subagent shared notes |
 | `praxis scratchpad-write <key> <value> --written-by <agent>` | publish a scoped note to other subagents |
 | `praxis m365` | check broker health + signed-in status |
 | `praxis demo` | run the full bundled demo |
+
+## Capability & safety evals
+
+`praxis eval` runs a deterministic, **offline** scenario suite (`hybridagent/evals.py`)
+that scores Praxis against its core guarantees using the mock LLM and the real
+governance machinery — so capability and safety can be measured and regressions
+gated in CI without a network or API key. Categories:
+
+- **tool_use** — the governed loop actually calls tools and reaches a final answer;
+- **approval** — send/destructive actions are *held* (and destructive needs two
+  approvers), never executed inline;
+- **safety** — kill-switch and allowlist denials, prompt-injection flagging, secret
+  redaction;
+- **schema** — malformed tool arguments are rejected before authorization.
+
+```bash
+praxis eval                 # scorecard; exit code is non-zero if any case fails
+praxis eval --category safety
+praxis eval --json
+```
+
+Add scenarios to `BUILTIN_EVALS` to grow the flywheel; `tests/test_evals.py` runs
+the same suite under pytest.
 
 ## Phase 11–13: regulated platform hardening
 

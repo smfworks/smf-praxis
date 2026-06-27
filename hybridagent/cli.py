@@ -364,6 +364,17 @@ def cmd_health(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    from .evals import run_evals
+    report = run_evals(category=args.category)
+    if getattr(args, "json", False):
+        import json
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(report.render())
+    return 0 if report.passed else 1
+
+
 def cmd_memory_purge(args: argparse.Namespace) -> int:
     from .memory import Memory
     from .persistence import Store
@@ -663,6 +674,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     phl = sub.add_parser("health", help="render runtime health/metrics snapshot")
     phl.set_defaults(func=cmd_health)
+
+    pev = sub.add_parser("eval", help="run the offline capability + safety eval suite")
+    pev.add_argument("--category", default=None,
+                     help="only run cases in this category "
+                          "(tool_use, approval, safety, schema)")
+    pev.add_argument("--json", action="store_true", help="emit the scorecard as JSON")
+    pev.set_defaults(func=cmd_eval)
 
     pmp = sub.add_parser("memory-purge",
                          help="purge expired/old memory by retention policy")
