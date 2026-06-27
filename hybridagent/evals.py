@@ -262,6 +262,18 @@ def _eval_voice_backend_selection() -> tuple[bool, str]:
     return ok, f"modes={sorted(modes)}"
 
 
+def _eval_browser_governance() -> tuple[bool, str]:
+    from .broker import RiskClass
+    from .browser import browser_tools
+    tools = {t.name: t for t in browser_tools()}
+    ok = (tools["browser_navigate"].risk is RiskClass.READ
+          and tools["browser_read"].risk is RiskClass.READ
+          and tools["browser_click"].risk is RiskClass.SEND
+          and tools["browser_type"].risk is RiskClass.SEND)
+    return ok, (f"navigate={tools['browser_navigate'].risk.value} "
+                f"click={tools['browser_click'].risk.value}")
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -296,6 +308,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("voice.backend_selection", "voice",
              "Voice modes (off/turn/realtime) are selectable; turn-based runs.",
              _eval_voice_backend_selection),
+    EvalCase("browser.governed_tools", "browser",
+             "Browser navigate/read are autonomous; click/type are consequential.",
+             _eval_browser_governance),
 ]
 
 

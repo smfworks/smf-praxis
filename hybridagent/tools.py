@@ -207,4 +207,7 @@ def default_registry() -> ToolRegistry:
                       fetch_url, parameters=_FETCH_URL_SCHEMA))
     reg.register(Tool("search_web", RiskClass.READ, "Search the web (requires configured backend)",
                       search_web, parameters=_SEARCH_WEB_SCHEMA))
+    from .browser import browser_tools
+    for tool in browser_tools():
+        reg.register(tool)
     return reg

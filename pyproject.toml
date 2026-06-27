@@ -48,6 +48,10 @@ fast = ["numpy>=1.24"]
 # consume external MCP servers. Optional; hybridagent.mcp_adapter degrades
 # gracefully (clear ImportError) when this extra is not installed.
 mcp = ["mcp>=1.0"]
+# Governed computer/browser-use tools (navigate is read, click/type are held).
+# Navigation/read fall back to a stdlib fetch when absent; interaction needs a
+# real browser, so this installs Playwright.
+browser = ["playwright>=1.40"]
 
 [project.scripts]
 praxis = "hybridagent.cli:main"

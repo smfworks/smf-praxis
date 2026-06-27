@@ -370,6 +370,28 @@ Endpoints: `GET/POST /api/voice` (status + mode), `POST /api/transcribe`
 still route through the broker — consequential actions are held for approval like
 any other turn.
 
+## Computer / browser use
+
+Praxis ships **governed browser-use tools** that flow through the same broker as
+everything else, so the model can browse autonomously but **must get approval to
+act**:
+
+- `browser_navigate`, `browser_read`, `browser_find` — **READ** (autonomous).
+- `browser_click`, `browser_type` — **SEND** (consequential): the broker **holds
+  them for approval** before anything is submitted.
+
+The backend is **Playwright** (the optional `[browser]` extra) when installed;
+otherwise navigation/reading fall back to a dependency-free stdlib fetch +
+HTML-to-text extraction, and interaction reports that it needs the extra. In
+Agent mode the model can `browser_navigate` to a page and read it, then a
+`browser_click` on "Submit" surfaces in the **Approvals** panel — exactly the
+"autonomy for preparation, approval for consequence" principle, applied to the
+web.
+
+```bash
+pip install "praxis-agent[browser]"   # enables real click/type via Playwright
+```
+
 ## Knowledge base (RAG)
 
 Praxis grounds its work in your documents. Ingested files are chunked, embedded,
