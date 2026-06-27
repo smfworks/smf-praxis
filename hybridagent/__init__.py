@@ -37,6 +37,7 @@ from .persistence import Store
 from .planner import Plan, Planner, Step
 from .rag import Rag, RetrievedChunk, chunk_text
 from .reflection import Reflector
+from .reflexion import ReflexionConfig, ReflexiveChatAgent
 from .router import ModelRouter, classify_sensitivity
 from .router_model import RouterModel
 from .scratchpad import Scratchpad, ScratchpadEntry
@@ -62,6 +63,7 @@ __all__ = [
     "Rag", "RetrievedChunk", "chunk_text", "ingest",
     "ModelRouter", "classify_sensitivity",
     "RouterModel",
+    "ReflexiveChatAgent", "ReflexionConfig",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
     "VerificationResult", "generate_json",

@@ -307,6 +307,36 @@ def _eval_browser_governance() -> tuple[bool, str]:
                 f"click={tools['browser_click'].risk.value}")
 
 
+def _eval_reflexion_recovers() -> tuple[bool, str]:
+    from .chat_agent import GovernedChatAgent
+    from .reflexion import ReflexiveChatAgent
+
+    class _StuckThenRecovers:
+        """Loops on an unknown tool until a reflection is injected, then answers."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat_tools(self, messages, tools=None, system=None):
+            self.calls += 1
+            if system and "Self-reflection" in system:
+                return {"text": "Recovered: here is a direct answer.",
+                        "tool_calls": []}
+            return {"text": "",
+                    "tool_calls": [{"id": "c1", "name": "ghost_tool", "args": {}}]}
+
+    broker = GovernanceBroker(GovernancePolicy())
+    llm = _StuckThenRecovers()
+    inner = GovernedChatAgent(llm, _registry(_READ), broker, max_steps=2)
+    events = list(ReflexiveChatAgent(inner, max_reflections=1).run(
+        [{"role": "user", "content": "do the thing"}]))
+    types = _types(events)
+    final = next((e for e in reversed(events) if e.type == "final"), None)
+    ok = ("reflection" in types and final is not None
+          and str(final.data.get("text", "")).startswith("Recovered"))
+    return ok, f"types={types} calls={llm.calls}"
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -348,6 +378,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("browser.governed_tools", "browser",
              "Browser navigate/read are autonomous; click/type are consequential.",
              _eval_browser_governance),
+    EvalCase("reflexion.recovers_from_deadend", "reflexion",
+             "A dead-ended, side-effect-free turn is retried once with an injected "
+             "self-reflection and recovers.", _eval_reflexion_recovers),
 ]
 
 
