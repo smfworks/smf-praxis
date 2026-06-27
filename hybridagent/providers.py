@@ -14,6 +14,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from .logging_util import get_logger
@@ -330,6 +331,121 @@ def _chat_messages_anthropic(root: str, model: str, messages: list[dict],
     if not isinstance(blocks, list):
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
     return "".join(block.get("text", "") for block in blocks)
+
+
+def chat_messages_stream(provider: Provider, model: str, messages: list[dict],
+                         system: str | None = None, api_key: str | None = None,
+                         base_url: str | None = None, timeout: float = 60.0,
+                         temperature: float = 0.3,
+                         max_tokens: int = 1024) -> Iterator[str]:
+    """Yield assistant text deltas from a streaming chat completion.
+
+    Mirrors :func:`chat_messages` but requests ``stream: true`` and yields
+    incremental text pieces as they arrive. Connection/HTTP failures raise
+    ``RuntimeError`` *before the first token*, so a caller can fall back to
+    another candidate model; a failure mid-stream propagates (the caller has
+    already emitted partial output and must not silently switch models).
+    """
+    root = (base_url or provider.base_url).rstrip("/")
+    if provider.compatibility == "anthropic":
+        yield from _chat_messages_stream_anthropic(
+            root, model, messages, system, api_key, timeout, temperature, max_tokens)
+    else:
+        yield from _chat_messages_stream_openai(
+            root, model, messages, system, api_key, timeout, temperature, max_tokens)
+
+
+def _open_stream(url: str, headers: dict, payload: dict,
+                 timeout: float) -> Iterator[str]:
+    """POST ``payload`` and yield decoded response lines without buffering.
+
+    Connection-time failures raise ``RuntimeError`` (mapping HTTP/URL errors the
+    same way :func:`_post` does) before any line is yielded.
+    """
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:300]
+        raise RuntimeError(f"provider HTTP {e.code}: {detail}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"provider unreachable: {e.reason}") from e
+    try:
+        for raw in resp:
+            yield raw.decode("utf-8", "replace")
+    finally:
+        resp.close()
+
+
+def _iter_sse_data(lines: Iterator[str]) -> Iterator[str]:
+    """Yield the payload of each ``data:`` line in an SSE stream (skips [DONE])."""
+    for raw in lines:
+        line = raw.strip()
+        if not line or not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            return
+        yield data
+
+
+def _chat_messages_stream_openai(root: str, model: str, messages: list[dict],
+                                 system: str | None, api_key: str | None,
+                                 timeout: float, temperature: float,
+                                 max_tokens: int) -> Iterator[str]:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    wire: list[dict] = []
+    if system:
+        wire.append({"role": "system", "content": system})
+    wire.extend(_normalize_turns(messages))
+    payload = {"model": model, "messages": wire, "temperature": temperature,
+               "max_tokens": max_tokens, "stream": True}
+    stream = _open_stream(f"{root}/chat/completions", headers, payload, timeout)
+    for data in _iter_sse_data(stream):
+        try:
+            obj = json.loads(data)
+            piece = obj["choices"][0].get("delta", {}).get("content")
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
+        if piece:
+            yield piece
+
+
+def _chat_messages_stream_anthropic(root: str, model: str, messages: list[dict],
+                                    system: str | None, api_key: str | None,
+                                    timeout: float, temperature: float,
+                                    max_tokens: int) -> Iterator[str]:
+    headers = {"Content-Type": "application/json",
+               "anthropic-version": "2023-06-01"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    sys_parts = [system] if system else []
+    conv: list[dict] = []
+    for turn in _normalize_turns(messages):
+        if turn["role"] == "system":
+            sys_parts.append(turn["content"])
+            continue
+        conv.append(turn)
+    payload: dict = {"model": model, "max_tokens": max_tokens,
+                     "temperature": temperature,
+                     "messages": conv or [{"role": "user", "content": ""}],
+                     "stream": True}
+    merged_system = "\n\n".join(p for p in sys_parts if p)
+    if merged_system:
+        payload["system"] = merged_system
+    stream = _open_stream(f"{root}/messages", headers, payload, timeout)
+    for data in _iter_sse_data(stream):
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "content_block_delta":
+            piece = (obj.get("delta") or {}).get("text")
+            if piece:
+                yield piece
 
 
 def embed(provider: Provider, model: str, texts: list[str],

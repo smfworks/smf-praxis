@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from . import config as cfg
 from .agent import PraxisAgent
@@ -614,6 +614,45 @@ function useChip(el){ const ta = document.getElementById('message'); ta.value = 
 
 function setBusy(b){ document.getElementById('send').disabled = b; }
 
+async function streamChat(conv, wire, typing){
+  let acc = '', model = '', bubbleEl = null, metaEl = null, raf = false, finished = false;
+  function ensureBubble(){
+    if(bubbleEl) return;
+    if(typing){ typing.remove(); typing = null; }
+    const row = document.createElement('div'); row.className = 'msg agent';
+    row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="bubble"></div><div class="meta"></div></div>';
+    messagesEl.appendChild(row);
+    bubbleEl = row.querySelector('.bubble'); metaEl = row.querySelector('.meta');
+  }
+  function flush(){ ensureBubble(); bubbleEl.innerHTML = renderMarkdown(acc || ''); metaEl.textContent = (model ? model+' · ' : '') + fmtTime(); scrollDown(); }
+  function paint(){ if(raf) return; raf = true; requestAnimationFrame(()=>{ raf = false; flush(); }); }
+  try {
+    const resp = await fetch('/api/chat/stream', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages: wire})});
+    if(!resp.ok || !resp.body) throw new Error('HTTP '+resp.status);
+    const reader = resp.body.getReader(); const decoder = new TextDecoder(); let buf = '';
+    while(!finished){
+      const {value, done} = await reader.read();
+      if(done) break;
+      buf += decoder.decode(value, {stream:true});
+      let idx;
+      while((idx = buf.indexOf('\n\n')) !== -1){
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const dline = frame.split('\n').find(l => l.startsWith('data:'));
+        if(!dline) continue;
+        let ev; try { ev = JSON.parse(dline.slice(5).trim()); } catch(_){ continue; }
+        if(ev.type === 'meta'){ model = ev.model || ''; }
+        else if(ev.type === 'delta'){ acc += ev.text || ''; paint(); }
+        else if(ev.type === 'error'){ acc += (acc ? '\n\n' : '') + '⚠️ ' + (ev.error || 'stream error'); paint(); }
+        else if(ev.type === 'done'){ finished = true; break; }
+      }
+    }
+  } catch(e){ acc = acc || ('Error: ' + e); }
+  if(!acc) acc = 'No response.';
+  flush();
+  conv.messages.push({role:'assistant', content: acc, model: model, ts: Date.now()});
+  conv.updated = Date.now(); persistConversations(); renderHistList();
+}
+
 async function sendMessage(ev){
   ev.preventDefault();
   const ta = document.getElementById('message');
@@ -627,12 +666,7 @@ async function sendMessage(ev){
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
       const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
-      const res = await api('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages: wire})});
-      typing.remove();
-      const reply = res.text || res.error || 'No response.';
-      conv.messages.push({role:'assistant', content: reply, model: res.model || '', ts: Date.now()});
-      conv.updated = Date.now(); persistConversations(); renderHistList();
-      appendAgent(reply, res.model || '');
+      await streamChat(conv, wire, typing);
     } else if(mode === 'ask'){
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
       typing.remove();
@@ -963,6 +997,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 approved = self.daemon.approve(approval_id)
                 self._json_response({"approved": bool(approved), "approval_id": approval_id})
                 return
+            if self.path == "/api/chat/stream":
+                self._handle_chat_stream()
+                return
             if self.path == "/api/chat":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1083,6 +1120,46 @@ class _StatusHandler(BaseHTTPRequestHandler):
             pass
         finally:
             self.daemon._sse_unsubscribe(queue)
+
+    def _handle_chat_stream(self) -> None:
+        # A streamed chat reply is a terminal response (we close on completion),
+        # so don't let the handler attempt keep-alive reuse afterward.
+        self.close_connection = True
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            payload = json.loads(self.rfile.read(length).decode() or "{}")
+        except ValueError:
+            payload = {}
+        messages = payload.get("messages") or []
+        if not isinstance(messages, list):
+            messages = []
+        system = payload.get("system")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        # Disable proxy buffering so deltas reach the browser as they are written.
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def emit(obj: dict) -> None:
+            self.wfile.write(f"data: {json.dumps(obj, default=str)}\n\n".encode())
+            self.wfile.flush()
+
+        try:
+            emit({"type": "meta",
+                  "model": cfg.get_default_model() or "mock (offline)"})
+            for piece in self.daemon.chat_stream(messages, system=system):
+                if piece:
+                    emit({"type": "delta", "text": piece})
+            emit({"type": "done"})
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as exc:
+            try:
+                emit({"type": "error", "error": str(exc)})
+            except OSError:
+                pass
 
     def _handle_upload(self) -> None:
         # Uploads terminate their connection: we may reject before draining the
@@ -1425,6 +1502,19 @@ class Daemon:
         text = self.agent.llm.chat(messages, system=system or _CHAT_SYSTEM,
                                    role="general")
         return {"text": text, "model": cfg.get_default_model() or "mock (offline)"}
+
+    def chat_stream(self, messages: list[dict],
+                    system: str | None = None) -> Iterator[str]:
+        """Streaming multi-turn chat — yields assistant text deltas.
+
+        Stateless like :meth:`chat` (the browser owns history). The model label
+        is read from config by the HTTP layer and sent as a leading meta event
+        ahead of the first delta.
+        """
+        self._ensure_agent()
+        assert self.agent is not None
+        yield from self.agent.llm.chat_stream(
+            messages, system=system or _CHAT_SYSTEM, role="general")
 
     def model_info(self) -> dict:
         """Current default model + whether a real provider is configured."""

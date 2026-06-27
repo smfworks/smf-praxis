@@ -566,3 +566,62 @@ def test_parse_multipart_rejects_oversized_headers(tmp_path):
     with pytest.raises(_UploadError):
         _parse_multipart_stream(io.BytesIO(body), boundary, len(body),
                                 lambda name: tmp_path / name)
+
+
+def test_llm_chat_stream_mock_chunks():
+    llm = LLMClient(mode="mock")
+    messages = [{"role": "user", "content": "stream hello world"}]
+    pieces = list(llm.chat_stream(messages))
+    # The mock "streams" by chunking — more than one piece, and the concatenation
+    # is byte-for-byte identical to the non-streaming reply.
+    assert len(pieces) > 1
+    assert "".join(pieces) == llm.chat(messages)
+    assert "stream hello world" in "".join(pieces)
+
+
+def test_daemon_chat_stream_endpoint(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        body = json.dumps({"messages": [
+            {"role": "user", "content": "stream hello dashboard"},
+        ]}).encode()
+        req = urllib.request.Request(
+            f"{base}/api/chat/stream", data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            assert resp.headers.get_content_type() == "text/event-stream"
+            raw = resp.read().decode()
+        events = [json.loads(line[len("data:"):].strip())
+                  for line in raw.splitlines() if line.startswith("data:")]
+        types = [e["type"] for e in events]
+        # A leading meta(model), at least one delta, and a terminal done.
+        assert types[0] == "meta" and "model" in events[0]
+        assert "delta" in types
+        assert types[-1] == "done"
+        text = "".join(e.get("text", "") for e in events if e["type"] == "delta")
+        assert "stream hello dashboard" in text
+    finally:
+        daemon._stop_status_server()
+
+
+def test_dashboard_serves_streaming_ui(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        with urllib.request.urlopen(f"{base}/") as resp:
+            html = resp.read().decode("utf-8")
+        # The chat composer must consume the streaming endpoint live.
+        assert "function streamChat" in html
+        assert "/api/chat/stream" in html
+    finally:
+        daemon._stop_status_server()
