@@ -289,8 +289,14 @@ praxis subagents
 praxis approvals
 ```
 
-The current orchestrator is synchronous and deterministic; the persistent run
-records are ready for a future concurrent worker pool.
+Runs can also execute **concurrently** over the shared, lock-guarded store with
+`Orchestrator.run_many(...)` or `praxis fanout`, so several scoped subagents work
+in parallel while every decision, approval, and compliance event still flows
+through the same governance spine.
+
+```bash
+praxis fanout "research AdventHealth" "draft the follow-up" "audit the contract"
+```
 
 ## Grounded, non-hallucinating answers
 

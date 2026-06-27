@@ -500,6 +500,17 @@ def cmd_subagent_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fanout(args: argparse.Namespace) -> int:
+    from .orchestrator import Orchestrator
+    from .persistence import Store
+    runs = Orchestrator(Store.open()).run_many(args.goals, max_workers=args.workers)
+    for run in runs:
+        print(f"{run.run_id} [{run.status}] role={run.role} agent={run.agent_id}")
+    failed = sum(1 for r in runs if r.status == "failed")
+    print(f"\n{len(runs)} subagent(s) ran concurrently; {failed} failed.")
+    return 1 if failed else 0
+
+
 def cmd_subagents(args: argparse.Namespace) -> int:
     from .orchestrator import AgentPool, Orchestrator
     from .persistence import Store
@@ -677,6 +688,13 @@ def build_parser() -> argparse.ArgumentParser:
                      choices=["researcher", "drafter", "compliance", "predictor"],
                      help="force a subagent role; default predicts from the goal")
     psa.set_defaults(func=cmd_subagent_run)
+
+    pfo = sub.add_parser("fanout",
+                         help="run several goals concurrently as scoped subagents")
+    pfo.add_argument("goals", nargs="+", help="goals to run in parallel")
+    pfo.add_argument("--workers", type=int, default=4,
+                     help="max concurrent workers (default 4)")
+    pfo.set_defaults(func=cmd_fanout)
 
     psl = sub.add_parser("subagents", help="list scoped subagents and recent runs")
     psl.add_argument("--limit", type=int, default=20)

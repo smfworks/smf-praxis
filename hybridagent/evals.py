@@ -226,6 +226,26 @@ def _eval_context_compaction() -> tuple[bool, str]:
     return ok, f"in={len(msgs)} out={len(out)} chars={total_chars(out)}"
 
 
+def _eval_concurrent_orchestration() -> tuple[bool, str]:
+    import tempfile
+
+    from .orchestrator import Orchestrator
+    from .persistence import Store
+    with tempfile.TemporaryDirectory() as d:
+        store = Store.open(f"{d}/praxis.db")
+        try:
+            orch = Orchestrator(store)
+            runs = orch.run_many([f"research topic {i}" for i in range(5)],
+                                 max_workers=5)
+            persisted = {r["run_id"] for r in orch.list_runs(limit=50)}
+            ok = (len(runs) == 5
+                  and all(r.status in ("completed", "waiting_approval") for r in runs)
+                  and all(r.run_id in persisted for r in runs))
+            return ok, f"runs={len(runs)} persisted={len(persisted)}"
+        finally:
+            store.close()
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -254,6 +274,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("context.compaction", "context",
              "An over-budget conversation is compacted (recent kept, older summarized).",
              _eval_context_compaction),
+    EvalCase("orchestration.concurrent_runs", "orchestration",
+             "Multiple scoped subagents run concurrently and all persist.",
+             _eval_concurrent_orchestration),
 ]
 
 

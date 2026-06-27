@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .agent import PraxisAgent
@@ -171,6 +172,31 @@ class Orchestrator:
                                              tools=spec.tools, status="error",
                                              load=0)
             return SubagentRun(run_id, spec.agent_id, spec.role, goal, "failed")
+
+    def run_many(self, goals: "list[str | tuple[str, str | None]]", *,
+                 max_workers: int = 4, injection_flagged: bool = False,
+                 parent_run_id: str = "", depth: int = 0) -> list[SubagentRun]:
+        """Execute several subagent goals **concurrently** over the shared store.
+
+        Each entry is a goal string or a ``(goal, role)`` tuple; the role is
+        predicted from the goal when omitted. Results preserve input order. The
+        store is lock-guarded (WAL + busy_timeout), so writes serialize safely
+        while the agents' reasoning and tool work run in parallel — every
+        decision, approval, and compliance event still flows through the same
+        governance spine.
+        """
+        items = list(goals)
+        if not items:
+            return []
+        workers = max(1, min(max_workers, len(items)))
+
+        def _one(item: "str | tuple[str, str | None]") -> SubagentRun:
+            goal, role = item if isinstance(item, tuple) else (item, None)
+            return self.run(goal, role, injection_flagged=injection_flagged,
+                            parent_run_id=parent_run_id, depth=depth)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(_one, items))
 
     def list_runs(self, limit: int = 100) -> list[dict]:
         return self.store.list_subagent_runs(limit)
