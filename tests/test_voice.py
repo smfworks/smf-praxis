@@ -54,4 +54,13 @@ def test_realtime_unavailable_with_reason(tmp_path, monkeypatch):
     _home(tmp_path, monkeypatch)
     rt = voice.RealtimeVoice(voice.VoiceConfig.load())
     assert rt.available() is False
-    assert "WebSocket" in rt.reason()
+    assert "realtime" in rt.reason().lower()
+
+
+def test_realtime_available_gating(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    assert voice.realtime_available() is False
+    monkeypatch.setenv("PRAXIS_VOICE_REALTIME", "1")
+    assert voice.realtime_available() is True
+    modes = {m["id"]: m for m in voice.voice_status()["modes"]}
+    assert modes["realtime"]["available"] is True

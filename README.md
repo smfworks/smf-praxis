@@ -338,9 +338,13 @@ the broker are unchanged either way.
   and spoken replies out (text-to-speech via an OpenAI-compatible `/audio/speech`
   call). Degrades to an honest offline preview (metadata STT + a silent WAV) when
   no STT/TTS provider is configured.
-- **realtime** — advertised in the selector but **not yet enabled**; it reports a
-  clear reason until a WebSocket/WebRTC bridge is wired, so it drops in behind the
-  same interface later with no operator-facing change.
+- **realtime** — a **live governed session over a (hand-rolled, dependency-free)
+  WebSocket** at `/api/voice/realtime`. Each turn runs the same governed agent
+  loop, so consequential tools are still **held for approval**, and the reply is
+  spoken back. Enable it with a configured `agents.voice.realtime` model or
+  `PRAXIS_VOICE_REALTIME=1` (offline governed loopback). The loopback is the
+  upstream today; an OpenAI Realtime audio-streaming bridge can replace the
+  per-turn responder behind the same protocol with no client change.
 
 ```json
 "agents": {

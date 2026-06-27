@@ -257,9 +257,9 @@ def _eval_voice_backend_selection() -> tuple[bool, str]:
     )
     modes = {m["id"]: m for m in voice_status()["modes"]}
     ok = (modes[OFF]["available"] and modes[TURN]["available"]
-          and modes[REALTIME]["available"] is False
+          and REALTIME in modes
           and get_voice_backend(VoiceConfig(mode=TURN)).mode == TURN)
-    return ok, f"turn={modes[TURN]['available']} realtime={modes[REALTIME]['available']}"
+    return ok, f"modes={sorted(modes)}"
 
 
 BUILTIN_EVALS: list[EvalCase] = [
@@ -294,7 +294,7 @@ BUILTIN_EVALS: list[EvalCase] = [
              "Multiple scoped subagents run concurrently and all persist.",
              _eval_concurrent_orchestration),
     EvalCase("voice.backend_selection", "voice",
-             "Voice modes are selectable; realtime is advertised but not yet enabled.",
+             "Voice modes (off/turn/realtime) are selectable; turn-based runs.",
              _eval_voice_backend_selection),
 ]
 

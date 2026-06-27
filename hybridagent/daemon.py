@@ -737,6 +737,41 @@ async function agentChat(conv, wire, typing){
   speak(out);
 }
 
+function playAudioB64(b64, mime){
+  try {
+    const bin = atob(b64); const arr = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr], {type: mime || 'audio/wav'}));
+    const a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); a.play().catch(()=>{});
+  } catch(_){}
+}
+function realtimeTurn(conv, text, typing){
+  return new Promise((resolve) => {
+    let steps = null, finalText = '', finished = false; const cards = {};
+    function ensureSteps(){ if(steps) return; if(typing){ typing.remove(); typing = null; } const row = document.createElement('div'); row.className = 'msg agent'; row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="steps"></div></div>'; messagesEl.appendChild(row); steps = row.querySelector('.steps'); }
+    function addStep(html, cls){ ensureSteps(); const s = document.createElement('div'); s.className = 'step ' + (cls||''); s.innerHTML = html; steps.appendChild(s); scrollDown(); return s; }
+    function setCard(tool, html, cls){ const c = cards[tool]; if(c){ c.className = 'step ' + cls; c.innerHTML = html; } else { cards[tool] = addStep(html, cls); } }
+    function finish(){ if(finished) return; finished = true; if(typing){ typing.remove(); typing = null; } const out = finalText || '(no response)'; appendAgent(out, 'realtime'); conv.messages.push({role:'assistant', content: out, model: 'realtime', ts: Date.now()}); conv.updated = Date.now(); persistConversations(); renderHistList(); try { ws.close(); } catch(_){} resolve(); }
+    let ws;
+    try { ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/api/voice/realtime'); }
+    catch(e){ finalText = 'Realtime error: ' + e; finish(); return; }
+    ws.onopen = () => { ws.send(JSON.stringify({type:'text', text})); ws.send(JSON.stringify({type:'commit'})); };
+    ws.onerror = () => { finalText = finalText || 'Realtime connection failed.'; finish(); };
+    ws.onclose = () => finish();
+    ws.onmessage = (e) => {
+      let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
+      if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
+      else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
+      else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
+      else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
+      else if(ev.type === 'final'){ finalText = ev.text || ''; }
+      else if(ev.type === 'audio'){ playAudioB64(ev.data, ev.mime); }
+      else if(ev.type === 'error'){ finalText = (finalText?finalText+'\n\n':'') + '⚠️ ' + (ev.error || 'error'); }
+      else if(ev.type === 'done'){ finish(); }
+    };
+  });
+}
+
 async function sendMessage(ev){
   ev.preventDefault();
   const ta = document.getElementById('message');
@@ -745,7 +780,12 @@ async function sendMessage(ev){
   appendUser(text);
   const typing = appendTyping(); setBusy(true);
   try {
-    if(mode === 'chat'){
+    if(voiceMode === 'realtime'){
+      const conv = ensureConversation();
+      conv.messages.push({role:'user', content:text, ts: Date.now()});
+      conv.updated = Date.now(); persistConversations(); renderHistList();
+      await realtimeTurn(conv, text, typing);
+    } else if(mode === 'chat'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
@@ -1251,6 +1291,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 body = json.dumps(self.daemon.voice_status(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/voice/realtime":
+                self._handle_realtime_ws()
+                return
             elif self.path == "/events":
                 self._serve_sse()
                 return
@@ -1379,6 +1422,29 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 emit({"type": "error", "error": str(exc)})
             except OSError:
                 pass
+
+    def _handle_realtime_ws(self) -> None:
+        # Hand-rolled WebSocket upgrade (the daemon's http.server has no WS), then
+        # run the governed realtime bridge over the hijacked socket.
+        from .wsutil import WebSocketConn, accept_key, is_ws_upgrade
+        if not is_ws_upgrade(self.headers):
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"expected websocket upgrade")
+            return
+        self.close_connection = True
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept",
+                         accept_key(self.headers.get("Sec-WebSocket-Key", "")))
+        self.end_headers()
+        self.wfile.flush()
+        conn = WebSocketConn(self.rfile, self.wfile)
+        try:
+            self.daemon.run_realtime_session(conn)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def _handle_transcribe(self) -> None:
         # The browser POSTs the recorded audio blob as the raw request body with
@@ -1817,6 +1883,12 @@ class Daemon:
     def synthesize(self, text: str) -> Any:
         from . import voice
         return voice.synthesize_text(text)
+
+    def run_realtime_session(self, conn: Any) -> None:
+        from .voice import RealtimeBridge
+        self._ensure_agent()
+        assert self.agent is not None
+        RealtimeBridge(self.agent, conn).run()
 
     def providers_catalog(self) -> list[dict]:
         """Provider picker payload for the dashboard (no secrets)."""

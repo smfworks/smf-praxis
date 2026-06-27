@@ -17,7 +17,9 @@ offline "preview" mode and ``realtime`` stays disabled.
 """
 from __future__ import annotations
 
+import base64
 import io
+import json
 import os
 import tempfile
 import wave
@@ -180,15 +182,27 @@ class TurnBasedVoice(VoiceBackend):
                            detail="tts-offline (no TTS provider configured)")
 
 
+def realtime_available(config: "VoiceConfig | None" = None) -> bool:
+    """Realtime is selectable when a realtime model is configured, or when the
+    offline governed loopback is explicitly enabled (PRAXIS_VOICE_REALTIME=1)."""
+    config = config or VoiceConfig.load()
+    if os.environ.get("PRAXIS_VOICE_REALTIME", "").lower() in ("1", "true", "on"):
+        return True
+    return bool(config.realtime_provider and config.realtime_model)
+
+
 class RealtimeVoice(VoiceBackend):
     mode = REALTIME
 
     def available(self) -> bool:
-        return False
+        return realtime_available(self.config)
 
     def reason(self) -> str:
-        return ("Realtime voice needs a WebSocket/WebRTC bridge to a realtime "
-                "model — not yet enabled. Use turn-based for now.")
+        if self.available():
+            return "Live governed voice session over WebSocket."
+        return ("Realtime needs a realtime model + bridge — set agents.voice."
+                "realtime, or PRAXIS_VOICE_REALTIME=1 for the offline governed "
+                "loopback, then select it here.")
 
 
 def get_voice_backend(config: VoiceConfig | None = None) -> VoiceBackend:
@@ -231,3 +245,99 @@ def transcribe_audio(audio: bytes, mime: str = "audio/webm") -> VoiceResult:
 def synthesize_text(text: str) -> VoiceResult:
     """Module convenience: text-to-speech via the turn-based backend."""
     return TurnBasedVoice(VoiceConfig.load()).synthesize(text)
+
+
+_REALTIME_SYSTEM = (
+    "You are Praxis in a live voice session. Be concise and conversational. You "
+    "can call tools: read and draft tools run automatically, while send and "
+    "destructive actions are held for the user's approval — never claim a held or "
+    "denied action ran."
+)
+
+
+class RealtimeBridge:
+    """Drives a governed realtime turn over a WebSocket connection.
+
+    JSON event protocol (text frames):
+      client -> {type:"text", text} | {type:"commit"} | {type:"stop"}
+      server -> {type:"ready"} | tool_call/tool_result/approval/denied/final
+                | {type:"audio", mime, data(base64)} | {type:"done"}
+                | {type:"error", error}
+
+    Each ``commit`` runs the same :class:`~hybridagent.chat_agent.GovernedChatAgent`
+    the Agent surface uses, so a live voice session is governed identically —
+    consequential tools are still held for approval. The upstream today is the
+    offline governed loopback; an OpenAI Realtime audio bridge can replace the
+    per-commit responder behind this exact protocol with no client change.
+    """
+
+    MAX_TURNS = 50
+
+    def __init__(self, agent, conn, system: str | None = None) -> None:
+        self.agent = agent
+        self.conn = conn
+        self.system = system or _REALTIME_SYSTEM
+        self.messages: list[dict] = []
+
+    def _send(self, obj: dict) -> None:
+        try:
+            self.conn.send_text(json.dumps(obj, default=str))
+        except OSError:
+            pass
+
+    def run(self) -> None:
+        from .wsutil import OP_CLOSE, OP_PING
+        self._send({"type": "ready", "mode": "loopback"})
+        pending: list[str] = []
+        turns = 0
+        while turns < self.MAX_TURNS:
+            frame = self.conn.recv()
+            if frame is None:
+                break
+            opcode, data = frame
+            if opcode == OP_CLOSE:
+                break
+            if opcode == OP_PING:
+                self.conn.pong(data)
+                continue
+            try:
+                ev = json.loads(data.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            etype = ev.get("type")
+            if etype == "text":
+                pending.append(str(ev.get("text", "")))
+            elif etype == "stop":
+                break
+            elif etype == "commit":
+                text = " ".join(p for p in pending if p).strip()
+                pending = []
+                if not text:
+                    continue
+                self.messages.append({"role": "user", "content": text})
+                self._respond()
+                turns += 1
+        self.conn.close()
+
+    def _respond(self) -> None:
+        from .chat_agent import GovernedChatAgent
+        engine = GovernedChatAgent(
+            self.agent.llm, self.agent.registry, self.agent.broker,
+            memory=getattr(self.agent, "memory", None))
+        final = ""
+        try:
+            for ev in engine.run(list(self.messages), system=self.system):
+                self._send({"type": ev.type, **ev.data})
+                if ev.type == "final":
+                    final = ev.data.get("text", "")
+        except Exception as exc:  # a model/tool failure must not kill the socket
+            self._send({"type": "error", "error": str(exc)})
+            self._send({"type": "done"})
+            return
+        if final:
+            self.messages.append({"role": "assistant", "content": final})
+            res = TurnBasedVoice(VoiceConfig.load()).synthesize(final)
+            self._send({"type": "audio", "mime": res.mime,
+                        "data": base64.b64encode(res.audio).decode(),
+                        "detail": res.detail})
+        self._send({"type": "done"})

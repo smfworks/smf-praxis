@@ -831,3 +831,119 @@ def test_daemon_transcribe_endpoint(tmp_store, mock_agent):
         assert "text" in res
     finally:
         daemon._stop_status_server()
+
+
+class _FakeWSConn:
+    """In-memory WebSocket connection for unit-testing the realtime bridge."""
+
+    def __init__(self, inbound):
+        self._inbound = list(inbound)
+        self.sent = []
+        self.open = True
+
+    def recv(self):
+        return self._inbound.pop(0) if self._inbound else None
+
+    def send_text(self, text):
+        self.sent.append(json.loads(text))
+
+    def pong(self, data=b""):
+        pass
+
+    def close(self):
+        self.open = False
+
+
+def test_realtime_bridge_governs_tools(mock_agent):
+    from hybridagent.voice import RealtimeBridge
+    inbound = [
+        (0x1, json.dumps({"type": "text", "text": "use the send tool now"}).encode()),
+        (0x1, json.dumps({"type": "commit"}).encode()),
+        (0x1, json.dumps({"type": "stop"}).encode()),
+    ]
+    conn = _FakeWSConn(inbound)
+    RealtimeBridge(mock_agent, conn).run()
+    types = [e["type"] for e in conn.sent]
+    assert types[0] == "ready"
+    # 'send' is a SEND tool -> held for approval, never executed inline.
+    assert "approval" in types
+    assert "tool_result" not in types
+    assert "done" in types
+    assert conn.open is False
+
+
+def _ws_handshake(host, port, path="/api/voice/realtime"):
+    import base64 as _b64
+    import os as _os
+    import socket as _socket
+
+    from hybridagent.wsutil import accept_key
+    sock = _socket.create_connection((host, port))
+    key = _b64.b64encode(_os.urandom(16)).decode()
+    sock.sendall(
+        (f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+         f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+    head = b""
+    while b"\r\n\r\n" not in head:
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        head += chunk
+    assert b"101" in head.split(b"\r\n")[0]
+    assert accept_key(key).encode() in head
+    return sock
+
+
+def _send_masked(sock, obj):
+    import os as _os
+    payload = json.dumps(obj).encode()
+    mask = _os.urandom(4)
+    n = len(payload)
+    frame = bytearray([0x81])
+    if n < 126:
+        frame.append(0x80 | n)
+    elif n < 65536:
+        frame.append(0x80 | 126)
+        frame += n.to_bytes(2, "big")
+    else:
+        frame.append(0x80 | 127)
+        frame += n.to_bytes(8, "big")
+    frame += mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    sock.sendall(bytes(frame))
+
+
+def test_realtime_ws_endpoint_governed_turn(tmp_store, mock_agent, monkeypatch):
+    monkeypatch.setenv("PRAXIS_VOICE_REALTIME", "1")
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        from hybridagent.wsutil import WebSocketConn
+        sock = _ws_handshake("127.0.0.1", daemon.status_port)
+        sock.settimeout(10)
+        conn = WebSocketConn(sock.makefile("rb"), io.BytesIO())
+        _send_masked(sock, {"type": "text", "text": "please use echo to say hi"})
+        _send_masked(sock, {"type": "commit"})
+        events = []
+        for _ in range(40):
+            frame = conn.recv()
+            if frame is None:
+                break
+            opcode, data = frame
+            if opcode == 0x1:
+                ev = json.loads(data.decode())
+                events.append(ev)
+                if ev.get("type") == "done":
+                    break
+        _send_masked(sock, {"type": "stop"})
+        sock.close()
+        types = [e["type"] for e in events]
+        assert types[0] == "ready"
+        assert "tool_call" in types and "tool_result" in types
+        assert "final" in types
+        assert "audio" in types and types[-1] == "done"
+    finally:
+        daemon._stop_status_server()
