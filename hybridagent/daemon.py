@@ -209,8 +209,13 @@ header {
 .badge.ok { background: rgba(60,207,109,.15); color: var(--ok); }
 .badge.bad { background: rgba(255,90,95,.15); color: var(--bad); }
 
-main { display: grid; grid-template-columns: 1fr 22rem; gap: 1rem; padding: 1rem; max-width: 1500px; margin: 0 auto; }
-@media (max-width: 980px) { main { grid-template-columns: 1fr; } aside { order: 2; } }
+main { display: grid; grid-template-columns: 15rem 1fr 22rem; gap: 1rem; padding: 1rem; max-width: 1600px; margin: 0 auto; }
+@media (max-width: 1200px) { main { grid-template-columns: 13rem 1fr 20rem; } }
+@media (max-width: 980px) {
+  main { grid-template-columns: 1fr; }
+  aside { order: 2; }
+  #historyRail { order: 3; height: auto; max-height: 18rem; }
+}
 .panel { background: linear-gradient(180deg, var(--panel), var(--bg2)); border: 1px solid var(--border); border-radius: 1rem; box-shadow: var(--shadow); }
 .panel.pad { padding: 1rem; }
 .panel h2 { margin: 0 0 .7rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
@@ -281,6 +286,26 @@ pre.code:hover .copy { opacity: 1; }
 .send-btn:hover { transform: translateY(-1px); }
 .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
+/* chat history rail */
+.hist { display: flex; flex-direction: column; height: calc(100vh - 6.5rem); min-height: 30rem; overflow: hidden; }
+.hist-head { display: flex; align-items: center; gap: .5rem; padding: .85rem .9rem; border-bottom: 1px solid var(--border); }
+.hist-head h2 { margin: 0; flex: 1; }
+.newchat { border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: .35rem .6rem; border-radius: .6rem; font-size: .76rem; cursor: pointer; white-space: nowrap; transition: border-color .15s, color .15s; }
+.newchat:hover { border-color: var(--accent); color: #fff; }
+.hist-list { flex: 1; overflow-y: auto; padding: .5rem; display: flex; flex-direction: column; gap: .3rem; }
+.hist-list::-webkit-scrollbar { width: 10px; }
+.hist-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+.hist-item { display: flex; align-items: center; gap: .4rem; padding: .5rem .55rem; border-radius: .55rem; border: 1px solid transparent; cursor: pointer; transition: background .12s, border-color .12s; }
+.hist-item:hover { background: var(--panel2); }
+.hist-item.active { background: var(--panel2); border-color: var(--accent); }
+.hist-item .ht { flex: 1; min-width: 0; }
+.hist-item .title { font-size: .82rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-item .when { font-size: .68rem; color: var(--faint); margin-top: .1rem; }
+.hist-item .del { opacity: 0; border: none; background: transparent; color: var(--faint); cursor: pointer; font-size: .82rem; line-height: 1; padding: .15rem .3rem; border-radius: .4rem; flex: none; transition: opacity .12s, color .12s; }
+.hist-item:hover .del { opacity: 1; }
+.hist-item .del:hover { color: var(--bad); background: var(--bg); }
+.hist-empty { color: var(--faint); font-size: .8rem; text-align: center; padding: 1.2rem .5rem; }
+
 /* sidebar */
 aside { display: flex; flex-direction: column; gap: 1rem; }
 .field { display: flex; flex-direction: column; gap: .4rem; }
@@ -334,6 +359,14 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 </header>
 
 <main>
+  <nav id="historyRail" class="hist panel">
+    <div class="hist-head">
+      <h2>Chats</h2>
+      <button class="newchat" type="button" onclick="newChat()" title="Start a new chat">＋ New</button>
+    </div>
+    <div id="histList" class="hist-list"></div>
+  </nav>
+
   <section id="chat" class="panel">
     <div class="chat-top">
       <div class="segmented">
@@ -342,7 +375,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
         <button id="seg-do" onclick="setMode('do')">Do</button>
       </div>
       <span class="hint" id="modeHint">Conversational chat with your model.</span>
-      <button class="ghost" onclick="clearChat()">Clear</button>
+      <button class="ghost" onclick="newChat()" title="Start a new chat">New chat</button>
     </div>
     <div id="messages" class="messages"></div>
     <form class="composer" onsubmit="sendMessage(event)">
@@ -395,7 +428,9 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 
 <script>
 let mode = 'chat';
-let chatHistory = [];
+let conversations = [];
+let activeId = null;
+const HIST_KEY = 'praxis.chats.v1';
 let providers = [];
 const HINTS = {
   chat: 'Conversational chat with your model.',
@@ -453,20 +488,20 @@ function copyCode(btn){
 
 /* ---------- messages ---------- */
 function clearWelcome(){ const w = messagesEl.querySelector('.welcome'); if(w) w.remove(); }
-function timeNow(){ return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
-function appendUser(text){
+function fmtTime(ts){ const d = ts ? new Date(ts) : new Date(); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+function appendUser(text, ts){
   clearWelcome();
   const row = document.createElement('div'); row.className = 'msg user';
-  row.innerHTML = '<div class="avatar">You</div><div class="bubble-wrap"><div class="bubble"></div><div class="meta">'+timeNow()+'</div></div>';
+  row.innerHTML = '<div class="avatar">You</div><div class="bubble-wrap"><div class="bubble"></div><div class="meta">'+fmtTime(ts)+'</div></div>';
   row.querySelector('.bubble').textContent = text;
   messagesEl.appendChild(row); scrollDown();
 }
-function appendAgent(text, meta){
+function appendAgent(text, meta, ts){
   clearWelcome();
   const row = document.createElement('div'); row.className = 'msg agent';
   row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="bubble"></div><div class="meta"></div></div>';
   row.querySelector('.bubble').innerHTML = renderMarkdown(text);
-  row.querySelector('.meta').textContent = (meta ? meta+' · ' : '') + timeNow();
+  row.querySelector('.meta').textContent = (meta ? meta+' · ' : '') + fmtTime(ts);
   messagesEl.appendChild(row); scrollDown();
 }
 function appendTyping(){
@@ -483,7 +518,93 @@ function setMode(m){
   document.getElementById('modeHint').textContent = HINTS[m];
   document.getElementById('message').placeholder = m==='do' ? 'Describe a goal to queue…' : (m==='ask' ? 'Ask a grounded question…' : 'Message Praxis…  (Enter to send, Shift+Enter for newline)');
 }
-function clearChat(){ chatHistory = []; messagesEl.innerHTML = ''; showWelcome(); }
+function newChat(){
+  activeId = null;
+  messagesEl.innerHTML = '';
+  showWelcome();
+  renderHistList();
+  const ta = document.getElementById('message'); if(ta) ta.focus();
+}
+
+/* ---------- chat history (left rail) ---------- */
+const HIST_MAX = 50;
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function loadConversations(){
+  try { conversations = JSON.parse(localStorage.getItem(HIST_KEY)) || []; }
+  catch(_){ conversations = []; }
+  if(!Array.isArray(conversations)) conversations = [];
+}
+function pruneConversations(){
+  if(conversations.length <= HIST_MAX) return;
+  const keep = new Set([activeId]);
+  [...conversations].sort((a,b)=>b.updated-a.updated).slice(0, HIST_MAX).forEach(c=>keep.add(c.id));
+  conversations = conversations.filter(c=>keep.has(c.id));
+}
+function persistConversations(){
+  pruneConversations();
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(conversations)); } catch(_){}
+}
+function ensureConversation(){
+  let c = conversations.find(x=>x.id===activeId);
+  if(!c){
+    c = { id: uid(), title: '', created: Date.now(), updated: Date.now(), messages: [] };
+    conversations.push(c); activeId = c.id;
+  }
+  return c;
+}
+function convTitle(c){
+  if(c.title) return c.title;
+  const u = (c.messages||[]).find(m=>m.role==='user');
+  return u ? u.content.replace(/\s+/g,' ').trim().slice(0,60) : 'New chat';
+}
+function relTime(ts){
+  const d = (Date.now()-ts)/1000;
+  if(d < 60) return 'just now';
+  if(d < 3600) return Math.floor(d/60)+'m ago';
+  if(d < 86400) return Math.floor(d/3600)+'h ago';
+  return new Date(ts).toLocaleDateString([], {month:'short', day:'numeric'});
+}
+function renderHistList(){
+  const el = document.getElementById('histList'); if(!el) return;
+  if(!conversations.length){ el.innerHTML = '<div class="hist-empty">No conversations yet.</div>'; return; }
+  el.innerHTML = '';
+  [...conversations].sort((a,b)=>b.updated-a.updated).forEach(c=>{
+    const item = document.createElement('div');
+    item.className = 'hist-item' + (c.id===activeId ? ' active' : '');
+    item.onclick = () => switchConversation(c.id);
+    const t = document.createElement('div'); t.className = 'ht';
+    const title = document.createElement('div'); title.className = 'title';
+    title.textContent = convTitle(c); title.title = convTitle(c);
+    const when = document.createElement('div'); when.className = 'when'; when.textContent = relTime(c.updated);
+    t.append(title, when);
+    const del = document.createElement('button'); del.className = 'del'; del.type = 'button';
+    del.title = 'Delete chat'; del.setAttribute('aria-label', 'Delete chat'); del.textContent = '✕';
+    del.onclick = (e) => { e.stopPropagation(); deleteConversation(c.id); };
+    item.append(t, del);
+    el.appendChild(item);
+  });
+}
+function switchConversation(id){
+  const c = conversations.find(x=>x.id===id); if(!c) return;
+  activeId = id;
+  messagesEl.innerHTML = '';
+  if(c.messages.length){
+    c.messages.forEach(m => m.role==='user'
+      ? appendUser(m.content, m.ts)
+      : appendAgent(m.content, m.model || '', m.ts));
+  } else { showWelcome(); }
+  renderHistList();
+}
+function deleteConversation(id){
+  conversations = conversations.filter(c=>c.id!==id);
+  persistConversations();
+  if(activeId === id){
+    const next = [...conversations].sort((a,b)=>b.updated-a.updated)[0];
+    if(next) switchConversation(next.id); else newChat();
+  } else {
+    renderHistList();
+  }
+}
 function showWelcome(){
   messagesEl.innerHTML = '<div class="welcome"><h3>Talk to Praxis</h3><p>Chat with your configured model, ask grounded questions, or queue autonomous tasks. Switch models any time from the panel on the right.</p><div class="chips">'
     + ['Explain the governance broker','Draft a customer follow-up email','Summarize my open tasks'].map(c=>'<button class="chip" onclick="useChip(this)">'+c+'</button>').join('')
@@ -502,11 +623,15 @@ async function sendMessage(ev){
   const typing = appendTyping(); setBusy(true);
   try {
     if(mode === 'chat'){
-      chatHistory.push({role:'user', content:text});
-      const res = await api('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages: chatHistory})});
+      const conv = ensureConversation();
+      conv.messages.push({role:'user', content:text, ts: Date.now()});
+      conv.updated = Date.now(); persistConversations(); renderHistList();
+      const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
+      const res = await api('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages: wire})});
       typing.remove();
       const reply = res.text || res.error || 'No response.';
-      chatHistory.push({role:'assistant', content: reply});
+      conv.messages.push({role:'assistant', content: reply, model: res.model || '', ts: Date.now()});
+      conv.updated = Date.now(); persistConversations(); renderHistList();
       appendAgent(reply, res.model || '');
     } else if(mode === 'ask'){
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
@@ -645,7 +770,9 @@ function connectEvents(){
 }
 
 /* ---------- boot ---------- */
-showWelcome();
+loadConversations();
+const _recent = [...conversations].sort((a,b)=>b.updated-a.updated)[0];
+if(_recent) switchConversation(_recent.id); else newChat();
 loadProviders();
 loadModel();
 refresh();
