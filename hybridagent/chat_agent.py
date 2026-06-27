@@ -146,8 +146,11 @@ class GovernedChatAgent:
                         result = f"ERROR: {exc}"
                     safe = self.broker.redact(result)
                     # Tool output is untrusted external content: if it carries an
-                    # injection, quarantine it before it re-enters the model.
+                    # injection, quarantine it before it re-enters the model and
+                    # taint it so the egress firewall won't relay it back out.
                     flagged = self.broker.is_injection(result)
+                    if flagged:
+                        self.broker.mark_tainted(result)
                     guarded = guard_tool_result(safe, flagged=flagged)
                     if self.memory is not None:
                         try:

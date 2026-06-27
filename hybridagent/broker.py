@@ -78,6 +78,24 @@ _INJECTION_PATTERNS = [
 _SECRET_RE = re.compile(r"(?i)(api[_-]?key|password|token|secret)\s*[:=]\s*\S+")
 
 
+def _normalize_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _arg_strings(value: object) -> list[str]:
+    """Collect every string leaf in a (possibly nested) tool-argument value."""
+    out: list[str] = []
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            out += _arg_strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            out += _arg_strings(v)
+    return out
+
+
 @dataclass
 class AuditEntry:
     actor: str
@@ -141,6 +159,9 @@ class GovernancePolicy:
     # Risk classes that require two distinct approvers (four-eyes principle).
     dual_approval_risks: set[RiskClass] = field(
         default_factory=lambda: {RiskClass.DESTRUCTIVE})
+    # Egress firewall: deny a consequential action whose arguments would relay
+    # content from an untrusted source previously flagged for prompt injection.
+    egress_check: bool = True
 
 
 class GovernanceBroker:
@@ -150,6 +171,11 @@ class GovernanceBroker:
         self.kill = KillSwitch()
         self.audit: list[AuditEntry] = []
         self.pending: dict[str, PendingApproval] = {}
+        self._tainted: set[str] = set()  # untrusted spans flagged for injection
+        # Approval ids minted by THIS broker session. Idempotency dedups only
+        # against these — never against approvals hydrated from a shared store —
+        # so a fresh process can't collapse onto a prior session's pending action.
+        self._session_approvals: set[str] = set()
         self.store = store
         self.log = get_logger("praxis.broker")
         if store is not None:
@@ -198,6 +224,26 @@ class GovernanceBroker:
                                       "autonomous (read/draft)", decision_id=decision_id,
                                       cycle_id=cycle_id, policy_rule="autonomous_allow",
                                       args_hash=args_hash)
+        # Egress firewall: refuse to relay untrusted, injection-flagged content
+        # out through a consequential action (exfiltration / injection propagation).
+        if self.policy.egress_check:
+            blocked = self._egress_blocked(args)
+            if blocked:
+                return self._log_decision(actor, tool, risk, Verdict.DENY, blocked,
+                                          decision_id=decision_id, cycle_id=cycle_id,
+                                          policy_rule="egress_blocked",
+                                          args_hash=args_hash)
+        # Idempotency: an identical action (same tool + args) already pending and
+        # unexpired reuses that approval instead of queuing a duplicate, so a
+        # re-proposed action (e.g. a verifier-revised turn) can't mint a second
+        # approval a human could approve twice -> double execution.
+        existing = self._find_pending(tool, args_hash)
+        if existing is not None:
+            return self._log_decision(
+                actor, tool, risk, Verdict.NEEDS_APPROVAL,
+                f"reused pending {existing} (identical action already queued)",
+                existing, decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="approval_deduped", args_hash=args_hash)
         # Consequential -> hold for human approval (draft-before-send).
         approval_id = f"appr-{uuid.uuid4().hex[:8]}"
         ttl = self.policy.approval_ttl_seconds
@@ -213,6 +259,7 @@ class GovernanceBroker:
             decision_id=decision_id, rationale=why, evidence=evidence or [],
             expires_at=expires_at, required_approvals=required,
         )
+        self._session_approvals.add(approval_id)
         if self.store is not None:
             self.store.upsert_approval(approval_id, tool, args, preview,
                                        provenance, expires_at, cycle_id=cycle_id,
@@ -274,6 +321,44 @@ class GovernanceBroker:
             self.store.resolve_approval(approval_id, "rejected")
 
     # ------------------------------------------------------------- screening
+    def mark_tainted(self, text: str) -> None:
+        """Record untrusted content (e.g. an injection-flagged tool result) so the
+        egress firewall can refuse to relay it out through a consequential action."""
+        norm = _normalize_ws(text)
+        if len(norm) < 16:  # ignore trivially short spans to avoid false positives
+            return
+        self._tainted.add(norm)
+        while len(self._tainted) > 256:  # bound memory
+            self._tainted.pop()
+
+    def _egress_blocked(self, args: dict) -> str:
+        if not self._tainted:
+            return ""
+        values = [_normalize_ws(v) for v in _arg_strings(args)]
+        blob = " ".join(v for v in values if v)
+        if not blob:
+            return ""
+        for span in self._tainted:
+            # Either the action relays the flagged content wholesale, or one of
+            # its argument values is a substantial chunk of that flagged content.
+            if span in blob or any(len(v) >= 24 and v in span for v in values):
+                return ("egress blocked: this action would relay content from an "
+                        "untrusted source flagged for prompt injection")
+        return ""
+
+    def _find_pending(self, tool: str, args_hash: str) -> str | None:
+        now = time.time()
+        for aid, p in self.pending.items():
+            if aid not in self._session_approvals:
+                continue  # only dedup re-proposals made in this broker session
+            if p.tool != tool:
+                continue
+            if p.expires_at and p.expires_at < now:
+                continue
+            if self._hash_args(p.args) == args_hash:
+                return aid
+        return None
+
     def is_injection(self, text: str) -> bool:
         if not (self.policy.injection_check and text):
             return False
