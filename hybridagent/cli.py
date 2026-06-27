@@ -294,8 +294,19 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 def cmd_recall(args: argparse.Namespace) -> int:
     from .persistence import Store
+    store = Store.open()
+    if getattr(args, "memory", False):
+        from .memory import Memory
+        mem_hits = Memory(store=store).recall(args.query, k=args.k)
+        if not mem_hits:
+            print("no matching memory (add facts with 'praxis remember')")
+            return 0
+        for it in mem_hits:
+            snippet = " ".join(it.text.split())[:200]
+            print(f"[{it.kind}] {it.provenance}  {snippet}")
+        return 0
     from .rag import Rag
-    rag = Rag(Store.open())
+    rag = Rag(store)
     hits = rag.retrieve(args.query, k=args.k)
     if not hits:
         print("no matches (KB empty? run 'praxis ingest <file>')")
@@ -671,9 +682,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="file paths (pdf/docx/pptx/xlsx/eml/msg/html/txt/md/csv/json)")
     pin.set_defaults(func=cmd_ingest)
 
-    prc = sub.add_parser("recall", help="semantic search over the RAG knowledge base")
+    prc = sub.add_parser("recall",
+                         help="semantic search over the RAG KB (or --memory)")
     prc.add_argument("query", help="the search query")
     prc.add_argument("--k", type=int, default=5, help="number of results")
+    prc.add_argument("--memory", action="store_true",
+                     help="BM25 search the agent's durable/episodic memory "
+                          "instead of the KB (no embedding model needed)")
     prc.set_defaults(func=cmd_recall)
 
     pdsc = sub.add_parser("describe", help="extract text from a doc or media file")

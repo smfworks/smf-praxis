@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from .bm25 import BM25Index
+
 if TYPE_CHECKING:
     from .persistence import Store
 
@@ -105,29 +107,59 @@ class Memory:
 
     # --------------------------------------------------------------- reading
     def recall(self, query: str, k: int = 5) -> list[MemoryItem]:
-        q = set(query.lower().split())
-        pool = self.durable + self.episodic
+        """Rank durable+episodic memory by **BM25** relevance to ``query``, then
+        re-rank by salience, recency, and prior access.
+
+        BM25 weights rare/discriminative terms over common ones and saturates
+        repeated terms, so a short note that mentions the exact topic beats a
+        long one that merely shares filler words. Expired items are skipped and
+        every recalled item has its access recorded (for salience feedback).
+        """
         now = time.time()
-        candidates = []
-        for item in pool:
-            if item.expires_at and item.expires_at <= now:
-                continue
-            words = set(item.text.lower().split())
-            overlap = len(q & words)
-            if not overlap:
-                continue
+        pool = [it for it in (self.durable + self.episodic)
+                if not (it.expires_at and it.expires_at <= now)]
+        if not pool:
+            return []
+        index = BM25Index.build((str(i), it.text) for i, it in enumerate(pool))
+        relevance = dict(index.search(query, k=len(pool)))
+        candidates: list[tuple[float, int, MemoryItem]] = []
+        for i, item in enumerate(pool):
+            rel = relevance.get(str(i), 0.0)
+            if rel <= 0.0:
+                continue  # shares no query term -> not a match
             age_days = max(0.0, (now - item.ts) / 86400.0)
             freshness = 1.0 / (1.0 + age_days / 30.0)
-            score = overlap + item.salience + (0.1 * item.access_count) + freshness
-            candidates.append((score, item))
-        candidates.sort(key=lambda t: t[0], reverse=True)
-        recalled = [it for _score, it in candidates[:k]]
+            score = rel + item.salience + (0.1 * item.access_count) + freshness
+            candidates.append((score, i, item))
+        candidates.sort(key=lambda t: (-t[0], t[1]))
+        recalled = [it for _score, _i, it in candidates[:k]]
         for item in recalled:
             item.access_count += 1
             item.last_access_ts = now
             if self.store is not None and item.id is not None:
                 self.store.record_memory_access(item.id)
         return recalled
+
+    def recall_context(self, query: str, k: int = 4,
+                       max_chars: int = 800) -> str:
+        """A compact, labelled block of the most relevant memories (or ``''``).
+
+        Suitable for prepending to a chat system prompt so prior facts,
+        decisions, and notes flow into the model's context automatically.
+        """
+        hits = self.recall(query, k=k)
+        lines: list[str] = []
+        used = 0
+        for it in hits:
+            entry = f"- ({it.kind}) {it.text}"
+            if used + len(entry) > max_chars:
+                break
+            lines.append(entry)
+            used += len(entry)
+        if not lines:
+            return ""
+        return ("Relevant memory from earlier work (use if helpful):\n"
+                + "\n".join(lines))
 
     def durable_of_kind(self, kind: str) -> list[MemoryItem]:
         return [it for it in self.durable if it.kind == kind]

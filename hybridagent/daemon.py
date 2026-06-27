@@ -1877,8 +1877,33 @@ class Daemon:
             # Bounded self-correction: a dead-ended, side-effect-free turn is
             # retried once with an injected reflection. Governance is unchanged.
             engine = ReflexiveChatAgent(base, max_reflections=rc.max_reflections)
-        for event in engine.run(messages, system=system or _AGENT_SYSTEM):
+        grounded = self._ground_with_memory(system or _AGENT_SYSTEM, messages)
+        for event in engine.run(messages, system=grounded):
             yield {"type": event.type, **event.data}
+
+    def _ground_with_memory(self, system: str, messages: list[dict]) -> str:
+        """Prepend BM25-recalled memory relevant to the latest user turn.
+
+        Surfaces the agent's own durable/episodic memory (facts, decisions,
+        notes) into the turn's context so prior work informs the answer. Empty
+        memory, no user turn, or ``agents.memoryRecall=false`` (or
+        ``PRAXIS_MEMORY_RECALL=0``) all leave the system prompt unchanged.
+        """
+        if self.agent is None or self.agent.memory is None:
+            return system
+        if os.environ.get("PRAXIS_MEMORY_RECALL", "").lower() in ("0", "false", "off"):
+            return system
+        if not cfg.load_config().get("agents", {}).get("memoryRecall", True):
+            return system
+        last_user = next((str(m.get("content", "")) for m in reversed(messages)
+                          if m.get("role") == "user"), "")
+        if not last_user.strip():
+            return system
+        try:
+            ctx = self.agent.memory.recall_context(last_user)
+        except Exception:
+            ctx = ""
+        return f"{ctx}\n\n{system}" if ctx else system
 
     def model_info(self) -> dict:
         """Current default model + whether a real provider is configured."""

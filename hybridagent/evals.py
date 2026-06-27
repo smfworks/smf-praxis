@@ -337,6 +337,22 @@ def _eval_reflexion_recovers() -> tuple[bool, str]:
     return ok, f"types={types} calls={llm.calls}"
 
 
+def _eval_bm25_recall() -> tuple[bool, str]:
+    from .bm25 import BM25Index
+    docs = [
+        ("d1", "the quarterly compliance audit found no HIPAA violations"),
+        ("d2", "the team shipped the new streaming chat feature this week"),
+        ("d3", "remember to renew the SOC 2 certification next month"),
+    ]
+    idx = BM25Index.build(docs)
+    top = idx.search("hipaa compliance audit", k=2)
+    # Rare, discriminative terms rank the compliance doc first.
+    ranked_first = bool(top) and top[0][0] == "d1"
+    # A query term present in no document yields no spurious match.
+    no_match = idx.search("kangaroo", k=3) == []
+    return (ranked_first and no_match), f"top={top}"
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -381,6 +397,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("reflexion.recovers_from_deadend", "reflexion",
              "A dead-ended, side-effect-free turn is retried once with an injected "
              "self-reflection and recovers.", _eval_reflexion_recovers),
+    EvalCase("retrieval.bm25_ranks", "retrieval",
+             "BM25 ranks the discriminative document first and returns nothing for "
+             "an out-of-vocabulary query.", _eval_bm25_recall),
 ]
 
 

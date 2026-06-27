@@ -8,6 +8,7 @@ Loop:  perceive -> plan -> govern -> act/draft -> reflect -> consolidate
 """
 from . import ingest
 from .agent import PraxisAgent
+from .bm25 import BM25Index
 from .broker import Decision, GovernanceBroker, GovernancePolicy, KillSwitch, RiskClass
 from .compliance import ComplianceFinding, ComplianceReport, ComplianceReporter
 from .contradiction import Contradiction
@@ -64,6 +65,7 @@ __all__ = [
     "ModelRouter", "classify_sensitivity",
     "RouterModel",
     "ReflexiveChatAgent", "ReflexionConfig",
+    "BM25Index",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
     "VerificationResult", "generate_json",
