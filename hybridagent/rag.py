@@ -31,6 +31,33 @@ class RetrievedChunk:
     provenance: str = "document"
 
 
+def reciprocal_rank_fusion(
+    ranked_lists: "list[list]", *, k_const: int = 60,
+) -> "list[tuple]":
+    """Reciprocal Rank Fusion of several ranked id lists.
+
+    Each list ranks the same ids by a different signal (e.g. embedding cosine and
+    BM25). An id's fused score is ``sum(1 / (k_const + rank))`` across the lists in
+    which it appears, so an item ranked highly by *either* signal rises, and items
+    ranked highly by *both* rise most. Returns ``(id, score)`` pairs, best first,
+    with ties broken deterministically by id.
+    """
+    scores: dict = {}
+    for ranking in ranked_lists:
+        for rank, doc_id in enumerate(ranking):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k_const + rank + 1)
+    return sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _hybrid_enabled() -> bool:
+    import os
+
+    from . import config as cfg
+    if os.environ.get("PRAXIS_HYBRID_RETRIEVAL", "").lower() in ("0", "false", "off"):
+        return False
+    return bool(cfg.load_config().get("agents", {}).get("hybridRetrieval", True))
+
+
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 150) -> list[str]:
     """Paragraph-aware character chunking with a small inter-chunk overlap."""
     text = (text or "").strip()
@@ -76,6 +103,22 @@ class Rag:
         # Per-namespace cached index: (version, metas, VectorIndex). Rebuilt
         # only when the store's vector_version for the namespace changes.
         self._index_cache: dict = {}
+        self._bm25_cache: dict = {}  # ns -> (version, BM25Index), same invalidation
+
+    def _get_bm25(self, ns: str, metas: list, index):
+        version = self.store.vector_version(ns)
+        cached = self._bm25_cache.get(ns)
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        from .bm25 import BM25Index
+        # Only index chunks the vector index kept, so a chunk in an inconsistent
+        # embedding state (dim mismatch) stays excluded from retrieval until
+        # re-ingested — consistent with the embedding path.
+        usable = set(index.kept_rows())
+        bm = BM25Index.build((str(i), metas[i]["text"])
+                             for i in range(len(metas)) if i in usable)
+        self._bm25_cache[ns] = (version, bm)
+        return bm
 
     def _get_index(self, ns: str):
         version = self.store.vector_version(ns)
@@ -117,10 +160,13 @@ class Rag:
 
     # --------------------------------------------------------------- retrieve
     def retrieve(self, query: str, k: int = 5, ns: str | None = None,
-                 min_score: float = 0.0) -> list[RetrievedChunk]:
+                 min_score: float = 0.0,
+                 hybrid: bool | None = None) -> list[RetrievedChunk]:
         ns = ns or self.ns
         if not query.strip() or self.store.count_vectors(ns) == 0:
             return []
+        if hybrid is None:
+            hybrid = _hybrid_enabled()
         qv = self.embed.embed_one(query)
         metas, index = self._get_index(ns)
         if index.skipped:
@@ -128,11 +174,23 @@ class Rag:
                 "ns=%s: skipped %d chunk(s) embedded with a different model "
                 "(dim != %d). Re-ingest after changing the embedding model.",
                 ns, index.skipped, index.dim)
+        pool = max(k * 5, 25)
+        emb_hits = index.query(qv, k=pool, min_score=min_score)
+        if not hybrid:
+            chosen = [(h.index, h.score) for h in emb_hits[:k]]
+        else:
+            # Fuse the embedding ranking with a BM25 lexical ranking over the same
+            # chunks, so exact/rare-term matches and semantic matches both surface
+            # — and retrieval stays strong even with a weak/offline embedder.
+            emb_rank = [h.index for h in emb_hits]
+            bm25 = self._get_bm25(ns, metas, index)
+            bm_rank = [int(doc_id) for doc_id, _ in bm25.search(query, k=pool)]
+            chosen = reciprocal_rank_fusion([emb_rank, bm_rank])[:k]
         out: list[RetrievedChunk] = []
-        for hit in index.query(qv, k=k, min_score=min_score):
-            row = metas[hit.index]
+        for idx, score in chosen:
+            row = metas[idx]
             out.append(RetrievedChunk(
-                text=row["text"], source=row["doc_id"], score=hit.score,
+                text=row["text"], source=row["doc_id"], score=float(score),
                 kind=row["kind"], provenance=row["provenance"]))
         return out
 

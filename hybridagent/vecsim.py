@@ -73,6 +73,10 @@ class VectorIndex:
     def __len__(self) -> int:
         return len(self._row_index)
 
+    def kept_rows(self) -> list[int]:
+        """Original row positions that survived the dim-consistency filter."""
+        return list(self._row_index)
+
     def query(self, qv: list[float], k: int = 5,
               min_score: float = 0.0) -> list[Scored]:
         if not self._row_index or not qv or len(qv) != self.dim:

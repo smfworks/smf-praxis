@@ -47,7 +47,7 @@ from .perception import Perception, Signal
 from .persistence import Store
 from .plan_execute import ExecutionReport, PlanExecutor, PlanStep, to_plan_steps
 from .planner import Plan, Planner, Step
-from .rag import Rag, RetrievedChunk, chunk_text
+from .rag import Rag, RetrievedChunk, chunk_text, reciprocal_rank_fusion
 from .reflection import Reflector
 from .reflexion import ReflexionConfig, ReflexiveChatAgent
 from .router import ModelRouter, classify_sensitivity
@@ -74,7 +74,7 @@ __all__ = [
     "LLMClient",
     "Store",
     "EmbeddingClient",
-    "Rag", "RetrievedChunk", "chunk_text", "ingest",
+    "Rag", "RetrievedChunk", "chunk_text", "ingest", "reciprocal_rank_fusion",
     "ModelRouter", "classify_sensitivity",
     "RouterModel",
     "ReflexiveChatAgent", "ReflexionConfig",

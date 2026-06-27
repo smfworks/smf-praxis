@@ -443,6 +443,28 @@ def _eval_skill_recall_injects_procedure() -> tuple[bool, str]:
     return ok, f"top={[s.name for s in top]}"
 
 
+def _eval_hybrid_retrieval() -> tuple[bool, str]:
+    import tempfile
+
+    from .persistence import Store
+    from .rag import Rag, reciprocal_rank_fusion
+    # RRF is symmetric: an id ranked high by either signal rises.
+    fused = dict(reciprocal_rank_fusion([["a", "b", "c"], ["c", "b", "a"]]))
+    rrf_ok = abs(fused["a"] - fused["c"]) < 1e-9 and fused["b"] > 0
+    with tempfile.TemporaryDirectory() as d:
+        store = Store.open(f"{d}/praxis.db")
+        try:
+            rag = Rag(store)
+            rag.ingest_text("the budget forecast for fiscal year 2027", "doc1")
+            rag.ingest_text("customer onboarding checklist and welcome email", "doc2")
+            rag.ingest_text("quarterly hiring plan and headcount targets", "doc3")
+            hits = rag.retrieve("budget forecast fiscal year", k=1, hybrid=True)
+            lexical_ok = bool(hits) and hits[0].source == "doc1"
+        finally:
+            store.close()
+    return (rrf_ok and lexical_ok), f"rrf_ok={rrf_ok} top={hits[0].source if hits else None}"
+
+
 def _eval_verification_catches_false_claim() -> tuple[bool, str]:
     from .chat_agent import GovernedChatAgent
     from .verifier import VerifiedChatAgent
@@ -650,6 +672,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("skills.recall_injects_procedure", "skills",
              "A relevant learned skill is retrieved and formatted as procedural "
              "guidance for the goal.", _eval_skill_recall_injects_procedure),
+    EvalCase("retrieval.hybrid_fusion", "retrieval",
+             "Hybrid retrieval fuses BM25 + embeddings (RRF) and surfaces the "
+             "lexically-relevant document.", _eval_hybrid_retrieval),
     EvalCase("verification.catches_false_claim", "verification",
              "A held action falsely reported as completed is caught and revised.",
              _eval_verification_catches_false_claim),
