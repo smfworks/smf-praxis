@@ -23,6 +23,7 @@ from .grounding import (
                         generate_json,
 )
 from .llm import LLMClient
+from .mcp_client import MCPClient, StdioTransport, mcp_tools, risk_for_tool
 from .memory import Memory, MemoryItem, Tier
 from .metrics import HealthMonitor, HealthSnapshot
 from .multimodal import MediaClient
@@ -69,6 +70,7 @@ __all__ = [
     "ReflexiveChatAgent", "ReflexionConfig",
     "AnswerVerifier", "VerifiedChatAgent", "VerificationConfig",
     "DebatePanel", "DebateResult", "Candidate",
+    "MCPClient", "StdioTransport", "mcp_tools", "risk_for_tool",
     "BM25Index",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",

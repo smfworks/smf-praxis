@@ -79,7 +79,42 @@ def cmd_m365(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_mcp(_args: argparse.Namespace) -> int:
+def cmd_mcp(args: argparse.Namespace) -> int:
+    # Client mode: discover/inspect external MCP servers (stdlib, no 'mcp' pkg).
+    if getattr(args, "list", False) or getattr(args, "probe", None):
+        from . import config as cfg
+        servers = (cfg.load_config().get("agents", {})
+                   .get("mcp", {}).get("servers", {}) or {})
+        if args.probe:
+            from .mcp_client import MCPClient, mcp_tools
+            sc = servers.get(args.probe)
+            if not sc:
+                print(f"no MCP server '{args.probe}' under agents.mcp.servers")
+                return 1
+            command = sc.get("command")
+            if isinstance(command, str):
+                command = [command, *sc.get("args", [])]
+            client = MCPClient.connect_stdio(command, env=sc.get("env"))
+            try:
+                client.initialize()
+                tools = mcp_tools(client, server_name=args.probe,
+                                  risk_overrides=sc.get("risk"))
+                print(f"{args.probe}: {len(tools)} tool(s) "
+                      f"(server: {client.server_info.get('name', '?')})")
+                for t in tools:
+                    print(f"  [{t.risk.value:11}] {t.name}  — {t.description[:70]}")
+            finally:
+                client.close()
+            return 0
+        if not servers:
+            print("no MCP servers configured (set agents.mcp.servers in praxis.json)")
+            return 0
+        for name, sc in servers.items():
+            state = "enabled" if sc.get("enabled", True) else "disabled"
+            print(f"{name:16} {state:9} {sc.get('command')}")
+        return 0
+
+    # Server mode (default): expose Praxis tools over stdio (needs the 'mcp' pkg).
     import asyncio
 
     from .mcp_adapter import run_stdio_server
@@ -839,7 +874,12 @@ def build_parser() -> argparse.ArgumentParser:
     pm = sub.add_parser("m365", help="check the M365 broker connection + signed-in status")
     pm.set_defaults(func=cmd_m365)
 
-    pmcp = sub.add_parser("mcp", help="run the Praxis MCP server over stdio")
+    pmcp = sub.add_parser("mcp",
+                          help="MCP: run the Praxis server, or --list/--probe clients")
+    pmcp.add_argument("--list", action="store_true",
+                      help="list configured external MCP servers")
+    pmcp.add_argument("--probe", metavar="NAME",
+                      help="connect to a configured MCP server and list its tools")
     pmcp.set_defaults(func=cmd_mcp)
 
     pdm = sub.add_parser("daemon", help="long-running task worker")
