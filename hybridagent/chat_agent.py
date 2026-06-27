@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from .broker import GovernanceBroker, Verdict
 from .tools import ToolRegistry
@@ -32,10 +33,20 @@ class AgentEvent:
     """A single step in the governed loop, streamed to the UI.
 
     ``type`` is one of ``tool_call`` / ``tool_result`` / ``approval`` /
-    ``denied`` / ``final`` / ``error``.
+    ``denied`` / ``final`` / ``error`` (wrappers may add ``reflection`` /
+    ``verification``).
     """
     type: str
     data: dict = field(default_factory=dict)
+
+
+class ChatEngine(Protocol):
+    """Structural type shared by the governed agent and its wrappers, so the
+    Reflexion and verification wrappers can stack in any order."""
+
+    def run(self, messages: list[dict],
+            system: str | None = None) -> Iterator[AgentEvent]:
+        ...
 
 
 class GovernedChatAgent:

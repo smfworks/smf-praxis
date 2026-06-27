@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from . import config as cfg
-from .chat_agent import AgentEvent, GovernedChatAgent
+from .chat_agent import AgentEvent, ChatEngine
 
 _CONSEQUENTIAL = {"draft", "send", "destructive"}
 _EMPTY_FINALS = {"", "(no response)"}
@@ -40,12 +40,15 @@ class _Trajectory:
     denials: list[str] = field(default_factory=list)
     tool_errors: list[str] = field(default_factory=list)
     side_effect: bool = False
+    consequential_denied: bool = False
     terminal: AgentEvent | None = None
 
     def observe(self, ev: AgentEvent) -> None:
         if ev.type == "denied":
             self.denials.append(
                 f"{ev.data.get('tool', '?')}: {ev.data.get('reason', 'denied')}")
+            if ev.data.get("risk") in _CONSEQUENTIAL:
+                self.consequential_denied = True
         elif ev.type == "tool_call":
             if (ev.data.get("verdict") == "allow"
                     and ev.data.get("risk") in _CONSEQUENTIAL):
@@ -133,7 +136,7 @@ class ReflexiveChatAgent:
     is emitted between attempts for UI/audit visibility.
     """
 
-    def __init__(self, inner: GovernedChatAgent, *, max_reflections: int = 1,
+    def __init__(self, inner: ChatEngine, *, max_reflections: int = 1,
                  reflect: ReflectFn | None = None) -> None:
         self.inner = inner
         self.max_reflections = max(0, max_reflections)

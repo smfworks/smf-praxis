@@ -47,6 +47,7 @@ from .skills import Skill, SkillLibrary, distill_skill
 from .task_manager import TaskManager, TaskState
 from .tools import Tool, ToolRegistry, default_registry
 from .validation import ValidationError, validate, validate_tool_args
+from .verifier import AnswerVerifier, VerificationConfig, VerifiedChatAgent
 from .wiki import KBSource, KBSourceManager
 from .wiki_safe import UnsafeSourceError, fetch_url, validate_uri
 
@@ -65,6 +66,7 @@ __all__ = [
     "ModelRouter", "classify_sensitivity",
     "RouterModel",
     "ReflexiveChatAgent", "ReflexionConfig",
+    "AnswerVerifier", "VerifiedChatAgent", "VerificationConfig",
     "BM25Index",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",

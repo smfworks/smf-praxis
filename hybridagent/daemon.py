@@ -1866,17 +1866,23 @@ class Daemon:
         """
         self._ensure_agent()
         assert self.agent is not None
-        from .chat_agent import GovernedChatAgent
+        from .chat_agent import ChatEngine, GovernedChatAgent
         from .reflexion import ReflexionConfig, ReflexiveChatAgent
+        from .verifier import VerificationConfig, VerifiedChatAgent
         base = GovernedChatAgent(
             self.agent.llm, self.agent.registry, self.agent.broker,
             memory=self.agent.memory)
-        engine: GovernedChatAgent | ReflexiveChatAgent = base
+        engine: ChatEngine = base
         rc = ReflexionConfig.load()
         if rc.enabled and rc.max_reflections > 0:
             # Bounded self-correction: a dead-ended, side-effect-free turn is
             # retried once with an injected reflection. Governance is unchanged.
             engine = ReflexiveChatAgent(base, max_reflections=rc.max_reflections)
+        vc = VerificationConfig.load()
+        if vc.enabled and vc.max_revisions > 0:
+            # Critic gate (outermost): a confident answer that misreports a held/
+            # denied action is rejected and revised once.
+            engine = VerifiedChatAgent(engine, max_revisions=vc.max_revisions)
         grounded = self._ground_with_memory(system or _AGENT_SYSTEM, messages)
         for event in engine.run(messages, system=grounded):
             yield {"type": event.type, **event.data}
