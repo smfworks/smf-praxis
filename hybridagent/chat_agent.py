@@ -25,6 +25,7 @@ from typing import Protocol
 
 from .broker import GovernanceBroker, Verdict
 from .content_guard import guard_tool_result
+from .context import compact_tool_messages
 from .tools import ToolRegistry
 from .validation import ValidationError, validate_tool_args
 
@@ -55,13 +56,18 @@ class GovernedChatAgent:
 
     def __init__(self, llm, registry: ToolRegistry, broker: GovernanceBroker,
                  memory=None, *, actor: str = "praxis-chat",
-                 max_steps: int | None = None) -> None:
+                 max_steps: int | None = None,
+                 max_context_chars: int | None = None) -> None:
         self.llm = llm
         self.registry = registry
         self.broker = broker
         self.memory = memory
         self.actor = actor
         self.max_steps = max_steps or self.MAX_STEPS
+        # When set, the running tool history is compacted to this char budget
+        # before each model call (pairing-aware), so long multi-tool turns stay
+        # within the context window. None/0 disables it.
+        self.max_context_chars = max_context_chars
 
     def _tool_specs(self) -> list[dict]:
         specs: list[dict] = []
@@ -80,6 +86,9 @@ class GovernedChatAgent:
         specs = self._tool_specs()
 
         for _ in range(self.max_steps):
+            if self.max_context_chars:
+                history = compact_tool_messages(
+                    history, max_chars=self.max_context_chars)
             try:
                 turn = self.llm.chat_tools(history, tools=specs, system=system)
             except Exception as exc:  # provider/connection failure

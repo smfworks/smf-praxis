@@ -284,6 +284,27 @@ def _eval_context_compaction() -> tuple[bool, str]:
     return ok, f"in={len(msgs)} out={len(out)} chars={total_chars(out)}"
 
 
+def _eval_tool_loop_compaction() -> tuple[bool, str]:
+    from .context import compact_tool_messages, total_chars
+    # A long single turn: user goal + many (assistant tool_call -> tool result) rounds.
+    msgs: list[dict] = [{"role": "user", "content": "do a big multi-step job"}]
+    for i in range(12):
+        msgs.append({"role": "assistant", "content": "",
+                     "tool_calls": [{"id": f"c{i}", "name": f"tool{i}", "args": {}}]})
+        msgs.append({"role": "tool", "tool_call_id": f"c{i}",
+                     "name": f"tool{i}", "content": "x" * 300})
+    out = compact_tool_messages(msgs, max_chars=1500, keep_recent=2)
+    call_ids = [tc["id"] for m in out if m.get("role") == "assistant"
+                for tc in (m.get("tool_calls") or [])]
+    result_ids = [m["tool_call_id"] for m in out if m.get("role") == "tool"]
+    # Pairing is intact: every kept tool_call has its result and vice versa.
+    paired = (sorted(call_ids) == sorted(result_ids))
+    shrank = total_chars(out) < total_chars(msgs)
+    recent_kept = msgs[-1] in out and msgs[-2] in out
+    return (paired and shrank and recent_kept), (
+        f"in={len(msgs)} out={len(out)} paired={paired}")
+
+
 def _eval_concurrent_orchestration() -> tuple[bool, str]:
     import tempfile
 
@@ -510,6 +531,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("context.compaction", "context",
              "An over-budget conversation is compacted (recent kept, older summarized).",
              _eval_context_compaction),
+    EvalCase("context.tool_loop_compaction", "context",
+             "A long tool-loop history is compacted while keeping every tool_call "
+             "paired with its result.", _eval_tool_loop_compaction),
     EvalCase("orchestration.concurrent_runs", "orchestration",
              "Multiple scoped subagents run concurrently and all persist.",
              _eval_concurrent_orchestration),

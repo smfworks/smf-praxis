@@ -1882,7 +1882,9 @@ class Daemon:
         from .verifier import VerificationConfig, VerifiedChatAgent
         base = GovernedChatAgent(
             self.agent.llm, self.agent.registry, self.agent.broker,
-            memory=self.agent.memory)
+            memory=self.agent.memory,
+            max_context_chars=int(cfg.load_config().get("agents", {})
+                                  .get("maxContextChars", 24000) or 0))
         engine: ChatEngine = base
         rc = ReflexionConfig.load()
         if rc.enabled and rc.max_reflections > 0:
