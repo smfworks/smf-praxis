@@ -97,6 +97,17 @@ _CHAT_SYSTEM = (
     "format answers clearly. If you are unsure, say so rather than inventing facts."
 )
 
+# Persona for the governed tool-calling surface (/api/chat/agent). The model may
+# call tools to gather context and prepare work; the broker decides what runs.
+_AGENT_SYSTEM = (
+    "You are Praxis, a governed autonomous colleague. You can call tools to gather "
+    "context and prepare work. Read and draft tools run automatically; send and "
+    "destructive actions are held for the user's approval — never claim a held or "
+    "denied action succeeded. Prefer calling a tool over guessing, ground your "
+    "answers in tool results, and when an action is held or denied, say so plainly "
+    "and continue with whatever you can safely do. Format answers with Markdown."
+)
+
 
 @dataclass
 class DaemonState:
@@ -278,6 +289,17 @@ pre.code:hover .copy { opacity: 1; }
 .typing .d:nth-child(2) { animation-delay: .2s; } .typing .d:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 
+/* agent tool-step cards */
+.steps { display: flex; flex-direction: column; gap: .35rem; }
+.step { font-size: .82rem; padding: .45rem .6rem; border-radius: .55rem; border: 1px solid var(--border); background: var(--bg2); color: var(--muted); animation: rise .2s ease; }
+.step b { color: var(--text); font-weight: 600; }
+.step .rk { font-size: .64rem; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); border: 1px solid var(--border); padding: .04rem .35rem; border-radius: 999px; margin-left: .3rem; }
+.step .muted { color: var(--faint); }
+.step.run { border-left: 3px solid var(--accent); }
+.step.ok { border-left: 3px solid var(--ok); }
+.step.hold { border-left: 3px solid var(--warn); }
+.step.deny { border-left: 3px solid var(--bad); }
+
 /* composer */
 .composer { border-top: 1px solid var(--border); padding: .85rem 1rem; display: flex; gap: .6rem; align-items: flex-end; background: rgba(10,12,16,.4); }
 #message { flex: 1; resize: none; max-height: 9rem; min-height: 2.7rem; padding: .7rem .9rem; border-radius: .8rem; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: .95rem; line-height: 1.5; outline: none; transition: border-color .15s; }
@@ -373,6 +395,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
         <button id="seg-chat" class="active" onclick="setMode('chat')">Chat</button>
         <button id="seg-ask" onclick="setMode('ask')">Ask</button>
         <button id="seg-do" onclick="setMode('do')">Do</button>
+        <button id="seg-agent" onclick="setMode('agent')">Agent</button>
       </div>
       <span class="hint" id="modeHint">Conversational chat with your model.</span>
       <button class="ghost" onclick="newChat()" title="Start a new chat">New chat</button>
@@ -435,7 +458,8 @@ let providers = [];
 const HINTS = {
   chat: 'Conversational chat with your model.',
   ask: 'Grounded Q&A over the knowledge base — cites sources or abstains.',
-  do: 'Queue an autonomous task for the agent to work.'
+  do: 'Queue an autonomous task for the agent to work.',
+  agent: 'Agentic tools — Praxis calls tools through the governance broker (read/draft run; send/destructive need approval).'
 };
 const messagesEl = document.getElementById('messages');
 
@@ -514,9 +538,10 @@ function scrollDown(){ messagesEl.scrollTop = messagesEl.scrollHeight; }
 
 function setMode(m){
   mode = m;
-  ['chat','ask','do'].forEach(x => document.getElementById('seg-'+x).classList.toggle('active', x===m));
+  ['chat','ask','do','agent'].forEach(x => document.getElementById('seg-'+x).classList.toggle('active', x===m));
   document.getElementById('modeHint').textContent = HINTS[m];
-  document.getElementById('message').placeholder = m==='do' ? 'Describe a goal to queue…' : (m==='ask' ? 'Ask a grounded question…' : 'Message Praxis…  (Enter to send, Shift+Enter for newline)');
+  const ph = {do:'Describe a goal to queue…', ask:'Ask a grounded question…', agent:'Ask Praxis to do something — it can call tools…'};
+  document.getElementById('message').placeholder = ph[m] || 'Message Praxis…  (Enter to send, Shift+Enter for newline)';
 }
 function newChat(){
   activeId = null;
@@ -653,6 +678,48 @@ async function streamChat(conv, wire, typing){
   conv.updated = Date.now(); persistConversations(); renderHistList();
 }
 
+async function agentChat(conv, wire, typing){
+  let model = '', steps = null, finalText = '', finished = false;
+  const cards = {};
+  function ensureSteps(){
+    if(steps) return;
+    if(typing){ typing.remove(); typing = null; }
+    const row = document.createElement('div'); row.className = 'msg agent';
+    row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="steps"></div></div>';
+    messagesEl.appendChild(row); steps = row.querySelector('.steps');
+  }
+  function addStep(html, cls){ ensureSteps(); const s = document.createElement('div'); s.className = 'step ' + (cls||''); s.innerHTML = html; steps.appendChild(s); scrollDown(); return s; }
+  function setCard(tool, html, cls){ const c = cards[tool]; if(c){ c.className = 'step ' + cls; c.innerHTML = html; } else { cards[tool] = addStep(html, cls); } }
+  try {
+    const resp = await fetch('/api/chat/agent', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({messages: wire})});
+    if(!resp.ok || !resp.body) throw new Error('HTTP '+resp.status);
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while(!finished){
+      const {value, done} = await reader.read(); if(done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while((idx = buf.indexOf('\n\n')) !== -1){
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const dl = frame.split('\n').find(l => l.startsWith('data:')); if(!dl) continue;
+        let ev; try { ev = JSON.parse(dl.slice(5).trim()); } catch(_){ continue; }
+        if(ev.type === 'meta'){ model = ev.model || ''; }
+        else if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
+        else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
+        else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
+        else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
+        else if(ev.type === 'final'){ finalText = ev.text || ''; }
+        else if(ev.type === 'error'){ finalText = (finalText ? finalText+'\n\n' : '') + '⚠️ ' + (ev.error || 'error'); }
+        else if(ev.type === 'done'){ finished = true; break; }
+      }
+    }
+  } catch(e){ finalText = finalText || ('Error: ' + e); }
+  if(typing){ typing.remove(); typing = null; }
+  const out = finalText || '(no response)';
+  appendAgent(out, model);
+  conv.messages.push({role:'assistant', content: out, model: model, ts: Date.now()});
+  conv.updated = Date.now(); persistConversations(); renderHistList();
+}
+
 async function sendMessage(ev){
   ev.preventDefault();
   const ta = document.getElementById('message');
@@ -671,6 +738,12 @@ async function sendMessage(ev){
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
       typing.remove();
       appendAgent(res.text || res.error || 'No answer.', (res.citations||[]).join(', '));
+    } else if(mode === 'agent'){
+      const conv = ensureConversation();
+      conv.messages.push({role:'user', content:text, ts: Date.now()});
+      conv.updated = Date.now(); persistConversations(); renderHistList();
+      const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
+      await agentChat(conv, wire, typing);
     } else {
       const res = await api('/submit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({goal: text, max_attempts: 3})});
       typing.remove();
@@ -997,6 +1070,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 approved = self.daemon.approve(approval_id)
                 self._json_response({"approved": bool(approved), "approval_id": approval_id})
                 return
+            if self.path == "/api/chat/agent":
+                self._handle_chat_agent()
+                return
             if self.path == "/api/chat/stream":
                 self._handle_chat_stream()
                 return
@@ -1152,6 +1228,43 @@ class _StatusHandler(BaseHTTPRequestHandler):
             for piece in self.daemon.chat_stream(messages, system=system):
                 if piece:
                     emit({"type": "delta", "text": piece})
+            emit({"type": "done"})
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as exc:
+            try:
+                emit({"type": "error", "error": str(exc)})
+            except OSError:
+                pass
+
+    def _handle_chat_agent(self) -> None:
+        # Like the streaming chat handler, a governed turn is a terminal response.
+        self.close_connection = True
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            payload = json.loads(self.rfile.read(length).decode() or "{}")
+        except ValueError:
+            payload = {}
+        messages = payload.get("messages") or []
+        if not isinstance(messages, list):
+            messages = []
+        system = payload.get("system")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        def emit(obj: dict) -> None:
+            self.wfile.write(f"data: {json.dumps(obj, default=str)}\n\n".encode())
+            self.wfile.flush()
+
+        try:
+            emit({"type": "meta",
+                  "model": cfg.get_default_model() or "mock (offline)"})
+            for event in self.daemon.chat_agent(messages, system=system):
+                emit(event)
             emit({"type": "done"})
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
@@ -1515,6 +1628,25 @@ class Daemon:
         assert self.agent is not None
         yield from self.agent.llm.chat_stream(
             messages, system=system or _CHAT_SYSTEM, role="general")
+
+    def chat_agent(self, messages: list[dict],
+                   system: str | None = None) -> Iterator[dict]:
+        """Run the governed tool-calling loop and yield UI event dicts.
+
+        Each model-proposed tool call is schema-validated and routed through the
+        broker: read/draft execute, send/destructive are held for approval, and
+        disallowed/kill-switched tools are denied. Event ``type`` is one of
+        ``tool_call`` / ``tool_result`` / ``approval`` / ``denied`` / ``final`` /
+        ``error``.
+        """
+        self._ensure_agent()
+        assert self.agent is not None
+        from .chat_agent import GovernedChatAgent
+        engine = GovernedChatAgent(
+            self.agent.llm, self.agent.registry, self.agent.broker,
+            memory=self.agent.memory)
+        for event in engine.run(messages, system=system or _AGENT_SYSTEM):
+            yield {"type": event.type, **event.data}
 
     def model_info(self) -> dict:
         """Current default model + whether a real provider is configured."""

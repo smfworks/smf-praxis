@@ -448,6 +448,157 @@ def _chat_messages_stream_anthropic(root: str, model: str, messages: list[dict],
                 yield piece
 
 
+def chat_messages_tools(provider: Provider, model: str, messages: list[dict],
+                        tools: list[dict], system: str | None = None,
+                        api_key: str | None = None, base_url: str | None = None,
+                        timeout: float = 60.0, temperature: float = 0.2,
+                        max_tokens: int = 1024) -> dict:
+    """One tool-calling turn. Returns ``{"text", "tool_calls"}``.
+
+    ``tools`` are canonical specs ``{"name","description","parameters"}``.
+    ``messages`` is a canonical history where an assistant turn may carry
+    ``tool_calls`` and a tool result is ``{"role":"tool","tool_call_id","name",
+    "content"}``; the provider layer translates that to each wire protocol.
+    ``tool_calls`` in the result are ``[{"id","name","args"}]``.
+    """
+    root = (base_url or provider.base_url).rstrip("/")
+    if provider.compatibility == "anthropic":
+        return _chat_messages_tools_anthropic(
+            root, model, messages, tools, system, api_key, timeout,
+            temperature, max_tokens)
+    return _chat_messages_tools_openai(
+        root, model, messages, tools, system, api_key, timeout,
+        temperature, max_tokens)
+
+
+def _to_openai_messages(messages: list[dict], system: str | None) -> list[dict]:
+    out: list[dict] = []
+    if system:
+        out.append({"role": "system", "content": system})
+    for m in messages or []:
+        role = str(m.get("role", "user"))
+        if role == "assistant" and m.get("tool_calls"):
+            out.append({
+                "role": "assistant",
+                "content": m.get("content") or None,
+                "tool_calls": [{
+                    "id": tc.get("id", ""), "type": "function",
+                    "function": {"name": tc.get("name", ""),
+                                 "arguments": json.dumps(tc.get("args") or {})},
+                } for tc in m["tool_calls"]],
+            })
+        elif role == "tool":
+            out.append({"role": "tool",
+                        "tool_call_id": m.get("tool_call_id") or m.get("id", ""),
+                        "content": str(m.get("content", ""))})
+        else:
+            r = role if role in ("system", "user", "assistant") else "user"
+            out.append({"role": r, "content": str(m.get("content", ""))})
+    return out
+
+
+def _chat_messages_tools_openai(root: str, model: str, messages: list[dict],
+                                tools: list[dict], system: str | None,
+                                api_key: str | None, timeout: float,
+                                temperature: float, max_tokens: int) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload: dict = {"model": model,
+                     "messages": _to_openai_messages(messages, system),
+                     "temperature": temperature, "max_tokens": max_tokens}
+    if tools:
+        payload["tools"] = [{
+            "type": "function",
+            "function": {"name": t["name"], "description": t.get("description", ""),
+                         "parameters": t.get("parameters")
+                         or {"type": "object", "properties": {}}},
+        } for t in tools]
+    data = _post(f"{root}/chat/completions", headers, payload, timeout)
+    try:
+        msg = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
+    calls: list[dict] = []
+    for tc in (msg.get("tool_calls") or []):
+        fn = tc.get("function") or {}
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except ValueError:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        calls.append({"id": tc.get("id") or f"call_{len(calls)}",
+                      "name": fn.get("name", ""), "args": args})
+    return {"text": msg.get("content") or "", "tool_calls": calls}
+
+
+def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
+    conv: list[dict] = []
+    for m in messages or []:
+        role = str(m.get("role", "user"))
+        if role == "assistant" and m.get("tool_calls"):
+            blocks: list[dict] = []
+            if m.get("content"):
+                blocks.append({"type": "text", "text": str(m["content"])})
+            for tc in m["tool_calls"]:
+                blocks.append({"type": "tool_use", "id": tc.get("id", ""),
+                               "name": tc.get("name", ""),
+                               "input": tc.get("args") or {}})
+            conv.append({"role": "assistant", "content": blocks})
+        elif role == "tool":
+            conv.append({"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": m.get("tool_call_id") or m.get("id", ""),
+                "content": str(m.get("content", "")),
+            }]})
+        elif role == "system":
+            continue
+        else:
+            r = "assistant" if role == "assistant" else "user"
+            conv.append({"role": r, "content": str(m.get("content", ""))})
+    return conv
+
+
+def _chat_messages_tools_anthropic(root: str, model: str, messages: list[dict],
+                                   tools: list[dict], system: str | None,
+                                   api_key: str | None, timeout: float,
+                                   temperature: float, max_tokens: int) -> dict:
+    headers = {"Content-Type": "application/json",
+               "anthropic-version": "2023-06-01"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    sys_parts = [system] if system else []
+    for m in messages or []:
+        if m.get("role") == "system":
+            sys_parts.append(str(m.get("content", "")))
+    payload: dict = {"model": model, "max_tokens": max_tokens,
+                     "temperature": temperature,
+                     "messages": _to_anthropic_messages(messages)
+                     or [{"role": "user", "content": ""}]}
+    merged_system = "\n\n".join(p for p in sys_parts if p)
+    if merged_system:
+        payload["system"] = merged_system
+    if tools:
+        payload["tools"] = [{
+            "name": t["name"], "description": t.get("description", ""),
+            "input_schema": t.get("parameters")
+            or {"type": "object", "properties": {}},
+        } for t in tools]
+    data = _post(f"{root}/messages", headers, payload, timeout)
+    blocks = data.get("content")
+    if not isinstance(blocks, list):
+        raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    text = "".join(b.get("text", "") for b in blocks
+                   if isinstance(b, dict) and b.get("type") == "text")
+    calls: list[dict] = []
+    for b in blocks:
+        if isinstance(b, dict) and b.get("type") == "tool_use":
+            calls.append({"id": b.get("id") or f"call_{len(calls)}",
+                          "name": b.get("name", ""), "args": b.get("input") or {}})
+    return {"text": text, "tool_calls": calls}
+
+
 def embed(provider: Provider, model: str, texts: list[str],
           api_key: str | None, base_url: str | None = None,
           timeout: float = 60.0) -> list[list[float]]:

@@ -19,10 +19,25 @@ from dataclasses import dataclass, field
 
 from . import config as cfg
 from .logging_util import get_logger
-from .providers import CATALOG, chat, chat_messages, chat_messages_stream
+from .providers import CATALOG, chat, chat_messages, chat_messages_stream, chat_messages_tools
 from .router import NORMAL, ModelRouter, classify_sensitivity
 
 _log = get_logger("praxis.llm")
+
+
+def _mock_fill_args(schema: dict) -> dict:
+    """Best-effort args for the offline mock's tool calls: fill required params
+    with type-appropriate placeholders so schema validation passes."""
+    props = (schema or {}).get("properties") or {}
+    required = (schema or {}).get("required") or list(props)
+    defaults = {"string": "mock", "integer": 0, "number": 0,
+                "boolean": False, "array": [], "object": {}}
+    out: dict = {}
+    for key in required:
+        spec = props.get(key) or {}
+        ptype = spec.get("type")
+        out[key] = defaults.get(ptype, "mock") if isinstance(ptype, str) else "mock"
+    return out
 
 
 @dataclass
@@ -84,6 +99,23 @@ class LLMClient:
         else:
             yield from self._mock_chat_stream(messages, system)
 
+    def chat_tools(self, messages: list[dict], tools: list[dict],
+                   system: str | None = None, role: str = "general",
+                   sensitivity: str | None = None) -> dict:
+        """One tool-calling turn for the governed chat loop.
+
+        Returns ``{"text": str, "tool_calls": [{"id","name","args"}]}``. Same
+        sensitivity routing as :meth:`chat`. Offline (mock) mode emits a
+        deterministic tool call when the latest user turn names an available
+        tool, so the governed loop is exercisable without a provider.
+        """
+        convo = "\n".join(str(m.get("content", "")) for m in messages)
+        if sensitivity is None:
+            sensitivity = classify_sensitivity((system or "") + "\n" + convo)
+        if self._effective_mode() == "real":
+            return self._tools_messages(messages, tools, system, role, sensitivity)
+        return self._mock_chat_tools(messages, tools, system)
+
     # -------------------------------------------------------------------- mock
     def _mock_complete(self, prompt: str, system: str | None) -> str:
         seed = hashlib.sha256(((system or "") + prompt).encode()).hexdigest()[:8]
@@ -120,6 +152,22 @@ class LLMClient:
                 token = ""
         if token:
             yield token
+
+    def _mock_chat_tools(self, messages: list[dict], tools: list[dict],
+                         system: str | None) -> dict:
+        last_user = ""
+        for m in reversed(messages or []):
+            if m.get("role") == "user" and isinstance(m.get("content"), str):
+                last_user = m["content"]
+                break
+        called = {m.get("name") for m in (messages or []) if m.get("role") == "tool"}
+        for spec in tools or []:
+            name = spec.get("name", "")
+            if name and name in last_user and name not in called:
+                return {"text": "", "tool_calls": [{
+                    "id": f"call_{name}", "name": name,
+                    "args": _mock_fill_args(spec.get("parameters") or {})}]}
+        return {"text": self._mock_chat(messages, system), "tool_calls": []}
 
     # ------------------------------------------------------------------- route
     def _route(self, prompt: str, system: str | None,
@@ -261,6 +309,51 @@ class LLMClient:
         yield from chat_messages_stream(
             provider=provider, model=model, messages=messages, system=system,
             api_key=api_key, base_url=entry.get("baseUrl"),
+        )
+
+    # ------------------------------------------------------- chat (tool-calling)
+    def _tools_messages(self, messages: list[dict], tools: list[dict],
+                        system: str | None, role: str, sensitivity: str) -> dict:
+        candidates = self.router.select(role, sensitivity)
+        if not candidates:
+            raise RuntimeError(
+                "No provider configured. Run 'praxis onboard' to pick a "
+                "provider and model (or set PRAXIS_LLM=mock for offline use)."
+            )
+        last_exc: Exception | None = None
+        for ref in candidates:
+            if ref == "mock":
+                return self._mock_chat_tools(messages, tools, system)
+            try:
+                return self._chat_tools_with_ref(ref, messages, tools, system)
+            except RuntimeError as exc:
+                last_exc = exc
+                _log.warning("model %s tool-call failed (%s); trying next candidate",
+                             ref, exc)
+                continue
+        raise last_exc if last_exc else RuntimeError("no usable model")
+
+    def _chat_tools_with_ref(self, model_ref: str, messages: list[dict],
+                             tools: list[dict], system: str | None) -> dict:
+        provider_id, model = cfg.split_model_ref(model_ref)
+        if not model:
+            raise RuntimeError(
+                f"Malformed model ref {model_ref!r}; expected 'provider/model-id'. "
+                f"Re-run 'praxis onboard'."
+            )
+        provider = CATALOG.get(provider_id)
+        entry = cfg.provider_entry(provider_id) or {}
+        if not provider:
+            raise RuntimeError(f"Unknown provider '{provider_id}' in config.")
+        api_key = cfg.resolve_api_key(provider_id)
+        if provider.needs_key and not api_key:
+            raise RuntimeError(
+                f"Missing API key for '{provider_id}'. Set {provider.key_env} or "
+                f"re-run 'praxis onboard' and paste the key."
+            )
+        return chat_messages_tools(
+            provider=provider, model=model, messages=messages, tools=tools,
+            system=system, api_key=api_key, base_url=entry.get("baseUrl"),
         )
 
     # Backwards-compatible seam (documented in FRAMEWORK.md).

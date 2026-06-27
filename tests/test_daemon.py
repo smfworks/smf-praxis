@@ -625,3 +625,146 @@ def test_dashboard_serves_streaming_ui(tmp_store, mock_agent):
         assert "/api/chat/stream" in html
     finally:
         daemon._stop_status_server()
+
+
+class _ScriptedLLM:
+    """LLM stub whose chat_tools returns a fixed sequence of turns, so the
+    governed loop can be exercised deterministically."""
+
+    def __init__(self, turns):
+        self._turns = list(turns)
+        self.calls = 0
+
+    def chat_tools(self, messages, tools, system=None):
+        turn = self._turns[min(self.calls, len(self._turns) - 1)]
+        self.calls += 1
+        return turn
+
+
+def _reg_with(*tools):
+    reg = ToolRegistry()
+    for t in tools:
+        reg.register(t)
+    return reg
+
+
+def test_governed_chat_agent_executes_read_tool():
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy
+    from hybridagent.chat_agent import GovernedChatAgent
+
+    reg = _reg_with(Tool("list_today_events", RiskClass.READ, "List events",
+                         lambda **k: "3 events today",
+                         parameters={"type": "object", "properties": {}}))
+    llm = _ScriptedLLM([
+        {"text": "", "tool_calls": [{"id": "c1", "name": "list_today_events", "args": {}}]},
+        {"text": "You have 3 events today.", "tool_calls": []},
+    ])
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"list_today_events"}))
+    agent = GovernedChatAgent(llm, reg, broker)
+    events = list(agent.run([{"role": "user", "content": "what's on today?"}]))
+    types = [e.type for e in events]
+    assert "tool_call" in types and "tool_result" in types
+    final = [e for e in events if e.type == "final"]
+    assert final and "3 events" in final[-1].data["text"]
+
+
+def test_governed_chat_agent_holds_send_tool():
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy
+    from hybridagent.chat_agent import GovernedChatAgent
+
+    reg = _reg_with(Tool("send_email", RiskClass.SEND, "Send email",
+                         lambda **k: "SENT",
+                         parameters={"type": "object",
+                                     "properties": {"draft_id": {"type": "string"}},
+                                     "required": ["draft_id"]}))
+    llm = _ScriptedLLM([
+        {"text": "", "tool_calls": [{"id": "c1", "name": "send_email",
+                                     "args": {"draft_id": "d1"}}]},
+    ])
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}))
+    agent = GovernedChatAgent(llm, reg, broker)
+    events = list(agent.run([{"role": "user", "content": "send it"}]))
+    types = [e.type for e in events]
+    assert "approval" in types
+    # The consequential action is queued in the broker, never executed.
+    assert len(broker.pending) == 1
+    appr = next(e for e in events if e.type == "approval")
+    assert appr.data["tool"] == "send_email" and appr.data["approval_id"]
+    # The loop stops after holding and does not fabricate a result.
+    assert all(e.type != "tool_result" for e in events)
+
+
+def test_governed_chat_agent_denies_bad_args():
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy
+    from hybridagent.chat_agent import GovernedChatAgent
+
+    reg = _reg_with(Tool("get_file_text", RiskClass.READ, "Read file",
+                         lambda **k: "contents",
+                         parameters={"type": "object",
+                                     "properties": {"name": {"type": "string"}},
+                                     "required": ["name"]}))
+    llm = _ScriptedLLM([
+        {"text": "", "tool_calls": [{"id": "c1", "name": "get_file_text", "args": {}}]},
+        {"text": "Sorry, I couldn't read it.", "tool_calls": []},
+    ])
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"get_file_text"}))
+    agent = GovernedChatAgent(llm, reg, broker)
+    events = list(agent.run([{"role": "user", "content": "read it"}]))
+    types = [e.type for e in events]
+    # Missing required arg is rejected by schema validation before the broker.
+    assert "denied" in types
+    assert all(e.type not in ("tool_call", "tool_result") for e in events)
+
+
+def test_governed_chat_agent_denies_unallowlisted_tool():
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy
+    from hybridagent.chat_agent import GovernedChatAgent
+
+    reg = _reg_with(Tool("delete_file", RiskClass.DESTRUCTIVE, "Delete",
+                         lambda **k: "deleted",
+                         parameters={"type": "object",
+                                     "properties": {"name": {"type": "string"}},
+                                     "required": ["name"]}))
+    llm = _ScriptedLLM([
+        {"text": "", "tool_calls": [{"id": "c1", "name": "delete_file",
+                                     "args": {"name": "x"}}]},
+        {"text": "I can't do that.", "tool_calls": []},
+    ])
+    # Empty allowlist -> the broker denies even though the tool is registered.
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools=set()))
+    agent = GovernedChatAgent(llm, reg, broker)
+    events = list(agent.run([{"role": "user", "content": "delete x"}]))
+    assert any(e.type == "denied" for e in events)
+    assert len(broker.pending) == 0
+
+
+def test_daemon_chat_agent_endpoint(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store, agent=mock_agent, tick_interval=0.1, idle_interval=0.1,
+        status_port=_find_port("127.0.0.1", 30000, 30100),
+    )
+    daemon._start_status_server()
+    try:
+        base = f"http://127.0.0.1:{daemon.status_port}"
+        # The mock LLM emits a tool call when the user names an available tool.
+        body = json.dumps({"messages": [
+            {"role": "user", "content": "please use echo to repeat hello"},
+        ]}).encode()
+        req = urllib.request.Request(
+            f"{base}/api/chat/agent", data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            assert resp.headers.get_content_type() == "text/event-stream"
+            raw = resp.read().decode()
+        events = [json.loads(line[len("data:"):].strip())
+                  for line in raw.splitlines() if line.startswith("data:")]
+        types = [e["type"] for e in events]
+        assert types[0] == "meta"
+        assert "tool_call" in types and "tool_result" in types
+        assert any(e["type"] == "final" for e in events)
+        assert types[-1] == "done"
+        # echo is a DRAFT tool -> autonomous, so nothing should be held.
+        assert "approval" not in types
+    finally:
+        daemon._stop_status_server()
