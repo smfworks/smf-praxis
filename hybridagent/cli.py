@@ -355,6 +355,26 @@ def cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_debate(args: argparse.Namespace) -> int:
+    from .debate import DebatePanel
+    from .llm import LLMClient
+    llm = LLMClient()
+
+    def solver(task: str, stance: str) -> str:
+        return llm.chat([{"role": "user", "content": task}], system=stance,
+                        role="general")
+
+    result = DebatePanel(solver).debate(args.question)
+    print(result.answer)
+    print()
+    print(f"— {result.rationale}")
+    if args.verbose:
+        for c in result.candidates:
+            mark = "ok" if c.approved else "xx"
+            print(f"  [{mark}] {c.stance[:34]:34}  {' '.join(c.answer.split())[:110]}")
+    return 0
+
+
 def cmd_router_train(args: argparse.Namespace) -> int:
     from .orchestrator import Orchestrator
     from .persistence import Store
@@ -706,6 +726,13 @@ def build_parser() -> argparse.ArgumentParser:
     prtr.add_argument("--goal", default="",
                       help="optional goal to test-predict after training")
     prtr.set_defaults(func=cmd_router_train)
+
+    pdeb = sub.add_parser(
+        "debate", help="best-of-N self-consistency answer judged across stances")
+    pdeb.add_argument("question", help="the question to answer")
+    pdeb.add_argument("--verbose", action="store_true",
+                      help="show each solver's candidate and verification mark")
+    pdeb.set_defaults(func=cmd_debate)
 
     pask = sub.add_parser("ask", help="grounded Q&A over the KB + memory (cite or abstain)")
     pask.add_argument("question", help="the question to answer from sources")

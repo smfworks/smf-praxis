@@ -13,6 +13,7 @@ from .broker import Decision, GovernanceBroker, GovernancePolicy, KillSwitch, Ri
 from .compliance import ComplianceFinding, ComplianceReport, ComplianceReporter
 from .contradiction import Contradiction
 from .contradiction import detect as detect_contradictions
+from .debate import Candidate, DebatePanel, DebateResult
 from .embeddings import EmbeddingClient
 from .grounding import (
                         GroundedAnswer,
@@ -67,6 +68,7 @@ __all__ = [
     "RouterModel",
     "ReflexiveChatAgent", "ReflexionConfig",
     "AnswerVerifier", "VerifiedChatAgent", "VerificationConfig",
+    "DebatePanel", "DebateResult", "Candidate",
     "BM25Index",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",

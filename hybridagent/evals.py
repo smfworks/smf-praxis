@@ -386,6 +386,23 @@ def _eval_verification_catches_false_claim() -> tuple[bool, str]:
     return ok, f"types={types} final={text!r}"
 
 
+def _eval_debate_consensus() -> tuple[bool, str]:
+    from .debate import DebatePanel
+    # Three solvers: two converge on Paris (paraphrases cluster), one dissents.
+    answers = iter([
+        "The capital of France is Paris.",
+        "Paris is the capital of France.",
+        "It might be Lyon, I'm not sure.",
+    ])
+
+    def solver(task: str, stance: str) -> str:
+        return next(answers)
+
+    result = DebatePanel(solver).debate("What is the capital of France?")
+    ok = "paris" in result.answer.lower() and result.votes == 2
+    return ok, f"answer={result.answer!r} votes={result.votes}"
+
+
 BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("tool_use.draft_executes", "tool_use",
              "A draft tool is called and a final answer returned.", _eval_draft_executes),
@@ -436,6 +453,9 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("verification.catches_false_claim", "verification",
              "A held action falsely reported as completed is caught and revised.",
              _eval_verification_catches_false_claim),
+    EvalCase("debate.consensus_selects_majority", "debate",
+             "Best-of-N debate selects the majority-agreement answer across solvers.",
+             _eval_debate_consensus),
 ]
 
 
