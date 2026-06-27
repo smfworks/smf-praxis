@@ -26,10 +26,20 @@ jobs:
         run: mypy hybridagent
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        # Full Python range on Linux; a representative 3.12 run on Windows + macOS
+        # so platform-specific bugs (subprocess, pipes, sockets, paths, signals)
+        # are caught without a 9-cell matrix.
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
@@ -40,17 +50,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run tests with coverage gate
+      - name: Run tests with coverage gate (Linux)
+        if: runner.os == 'Linux'
         run: pytest -q --cov=hybridagent --cov-report=term-missing --cov-fail-under=80
+      - name: Run tests (Windows / macOS)
+        if: runner.os != 'Linux'
+        run: pytest -q
       - name: Smoke-test demo + CLI
         run: |
           python demo.py
           praxis demo
 
   install-script:
-    # Exercise the one-command bootstrap on Linux so the documented install path
-    # (and its LF line endings / executable bit) can't silently break.
-    runs-on: ubuntu-latest
+    # Exercise the one-command bootstrap on Linux + macOS so the documented
+    # install path (LF line endings, executable bit, venv layout) can't silently
+    # break on either Unix platform.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -60,13 +79,34 @@ jobs:
       - name: Run install.sh (core, no onboarding)
         run: |
           test -x ./install.sh || { echo "install.sh is not executable"; exit 1; }
-          ! grep -lU $'\r' install.sh || { echo "install.sh has CRLF line endings"; exit 1; }
+          python -c "import sys; sys.exit(1 if b'\r' in open('install.sh','rb').read() else 0)" \
+            || { echo "install.sh has CRLF line endings"; exit 1; }
           ./install.sh --no-configure --venv .venv
       - name: Verify the installed CLI works
         run: |
           ./.venv/bin/praxis demo
           ./.venv/bin/praxis onboard --provider ollama --model llama3.1
           ./.venv/bin/praxis route
+
+  install-script-windows:
+    # Exercise the PowerShell bootstrap so the Windows install path (venv
+    # Scripts layout, praxis.exe shim) is verified too.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run install.ps1 (core, no onboarding)
+        shell: pwsh
+        run: ./install.ps1 -NoConfigure -Venv .venv
+      - name: Verify the installed CLI works
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\praxis.exe demo
+          .\.venv\Scripts\praxis.exe onboard --provider ollama --model llama3.1
+          .\.venv\Scripts\praxis.exe route
 
   mutation:
     # Manual-only: mutation testing is slow, so it never gates the PR matrix.

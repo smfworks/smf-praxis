@@ -28,8 +28,10 @@ perceive → plan → govern → act/draft → reflect → consolidate
 
 ## Setup
 
-Requires **Python 3.10+**. No third-party packages are needed to run (offline
-mock LLM); extras are opt-in.
+Runs on **Linux, macOS, and Windows** with **Python 3.10+**. The core is
+dependency-free (offline mock LLM) — no wheels or native libraries to build — so
+it installs the same way everywhere; extras are opt-in. CI runs the full test
+suite and both install scripts on all three platforms.
 
 ### One command (install + configure)
 
