@@ -1206,6 +1206,13 @@ class _StatusHandler(BaseHTTPRequestHandler):
                     ],
                 })
                 return
+            if self.path == "/api/agent/run":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.agent_run(
+                    payload.get("goal", ""),
+                    max_replans=int(payload.get("max_replans", 1))))
+                return
             if self.path == "/api/approve":
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length).decode()
@@ -1312,6 +1319,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/voice/realtime":
                 self._handle_realtime_ws()
                 return
+            elif self.path == "/api/agent/card":
+                body = json.dumps(self.daemon.agent_card(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
             elif self.path == "/events":
                 self._serve_sse()
                 return
@@ -1842,6 +1853,20 @@ class Daemon:
         task = self.manager.create(goal, max_attempts=max_attempts)
         self._log("info", f"submitted task {task.task_id}")
         return task.task_id
+
+    def agent_run(self, goal: str, max_replans: int = 1) -> dict:
+        """A2A: plan + execute a goal under governance, returning a JSON result."""
+        self._ensure_agent()
+        assert self.agent is not None
+        from .agent_service import AgentService
+        return AgentService(self.agent).run(goal, max_replans=max_replans)
+
+    def agent_card(self) -> dict:
+        """A2A: advertise this agent's capabilities and tools for discovery."""
+        self._ensure_agent()
+        assert self.agent is not None
+        from .agent_service import AgentService
+        return AgentService(self.agent).card()
 
     def ask(self, question: str, k: int = 5) -> Any:
         """Answer a question grounded in the agent's KB and memory."""

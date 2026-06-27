@@ -533,6 +533,26 @@ def _eval_deepthink_deliberates() -> tuple[bool, str]:
     return ok, f"engaged={res.engaged} rounds={res.rounds} votes={res.votes}"
 
 
+def _eval_a2a_run_and_card() -> tuple[bool, str]:
+    from .agent_service import AgentService
+    from .tools import default_registry
+
+    class _MiniAgent:
+        registry = default_registry()
+        broker = GovernanceBroker(GovernancePolicy(
+            allowed_tools=set(registry.names())))
+        store = None
+
+    svc = AgentService(_MiniAgent())
+    result = svc.run("follow up with the customer about the project report")
+    card = svc.card()
+    ok = (result["status"] in ("needs_approval", "completed", "partial")
+          and isinstance(result["steps"], list) and bool(result["steps"])
+          and card["name"] == "praxis"
+          and any(t["risk"] == "send" for t in card["tools"]))
+    return ok, f"status={result['status']} steps={len(result['steps'])}"
+
+
 def _eval_plan_execute_replans_on_failure() -> tuple[bool, str]:
     from .plan_execute import PlanExecutor, PlanStep
     from .planner import Step as PStep
@@ -701,6 +721,10 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("reasoning.deepthink_deliberates", "reasoning",
              "Deep-think engages on a hard goal and a second debate round resolves a "
              "no-consensus first round.", _eval_deepthink_deliberates),
+    EvalCase("a2a.run_and_card", "a2a",
+             "Praxis runs a goal under governance as a callable agent (held send) and "
+             "advertises a capability card with risk-classed tools.",
+             _eval_a2a_run_and_card),
     EvalCase("mcp.governs_external_tools", "mcp",
              "An external MCP tool is risk-classified and a destructive one is held "
              "for approval, not auto-executed.", _eval_mcp_governs_external_tools),

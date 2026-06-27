@@ -8,6 +8,7 @@ Loop:  perceive -> plan -> govern -> act/draft -> reflect -> consolidate
 """
 from . import ingest
 from .agent import PraxisAgent
+from .agent_service import AgentService
 from .bm25 import BM25Index
 from .broker import Decision, GovernanceBroker, GovernancePolicy, KillSwitch, RiskClass
 from .compliance import ComplianceFinding, ComplianceReport, ComplianceReporter
@@ -70,6 +71,7 @@ __all__ = [
     "Tool", "ToolRegistry", "default_registry",
     "Planner", "Step", "Plan",
     "PlanExecutor", "PlanStep", "ExecutionReport", "to_plan_steps",
+    "AgentService",
     "Perception", "Signal",
     "Reflector",
     "LLMClient",
