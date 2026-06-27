@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .agent import PraxisAgent
+from .router_model import RouterModel, train_from_runs
 from .tools import ToolRegistry, default_registry
 
 ROLE_TO_TOOLS = {
@@ -58,17 +59,59 @@ class AgentSpecializer:
 
 
 class PredictiveRouter:
-    """Lightweight goal -> role routing heuristic, ready to be replaced by
-    learned outcome statistics as subagent run data accumulates."""
+    """Goal -> role routing. Learns from governed outcome history when a model
+    has been trained, and otherwise falls back to a keyword heuristic.
+
+    The learned model (:class:`~hybridagent.router_model.RouterModel`) is fit
+    from the ``subagent_runs`` the governance spine already records, so routing
+    improves as real work accumulates — without any new data collection. Two
+    invariants hold regardless of what the model says:
+
+    * **Injection pin.** A goal whose source is flagged as injection (or any
+      untrusted content) is always routed to the most-restrictive role, so an
+      attacker who controls retrieved text cannot steer consequential work into
+      the drafter/predictor pools by keyword *or* by poisoning the model.
+    * **Known-role validation.** A learned label is only honoured if it is still
+      a real role, so a stale model can never route to a role that was removed.
+    """
+
+    KNOWN_ROLES = frozenset(ROLE_TO_TOOLS)
+
+    def __init__(self, model: RouterModel | None = None,
+                 threshold: float = 0.60) -> None:
+        self.model = model
+        self.threshold = threshold
+
+    @classmethod
+    def from_store(cls, store, *, threshold: float = 0.60,
+                   name: str = "predictive_router") -> "PredictiveRouter":
+        """Load a persisted model if one exists; else a heuristic-only router."""
+        model: RouterModel | None = None
+        try:
+            rec = store.load_router_model(name)
+            if rec:
+                model = RouterModel.from_json(rec["model_json"])
+        except Exception:  # older store / corrupt blob -> heuristic fallback
+            model = None
+        return cls(model=model, threshold=threshold)
 
     def route(self, goal: str, *, injection_flagged: bool = False) -> str:
-        """Heuristic role assignment. When the goal text originates from a
-        signal flagged as injection (or any other untrusted source), refuse to
-        let keyword steering escalate from the most-restrictive role —
-        otherwise an attacker who controls retrieved content can route
-        consequential work into the drafter pool, etc."""
+        """Assign a role to ``goal``.
+
+        Untrusted (injection-flagged) goals are pinned to ``researcher`` before
+        any model or keyword is consulted. Otherwise a confident learned
+        prediction wins, falling back to the keyword heuristic.
+        """
         if injection_flagged:
             return "researcher"
+        if self.model is not None:
+            learned = self.model.confident(goal, self.threshold)
+            if learned in self.KNOWN_ROLES:
+                return learned
+        return self._heuristic(goal)
+
+    @staticmethod
+    def _heuristic(goal: str) -> str:
         g = goal.lower()
         if any(k in g for k in ("risk", "compliance", "audit", "policy", "hipaa")):
             return "compliance"
@@ -112,8 +155,24 @@ class Orchestrator:
     def __init__(self, store, router: PredictiveRouter | None = None,
                  pool: AgentPool | None = None) -> None:
         self.store = store
-        self.router = router or PredictiveRouter()
+        # Auto-load a learned router from outcome history when present; the
+        # classmethod falls back to a heuristic-only router otherwise.
+        self.router = router or PredictiveRouter.from_store(store)
         self.pool = pool or AgentPool(store)
+
+    def train_router(self, *, limit: int = 1000, min_samples: int = 8,
+                     min_classes: int = 2) -> RouterModel | None:
+        """Train the goal->role router from persisted subagent-run outcomes,
+        persist it, and swap it in. Returns the model, or ``None`` when there is
+        not yet enough successful history to learn from (heuristic stays)."""
+        runs = self.store.list_subagent_runs(limit=limit)
+        model = train_from_runs(runs, min_samples=min_samples,
+                                min_classes=min_classes)
+        if model is not None:
+            self.store.save_router_model(model.to_json(), n_samples=model.n_samples)
+            self.router = PredictiveRouter(model=model,
+                                           threshold=self.router.threshold)
+        return model
 
     def run(self, goal: str, role: str | None = None, *,
             injection_flagged: bool = False, parent_run_id: str = "",

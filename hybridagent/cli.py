@@ -344,6 +344,40 @@ def cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_router_train(args: argparse.Namespace) -> int:
+    from .orchestrator import Orchestrator
+    from .persistence import Store
+    from .router_model import samples_from_runs
+    store = Store.open()
+    try:
+        orch = Orchestrator(store)
+        model = orch.train_router(min_samples=args.min_samples)
+        runs = store.list_subagent_runs(limit=1000)
+        if model is None:
+            usable = len(samples_from_runs(runs))
+            print(f"not enough subagent-run history to train the learned router "
+                  f"(have {usable} successful runs across "
+                  f"{len({r['role'] for r in runs})} role(s); need "
+                  f">= {args.min_samples} across >= 2 roles).")
+            print("the keyword heuristic stays in effect.")
+            return 1
+        counts: dict[str, int] = {}
+        for _goal, role in samples_from_runs(runs):
+            counts[role] = counts.get(role, 0) + 1
+        print(f"trained learned goal->role router on {model.n_samples} runs "
+              f"({len(model.classes)} roles, vocab={len(model.vocab)} tokens). "
+              "saved to the store; orchestration will use it on the next run.")
+        for role in sorted(counts):
+            print(f"  {role:<12} {counts[role]} example(s)")
+        if args.goal:
+            predicted, conf = model.predict(args.goal)
+            print(f"\npredict({args.goal!r}) -> {predicted} "
+                  f"(confidence {conf:.2f})")
+        return 0
+    finally:
+        store.close()
+
+
 def cmd_ask(args: argparse.Namespace) -> int:
     agent = _make_agent(args)
     ans = agent.ask(args.question, k=args.k)
@@ -648,6 +682,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     prt = sub.add_parser("route", help="show contextual model routing per role")
     prt.set_defaults(func=cmd_route)
+
+    prtr = sub.add_parser(
+        "router-train",
+        help="train the learned goal->role router from subagent-run outcomes")
+    prtr.add_argument("--min-samples", type=int, default=8,
+                      help="minimum successful runs required to train (default 8)")
+    prtr.add_argument("--goal", default="",
+                      help="optional goal to test-predict after training")
+    prtr.set_defaults(func=cmd_router_train)
 
     pask = sub.add_parser("ask", help="grounded Q&A over the KB + memory (cite or abstain)")
     pask.add_argument("question", help="the question to answer from sources")

@@ -215,6 +215,39 @@ def _eval_difficulty_routing() -> tuple[bool, str]:
     return ok, f"hard={hard} simple={simple} standard={standard}"
 
 
+def _eval_learned_routing() -> tuple[bool, str]:
+    from .orchestrator import PredictiveRouter
+    from .router_model import RouterModel
+    # Outcome history: which role successfully handled which goal. The wording
+    # deliberately avoids the heuristic's exact keywords so the win is learned,
+    # not coincidental.
+    samples = [
+        ("review the vendor contract for regulatory exposure", "compliance"),
+        ("assess regulatory exposure for this clinical workflow", "compliance"),
+        ("examine the access controls for governance gaps", "compliance"),
+        ("write a warm note to the customer thread", "drafter"),
+        ("compose a response to the partner about timing", "drafter"),
+        ("put together a short message confirming the change", "drafter"),
+        ("estimate next quarter pipeline movement", "predictor"),
+        ("project the churn for these renewing accounts", "predictor"),
+        ("gather background on the new interoperability framework", "researcher"),
+        ("collect notes and sources about the agenda topic", "researcher"),
+    ]
+    model = RouterModel.train(samples)
+    r = PredictiveRouter(model=model, threshold=0.55)
+    # A goal with NONE of the heuristic keywords (risk/compliance/audit/policy/
+    # hipaa) — the heuristic would fall through to 'researcher'; the learned
+    # model recognises the regulatory vocabulary and routes to 'compliance'.
+    learned = r.route("evaluate regulatory exposure on this vendor engagement")
+    heuristic = PredictiveRouter().route(
+        "evaluate regulatory exposure on this vendor engagement")
+    # The injection pin must override even a confident model.
+    pinned = r.route("compose a response to the customer", injection_flagged=True)
+    ok = (learned == "compliance" and heuristic == "researcher"
+          and pinned == "researcher")
+    return ok, f"learned={learned} heuristic={heuristic} pinned={pinned}"
+
+
 def _eval_context_compaction() -> tuple[bool, str]:
     from .context import compact_messages, total_chars
     msgs = [{"role": "user" if i % 2 == 0 else "assistant",
@@ -299,6 +332,10 @@ BUILTIN_EVALS: list[EvalCase] = [
     EvalCase("routing.difficulty_tiers", "routing",
              "Request difficulty is classified for best-model routing.",
              _eval_difficulty_routing),
+    EvalCase("routing.learned_role", "routing",
+             "A learned router routes a no-keyword goal by outcome history, "
+             "beating the heuristic; injected goals stay pinned to the safe role.",
+             _eval_learned_routing),
     EvalCase("context.compaction", "context",
              "An over-budget conversation is compacted (recent kept, older summarized).",
              _eval_context_compaction),

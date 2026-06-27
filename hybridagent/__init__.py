@@ -38,6 +38,7 @@ from .planner import Plan, Planner, Step
 from .rag import Rag, RetrievedChunk, chunk_text
 from .reflection import Reflector
 from .router import ModelRouter, classify_sensitivity
+from .router_model import RouterModel
 from .scratchpad import Scratchpad, ScratchpadEntry
 from .skill_evaluator import SkillEvaluator
 from .skills import Skill, SkillLibrary, distill_skill
@@ -60,6 +61,7 @@ __all__ = [
     "EmbeddingClient",
     "Rag", "RetrievedChunk", "chunk_text", "ingest",
     "ModelRouter", "classify_sensitivity",
+    "RouterModel",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",
     "VerificationResult", "generate_json",

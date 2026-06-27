@@ -182,6 +182,12 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
     updated_ts REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_subagent_runs_agent ON subagent_runs(agent_id);
+CREATE TABLE IF NOT EXISTS router_models (
+    name       TEXT PRIMARY KEY,
+    model_json TEXT NOT NULL,
+    n_samples  INTEGER NOT NULL DEFAULT 0,
+    trained_ts REAL NOT NULL
+);
 """
 
 
@@ -822,3 +828,26 @@ class Store:
             d["result"] = json.loads(d.pop("result_json") or "{}")
             out.append(d)
         return out
+
+    # ----------------------------------------------------- learned router model
+    def save_router_model(self, model_json: str, n_samples: int = 0,
+                          name: str = "predictive_router") -> None:
+        """Persist a trained goal->role router model (JSON) under ``name``."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO router_models(name,model_json,n_samples,trained_ts) "
+                "VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+                "model_json=excluded.model_json, n_samples=excluded.n_samples, "
+                "trained_ts=excluded.trained_ts",
+                (name, model_json, n_samples, time.time()),
+            )
+            self._conn.commit()
+
+    def load_router_model(self, name: str = "predictive_router") -> dict | None:
+        """Return the persisted router model record, or ``None`` if untrained."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT name,model_json,n_samples,trained_ts FROM router_models "
+                "WHERE name=?", (name,),
+            ).fetchone()
+        return dict(row) if row else None
