@@ -50,6 +50,15 @@ def test_risk_override_wins():
     assert risk_for_tool({"name": "delete_user"}, override="read") is RiskClass.READ
 
 
+def test_unknown_external_tool_defaults_to_held_send():
+    # No annotation and no recognizable verb -> SEND so the broker holds it,
+    # rather than auto-executing an unclassifiable external tool.
+    assert risk_for_tool({"name": "transfer_funds"}) is RiskClass.SEND
+    assert risk_for_tool({"name": "frobnicate"}) is RiskClass.SEND
+    # A read-ish verb is still auto-runnable for convenience.
+    assert risk_for_tool({"name": "list_widgets"}) is RiskClass.READ
+
+
 # ----------------------------------------------------- client (fake transport)
 class _FakeTransport:
     def __init__(self):

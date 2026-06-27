@@ -158,9 +158,13 @@ class VerifiedChatAgent:
                 task, str(terminal.data.get("text", "")),
                 held=traj.held, action_denied=traj.consequential_denied)
             last = attempt >= attempts - 1
-            # A revision is safe only if nothing executed (a held/denied action did
-            # not run); never re-run a turn that produced a real side effect.
-            if (not last) and (not verdict.approved) and (not traj.side_effect):
+            # A revision is safe only if the turn executed no side effect AND held
+            # nothing for approval. Re-running a *held* turn would re-propose the
+            # action and mint a SECOND pending approval (a human could approve both
+            # -> double execution), so a held turn is surfaced but never re-run —
+            # mirroring ReflexiveChatAgent's retry_safe.
+            if (not last) and (not verdict.approved) and (
+                    not traj.side_effect) and (not traj.held):
                 critique = verdict.critique
                 yield AgentEvent("verification", {
                     "approved": False, "critique": critique,

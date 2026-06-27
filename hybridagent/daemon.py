@@ -1753,7 +1753,17 @@ class Daemon:
         _write_state(self.state)
         _remove_pid()
         self._stop_status_server()
+        self._close_mcp_clients()
         self._log("info", "daemon stopped")
+
+    def _close_mcp_clients(self) -> None:
+        """Terminate any external MCP server subprocesses spawned for the agent."""
+        for client in self._mcp_clients:
+            try:
+                client.close()
+            except Exception:
+                pass
+        self._mcp_clients = []
 
     def stop(self) -> None:
         if not self.running:

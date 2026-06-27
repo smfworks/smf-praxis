@@ -70,3 +70,17 @@ def test_daemon_ensure_agent_survives_mcp_failure(tmp_path, monkeypatch):
     d = Daemon(llm=LLMClient(mode="mock"))
     d._ensure_agent()  # must not raise
     assert d.agent is not None and d._mcp_clients == []
+
+
+def test_daemon_closes_mcp_clients_on_cleanup():
+    from hybridagent.daemon import Daemon
+    closed = []
+
+    class _Client:
+        def close(self):
+            closed.append(True)
+
+    d = Daemon(llm=LLMClient(mode="mock"))
+    d._mcp_clients = [_Client(), _Client()]
+    d._close_mcp_clients()
+    assert closed == [True, True] and d._mcp_clients == []

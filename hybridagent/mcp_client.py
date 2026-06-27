@@ -221,7 +221,12 @@ def risk_for_tool(tool_def: dict, override: str | None = None) -> RiskClass:
         return RiskClass.SEND
     if tokens & _DRAFT_HINTS:
         return RiskClass.DRAFT
-    return RiskClass.READ
+    if tokens & _READ_HINTS:
+        return RiskClass.READ
+    # An unannotated, unrecognized external tool is untrusted: default to SEND so
+    # the broker holds it for approval rather than auto-executing something we
+    # cannot classify (e.g. transfer_funds, execute_query, revoke_*).
+    return RiskClass.SEND
 
 
 def _sanitize(name: str) -> str:

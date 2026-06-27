@@ -74,35 +74,65 @@ def test_verify_uses_optional_critic():
 
 
 # ----------------------------------------------------------- wrapper behaviour
+_DELETE = Tool("delete_account", RiskClass.DESTRUCTIVE, "Delete",
+               lambda id="", **k: "DELETED", parameters=_schema("id"))
+
+
 class _OverclaimsThenHonest:
+    """Claims a DENIED delete succeeded, then corrects once a reviewer rejects."""
+
     def __init__(self):
         self.calls = 0
 
     def chat_tools(self, messages, tools=None, system=None):
         self.calls += 1
         if system and "reviewer rejected" in system.lower():
-            return {"text": "The email is drafted and pending your approval.",
+            return {"text": "I could not delete the account; it was blocked.",
                     "tool_calls": []}
-        return {"text": "I've sent the email.",
-                "tool_calls": [{"id": "c1", "name": "send_email",
-                                "args": {"draft_id": "d1"}}]}
+        if any(m.get("role") == "tool" for m in messages):
+            return {"text": "Done — I deleted the account.", "tool_calls": []}
+        return {"text": "", "tool_calls": [
+            {"id": "c1", "name": "delete_account", "args": {"id": "a1"}}]}
 
 
 def _run(llm, registry, broker, *, max_revisions=1):
     inner = GovernedChatAgent(llm, registry, broker)
     return list(VerifiedChatAgent(inner, max_revisions=max_revisions).run(
-        [{"role": "user", "content": "email the team"}]))
+        [{"role": "user", "content": "handle the request"}]))
 
 
-def test_wrapper_catches_and_revises_false_claim():
+def test_wrapper_catches_and_revises_denied_false_claim():
+    # delete_account is not allowlisted -> DENIED (nothing queued or executed),
+    # so the dishonest "I deleted it" answer is safely revised.
     llm = _OverclaimsThenHonest()
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools=set()))
+    events = _run(llm, _registry(_DELETE), broker)
+    types = _types(events)
+    assert "denied" in types and "verification" in types and "approval" not in types
+    text = _final(events).data["text"]
+    assert "could not delete" in text and "Done" not in text
+    assert llm.calls == 3
+
+
+def test_wrapper_flags_held_false_claim_without_retrying():
+    # A HELD send falsely reported as done must be flagged but NEVER re-run:
+    # re-running would queue a second approval and risk double execution.
+    class _ClaimsHeldSent:
+        def __init__(self):
+            self.calls = 0
+
+        def chat_tools(self, messages, tools=None, system=None):
+            self.calls += 1
+            return {"text": "I've sent the email.", "tool_calls": [
+                {"id": "c1", "name": "send_email", "args": {"draft_id": "d1"}}]}
+
+    llm = _ClaimsHeldSent()
     broker = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}))
     events = _run(llm, _registry(_SEND), broker)
     types = _types(events)
-    assert "approval" in types and "verification" in types
-    text = _final(events).data["text"]
-    assert "pending your approval" in text and "I've sent" not in text
-    assert llm.calls == 2
+    assert "verification" in types  # flagged
+    assert len([e for e in events if e.type == "approval"]) == 1  # no duplicate
+    assert llm.calls == 1  # not retried
 
 
 def test_wrapper_no_verification_event_on_honest_answer():
@@ -140,18 +170,17 @@ def test_wrapper_no_retry_after_side_effect_but_surfaces_finding():
 
 
 def test_wrapper_bounded_revisions():
-    class _AlwaysOverclaims:
+    class _AlwaysEvasive:
         def __init__(self):
             self.calls = 0
 
         def chat_tools(self, messages, tools=None, system=None):
             self.calls += 1
-            return {"text": "I've sent the email.", "tool_calls": [
-                {"id": "c1", "name": "send_email", "args": {"draft_id": "d1"}}]}
+            return {"text": "", "tool_calls": []}  # empty -> non-evasive failure
 
-    llm = _AlwaysOverclaims()
-    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}))
-    events = _run(llm, _registry(_SEND), broker, max_revisions=1)
+    llm = _AlwaysEvasive()
+    events = _run(llm, _registry(_SEND), GovernanceBroker(GovernancePolicy()),
+                  max_revisions=1)
     assert "verification" in _types(events)
     assert llm.calls == 2  # one revision, then accept
 
