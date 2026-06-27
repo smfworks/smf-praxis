@@ -25,7 +25,13 @@ from .grounding import (
                         generate_json,
 )
 from .llm import LLMClient
-from .mcp_client import MCPClient, StdioTransport, mcp_tools, risk_for_tool
+from .mcp_client import (
+    MCPClient,
+    StdioTransport,
+    augment_registry_with_mcp,
+    mcp_tools,
+    risk_for_tool,
+)
 from .memory import Memory, MemoryItem, Tier
 from .metrics import HealthMonitor, HealthSnapshot
 from .multimodal import MediaClient
@@ -73,6 +79,7 @@ __all__ = [
     "AnswerVerifier", "VerifiedChatAgent", "VerificationConfig",
     "DebatePanel", "DebateResult", "Candidate",
     "MCPClient", "StdioTransport", "mcp_tools", "risk_for_tool",
+    "augment_registry_with_mcp",
     "RegressionReport", "compare_reports",
     "GuardedContent", "guard_tool_result",
     "BM25Index",

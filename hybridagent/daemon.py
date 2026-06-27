@@ -1576,6 +1576,7 @@ class Daemon:
     ) -> None:
         self.store = store
         self.agent = agent
+        self._mcp_clients: list = []
         self.manager = manager or (TaskManager(store) if store else None)
         self.llm = llm or LLMClient()
         self.tick_interval = tick_interval
@@ -1671,6 +1672,16 @@ class Daemon:
             self.manager = TaskManager(self.store)
         # Ensure broker allowlist covers whatever registry the agent built.
         self.agent.broker.policy.allowed_tools.update(self.agent.registry.names())
+        # Opt-in: expose configured external MCP servers' tools to the governed
+        # loop. No servers configured -> no-op; any failure is swallowed so chat
+        # always works even if a server is misconfigured or down.
+        try:
+            from .mcp_client import augment_registry_with_mcp
+            _tools, self._mcp_clients = augment_registry_with_mcp(
+                self.agent.registry,
+                allowlist=self.agent.broker.policy.allowed_tools)
+        except Exception:
+            self._mcp_clients = []
 
     def _start_status_server(self) -> None:
         daemon = self

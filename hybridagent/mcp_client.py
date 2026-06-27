@@ -283,6 +283,22 @@ def load_mcp_tools(timeout: float = 20.0) -> "tuple[list[Tool], list[MCPClient]]
     return tools, clients
 
 
+def augment_registry_with_mcp(registry: Any, *,
+                              allowlist: "set[str] | None" = None,
+                              ) -> "tuple[list[Tool], list[MCPClient]]":
+    """Load configured MCP servers, register their tools, and extend an allowlist.
+
+    Registers every discovered tool in ``registry``, adds its name to
+    ``allowlist`` (e.g. the broker policy's ``allowed_tools``) when given, and
+    returns ``(tools, clients)``. Spawns nothing when no servers are configured,
+    so it is a zero-cost no-op by default; the caller owns closing the clients.
+    """
+    tools, clients = load_mcp_tools()
+    for tool in tools:
+        registry.register(tool)
+        if allowlist is not None:
+            allowlist.add(tool.name)
+    return tools, clients
 # ----------------------------------------------------- reference echo server
 def serve_stdio(handler: Callable[[str, dict], Any], reader: Any,
                 writer: Any) -> None:
