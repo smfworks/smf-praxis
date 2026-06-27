@@ -15,6 +15,7 @@ from .contradiction import Contradiction
 from .contradiction import detect as detect_contradictions
 from .debate import Candidate, DebatePanel, DebateResult
 from .embeddings import EmbeddingClient
+from .eval_history import RegressionReport, compare_reports
 from .grounding import (
                         GroundedAnswer,
                         GroundedPlanner,
@@ -71,6 +72,7 @@ __all__ = [
     "AnswerVerifier", "VerifiedChatAgent", "VerificationConfig",
     "DebatePanel", "DebateResult", "Candidate",
     "MCPClient", "StdioTransport", "mcp_tools", "risk_for_tool",
+    "RegressionReport", "compare_reports",
     "BM25Index",
     "MediaClient",
     "GroundedResponder", "GroundedAnswer", "GroundedPlanner",

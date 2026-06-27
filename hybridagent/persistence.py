@@ -188,6 +188,18 @@ CREATE TABLE IF NOT EXISTS router_models (
     n_samples  INTEGER NOT NULL DEFAULT 0,
     trained_ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL NOT NULL,
+    passes      INTEGER NOT NULL,
+    total       INTEGER NOT NULL,
+    report_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS eval_baseline (
+    name        TEXT PRIMARY KEY,
+    report_json TEXT NOT NULL,
+    ts          REAL NOT NULL
+);
 """
 
 
@@ -851,3 +863,43 @@ class Store:
                 "WHERE name=?", (name,),
             ).fetchone()
         return dict(row) if row else None
+
+    # ------------------------------------------------------- eval history/gate
+    def save_eval_run(self, report_json: str, passes: int, total: int) -> int:
+        """Append one eval scorecard to the run history; returns its run id."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO eval_runs(ts,passes,total,report_json) VALUES (?,?,?,?)",
+                (time.time(), passes, total, report_json),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid or 0)
+
+    def list_eval_runs(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id,ts,passes,total FROM eval_runs ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_eval_baseline(self, report_json: str, name: str = "default") -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO eval_baseline(name,report_json,ts) VALUES (?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET report_json=excluded.report_json, "
+                "ts=excluded.ts", (name, report_json, time.time()),
+            )
+            self._conn.commit()
+
+    def load_eval_baseline(self, name: str = "default") -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT report_json FROM eval_baseline WHERE name=?", (name,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["report_json"])
+        except ValueError:
+            return None

@@ -475,14 +475,64 @@ def cmd_health(_args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
+    import json
+
     from .evals import run_evals
+
+    if getattr(args, "history", 0):
+        import datetime
+
+        from .persistence import Store
+        store = Store.open()
+        try:
+            runs = store.list_eval_runs(limit=args.history)
+        finally:
+            store.close()
+        if not runs:
+            print("no saved eval runs yet (use 'praxis eval --save').")
+            return 0
+        for r in runs:
+            when = datetime.datetime.fromtimestamp(r["ts"]).strftime("%Y-%m-%d %H:%M")
+            print(f"#{r['id']:<4} {when}  {r['passes']}/{r['total']}")
+        return 0
+
     report = run_evals(category=args.category)
-    if getattr(args, "json", False):
-        import json
-        print(json.dumps(report.to_dict(), indent=2))
+    data = report.to_dict()
+
+    if getattr(args, "json", None) is not None:
+        text = json.dumps(data, indent=2)
+        if args.json:
+            from pathlib import Path
+            Path(args.json).write_text(text, encoding="utf-8")
+            print(f"wrote {args.json}")
+        else:
+            print(text)
     else:
         print(report.render())
-    return 0 if report.passed else 1
+
+    rc = 0 if report.passed else 1
+    if args.save or args.set_baseline or args.check:
+        from .persistence import Store
+        store = Store.open()
+        try:
+            if args.save or args.set_baseline:
+                store.save_eval_run(json.dumps(data), report.passes, report.total)
+            if args.set_baseline:
+                store.save_eval_baseline(json.dumps(data))
+                print("baseline saved.")
+            if args.check:
+                from .eval_history import compare_reports
+                base = store.load_eval_baseline()
+                if base is None:
+                    print("no baseline set (run 'praxis eval --set-baseline').")
+                else:
+                    rr = compare_reports(base, data)
+                    print(rr.render())
+                    if not rr.ok:
+                        rc = 2
+        finally:
+            store.close()
+    return rc
 
 
 def cmd_memory_purge(args: argparse.Namespace) -> int:
@@ -827,7 +877,16 @@ def build_parser() -> argparse.ArgumentParser:
     pev.add_argument("--category", default=None,
                      help="only run cases in this category "
                           "(tool_use, approval, safety, schema)")
-    pev.add_argument("--json", action="store_true", help="emit the scorecard as JSON")
+    pev.add_argument("--json", nargs="?", const="", default=None, metavar="PATH",
+                     help="emit the scorecard as JSON (to PATH, or stdout)")
+    pev.add_argument("--save", action="store_true",
+                     help="append this run to the persisted eval history")
+    pev.add_argument("--set-baseline", action="store_true",
+                     help="save this run as the regression baseline")
+    pev.add_argument("--check", action="store_true",
+                     help="compare to the baseline; exit 2 on any regression")
+    pev.add_argument("--history", type=int, nargs="?", const=10, default=0,
+                     metavar="N", help="show the last N saved runs and exit")
     pev.set_defaults(func=cmd_eval)
 
     pmp = sub.add_parser("memory-purge",
