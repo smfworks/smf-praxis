@@ -149,6 +149,26 @@ def test_no_replanner_degrades_gracefully():
     assert report.status == "failed"
 
 
+def test_missing_dependency_fails_not_completes():
+    # A dependency id that never completes (typo / non-existent) must FAIL the
+    # plan, not silently report "completed" with an orphaned pending step.
+    steps = [PlanStep(id="s1", intent="orphan", tool="get_data", args={},
+                      depends_on=["nonexistent"])]
+    report = PlanExecutor(_registry(READ), _broker("get_data")).execute("g", steps=steps)
+    assert report.status == "failed"
+    assert _statuses(report)["s1"] == "failed"
+
+
+def test_cyclic_dependency_fails():
+    steps = [
+        PlanStep(id="s1", intent="a", tool="get_data", args={}, depends_on=["s2"]),
+        PlanStep(id="s2", intent="b", tool="get_data", args={}, depends_on=["s1"]),
+    ]
+    report = PlanExecutor(_registry(READ), _broker("get_data")).execute("g", steps=steps)
+    assert report.status == "failed"
+    assert all(s.status == "failed" for s in report.steps)
+
+
 def test_compliance_events_recorded_when_store_present(tmp_path):
     from hybridagent.persistence import Store
     store = Store.open(tmp_path / "praxis.db")

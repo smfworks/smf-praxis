@@ -141,6 +141,15 @@ class PlanExecutor:
             if not ready:
                 if skipped_any:
                     continue
+                # Deadlock: the remaining steps have an unsatisfiable or cyclic
+                # dependency (a dep id that never completes and was never blocked).
+                # Fail them explicitly so the plan can't report a false "completed".
+                for s in report.steps:
+                    if s.status in (PENDING, RUNNING):
+                        s.status = FAILED
+                        s.output = "unsatisfiable or cyclic dependency"
+                        self._emit(report, "step_failed",
+                                   {"id": s.id, "reason": s.output}, cycle_id)
                 break
             step = ready[0]
             executed += 1
@@ -254,6 +263,8 @@ class PlanExecutor:
     def _final_status(report: ExecutionReport) -> str:
         statuses = {s.status for s in report.steps}
         if statuses & _HARD_FAIL:
+            return "failed"
+        if statuses & {PENDING, RUNNING}:  # a step never reached a terminal state
             return "failed"
         if HELD in statuses:
             return "needs_approval"

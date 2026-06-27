@@ -162,6 +162,14 @@ class Rag:
     def retrieve(self, query: str, k: int = 5, ns: str | None = None,
                  min_score: float = 0.0,
                  hybrid: bool | None = None) -> list[RetrievedChunk]:
+        """Retrieve the top-``k`` chunks for ``query``.
+
+        With ``hybrid`` (default on via ``agents.hybridRetrieval``), the embedding
+        ranking is fused with a BM25 lexical ranking via Reciprocal Rank Fusion.
+        Note: in hybrid mode ``min_score`` filters only the embedding candidate
+        pool (BM25 matches are not cosine-thresholded) and ``RetrievedChunk.score``
+        is the RRF score, not a cosine similarity.
+        """
         ns = ns or self.ns
         if not query.strip() or self.store.count_vectors(ns) == 0:
             return []

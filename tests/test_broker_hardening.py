@@ -85,6 +85,18 @@ def test_egress_check_can_be_disabled():
     assert d.verdict is Verdict.NEEDS_APPROVAL  # firewall off -> just held
 
 
+def test_taint_eviction_is_fifo_and_keeps_recent_span():
+    b = _broker("send_email")
+    for i in range(300):  # flood past the 256-span bound
+        b.mark_tainted(f"old flagged injection span number {i} with padding text")
+    recent = "the most recently flagged dangerous injection payload to block now"
+    b.mark_tainted(recent)
+    # FIFO eviction never drops the newest span, so it still blocks egress.
+    d = _send(b, {"body": recent})
+    assert d.verdict is Verdict.DENY and d.policy_rule == "egress_blocked"
+    assert len(b._tainted) <= 256
+
+
 def test_mark_tainted_ignores_short_text():
     b = _broker("send_email")
     b.mark_tainted("ok")  # too short to be a meaningful taint span

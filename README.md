@@ -8,7 +8,8 @@ proactive *and* safe.
 > **Principle:** autonomy for preparation, approval for consequence.
 
 See **[FRAMEWORK.md](FRAMEWORK.md)** for the full strengths/weaknesses analysis
-of OpenClaw and Hermes and the design rationale.
+of OpenClaw and Hermes and the design rationale, and
+**[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability map.
 
 ## The loop
 

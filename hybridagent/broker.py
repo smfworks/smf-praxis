@@ -171,7 +171,9 @@ class GovernanceBroker:
         self.kill = KillSwitch()
         self.audit: list[AuditEntry] = []
         self.pending: dict[str, PendingApproval] = {}
-        self._tainted: set[str] = set()  # untrusted spans flagged for injection
+        # Untrusted spans flagged for injection, as an insertion-ordered set so the
+        # memory bound evicts the OLDEST span (FIFO), never the just-added one.
+        self._tainted: dict[str, None] = {}
         # Approval ids minted by THIS broker session. Idempotency dedups only
         # against these — never against approvals hydrated from a shared store —
         # so a fresh process can't collapse onto a prior session's pending action.
@@ -327,9 +329,9 @@ class GovernanceBroker:
         norm = _normalize_ws(text)
         if len(norm) < 16:  # ignore trivially short spans to avoid false positives
             return
-        self._tainted.add(norm)
-        while len(self._tainted) > 256:  # bound memory
-            self._tainted.pop()
+        self._tainted[norm] = None
+        while len(self._tainted) > 256:  # bound memory; evict the oldest (FIFO)
+            del self._tainted[next(iter(self._tainted))]
 
     def _egress_blocked(self, args: dict) -> str:
         if not self._tainted:
