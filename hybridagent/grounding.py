@@ -18,8 +18,10 @@ Three mechanisms, all offline-capable:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from .escalation import AdaptiveCascade
 from .llm import LLMClient
 from .rag import RetrievedChunk
 from .router import classify_sensitivity
@@ -58,6 +60,8 @@ class GroundedAnswer:
     verification: VerificationResult | None = None
     sources_used: list[int] = field(default_factory=list)
     contradictions: list = field(default_factory=list)
+    escalated: bool = False
+    tier: str = "routed"
 
 
 def _render_sources(sources: list[RetrievedChunk]) -> str:
@@ -67,9 +71,11 @@ def _render_sources(sources: list[RetrievedChunk]) -> str:
 
 class GroundedResponder:
     def __init__(self, llm: LLMClient | None = None,
-                 support_threshold: float = 0.5) -> None:
+                 support_threshold: float = 0.5,
+                 can_escalate: "Callable[[], bool] | None" = None) -> None:
         self.llm = llm or LLMClient()
         self.support_threshold = support_threshold
+        self._can_escalate = can_escalate
 
     # ------------------------------------------------------------------ answer
     def answer(self, question: str, sources: list[RetrievedChunk]) -> GroundedAnswer:
@@ -113,14 +119,26 @@ class GroundedResponder:
             f"are insufficient, reply with exactly '{ABSTAIN}'. Never use "
             "knowledge beyond the SOURCES.")
         prompt = f"QUESTION: {question}\n\nSOURCES:\n{rendered}\n\nGrounded answer:"
-        out = self.llm.complete(prompt, system, role="general",
-                                sensitivity=classify_sensitivity(rendered))
-        abstained = out.strip().upper().startswith(ABSTAIN)
+        sens = classify_sensitivity(rendered)
+
+        def solve(difficulty: str | None) -> str:
+            return self.llm.complete(prompt, system, role="general",
+                                     sensitivity=sens, difficulty=difficulty)
+
+        def accept(text: str) -> bool:
+            # An on-source answer (didn't abstain) is good enough; an abstention
+            # is the low-confidence signal that triggers escalation.
+            return not text.strip().upper().startswith(ABSTAIN)
+
+        result = AdaptiveCascade(self._can_escalate).run(solve, accept)
+        out = result.answer
+        abstained = not accept(out)
         used = sorted({int(m) for m in _CITE_RE.findall(out)
                        if 1 <= int(m) <= len(sources)})
         ans = GroundedAnswer(
             text=out, citations=[sources[i - 1].source for i in used],
-            abstained=abstained, sources_used=used)
+            abstained=abstained, sources_used=used,
+            escalated=result.escalated, tier=result.tier)
         if not abstained:
             ans.verification = self.verify(out, sources)
         return ans

@@ -116,9 +116,10 @@ class LLMClient:
 
     # ------------------------------------------------------------------ public
     def complete(self, prompt: str, system: str | None = None,
-                 role: str = "general", sensitivity: str = NORMAL) -> str:
+                 role: str = "general", sensitivity: str = NORMAL,
+                 difficulty: str | None = None) -> str:
         if self._effective_mode() == "real":
-            return self._route(prompt, system, role, sensitivity)
+            return self._route(prompt, system, role, sensitivity, difficulty)
         return self._mock_complete(prompt, system)
 
     def summarize(self, text: str, role: str = "summarizer",
@@ -245,8 +246,9 @@ class LLMClient:
 
     # ------------------------------------------------------------------- route
     def _route(self, prompt: str, system: str | None,
-               role: str, sensitivity: str) -> str:
-        candidates = self.router.select(role, sensitivity, _difficulty_of(prompt))
+               role: str, sensitivity: str, difficulty: str | None = None) -> str:
+        candidates = self.router.select(role, sensitivity,
+                                        difficulty or _difficulty_of(prompt))
         if not candidates:
             raise RuntimeError(
                 "No provider configured. Run 'praxis onboard' to pick a "

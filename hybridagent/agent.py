@@ -360,7 +360,13 @@ class PraxisAgent:
             sources.append(RetrievedChunk(
                 text=item.text, source=f"memory:{item.kind}", score=1.0,
                 kind="memory", provenance=item.provenance))
-        answer = GroundedResponder(self.llm).answer(question, sources)
+        def _under_budget() -> bool:
+            if self.store is None:
+                return True
+            b = self.store.get_budget()
+            return not (b["limit_usd"] > 0 and b["spent_usd"] >= b["limit_usd"])
+        answer = GroundedResponder(
+            self.llm, can_escalate=_under_budget).answer(question, sources)
         # Annotate with contradiction findings — caller / CLI can show these.
         try:
             from .contradiction import detect
