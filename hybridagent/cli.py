@@ -430,7 +430,8 @@ def cmd_pack(args: argparse.Namespace) -> int:
             print(f"error: {exc}")
             return 1
         extra = f" (compliance: {p.compliance_mode})" if p.compliance_mode else ""
-        print(f"activated '{p.name}'{extra}")
+        kn = f"; ingested {len(p.knowledge)} knowledge source(s)" if p.knowledge else ""
+        print(f"activated '{p.name}'{extra}{kn}")
         return 0
     if action == "deactivate":
         pack.deactivate()

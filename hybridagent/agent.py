@@ -372,6 +372,11 @@ class PraxisAgent:
         sources: list = []
         if self.rag is not None:
             sources.extend(self.rag.retrieve(question, k=k))
+        try:
+            from . import pack as _pack
+            sources.extend(_pack.knowledge_chunks(question, self.store, k=k))
+        except Exception:
+            pass
         for item in self.memory.recall(question, k=3):
             sources.append(RetrievedChunk(
                 text=item.text, source=f"memory:{item.kind}", score=1.0,

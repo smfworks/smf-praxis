@@ -19,8 +19,9 @@ domain (legal, medical, ...). A pack is a directory with a ``pack.json`` manifes
     }
 
 p07 applies the persona (system prompt), compliance mode, risk-policy overrides,
-and the tool allowlist. Skills / knowledge / theme / evals are carried in the
-manifest and wired up by later roadmap items (p08-p11).
+and the tool allowlist; p10 ingests the manifest's ``knowledge`` files into a
+``pack:<name>`` RAG namespace on activation and grounds chat answers in them.
+Skills / theme / model are carried in the manifest for later roadmap items.
 """
 from __future__ import annotations
 
@@ -182,8 +183,9 @@ def install_pack(src: str) -> "VerticalPack":
     return loaded
 
 
-def activate(name: str) -> "VerticalPack":
-    """Set a pack active: persist the pointer and apply its compliance mode."""
+def activate(name: str, store=None) -> "VerticalPack":
+    """Set a pack active: persist the pointer, apply its compliance mode, and
+    ingest any bundled knowledge into the pack's namespace (best-effort)."""
     pk = load_pack(name)
     if pk is None:
         raise ValueError(f"unknown pack '{name}'")
@@ -191,7 +193,12 @@ def activate(name: str) -> "VerticalPack":
     if pk.compliance_mode:
         try:
             from .persistence import Store
-            Store.open().set_compliance_mode(pk.compliance_mode)
+            (store or Store.open()).set_compliance_mode(pk.compliance_mode)
+        except Exception:
+            pass
+    if pk.knowledge:
+        try:
+            ingest_knowledge(pk, store)
         except Exception:
             pass
     return pk
@@ -244,6 +251,50 @@ def apply_active_to_broker(broker) -> "VerticalPack | None":
         return pk
     except Exception:
         return None
+
+
+def pack_ns(name: str) -> str:
+    """The RAG namespace that isolates a pack's bundled knowledge."""
+    return f"pack:{name}"
+
+
+def ingest_knowledge(pk: "VerticalPack", store=None) -> int:
+    """Ingest a pack's ``knowledge`` files into ``pack:<name>`` (idempotent).
+
+    Each entry is a path relative to the pack directory. Text/markdown are read
+    directly; other formats fall back to the document extractor. Returns the
+    total chunk count. Never raises if RAG/embeddings are unavailable.
+    """
+    if not pk.knowledge or not pk.path:
+        return 0
+    from .persistence import Store
+    from .rag import Rag
+    store = store or Store.open()
+    rag = Rag(store, ns=pack_ns(pk.name))
+    base = Path(pk.path)
+    total = 0
+    for entry in pk.knowledge:
+        fp = base / str(entry)
+        if not fp.is_file():
+            continue
+        if fp.suffix.lower() in (".md", ".txt"):
+            total += rag.ingest_text(fp.read_text(encoding="utf-8"), source=fp.name,
+                                     provenance=f"pack:{pk.name}:{fp.name}")
+        else:
+            total += rag.ingest_file(fp)[1]
+    return total
+
+
+def knowledge_chunks(query: str, store=None, k: int = 4) -> list:
+    """Retrieve the active pack's knowledge chunks for ``query`` ([] if none)."""
+    try:
+        pk = active()
+        if pk is None or not pk.knowledge:
+            return []
+        from .rag import Rag
+        return Rag(store, ns=pack_ns(pk.name)).retrieve(query, k=k)
+    except Exception:
+        return []
 
 
 def compose_system(base: str) -> str:

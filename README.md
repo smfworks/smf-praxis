@@ -329,7 +329,9 @@ a ready-to-activate pack — both human-readable and reproducible by an agent:
    `_PRODUCTIVITY_RISK` for office work). Add common phrasings to `_ALIASES`.
 2. **Bundled pack** (optional) — create `hybridagent/packs/<name>/pack.json` mirroring
    the template so users can `praxis pack activate <name>` with no scaffolding. The
-   wheel ships `packs/*/pack.json` automatically.
+   wheel ships `packs/*/pack.json` automatically. To bundle **knowledge** (p10), drop
+   `.md`/`.txt` files in the pack dir and list them under `"knowledge": [...]`; on
+   activate they're ingested into a `pack:<name>` RAG namespace and ground chat answers.
 3. **Tests** — extend `tests/test_pack.py` (templates list, alias resolution, posture).
 4. **Eval pack** (p09) — add one `VerticalSpec` row to `hybridagent/vertical_evals.py`
    (name, persona keyword, autonomous + held risk classes, compliance mode). The

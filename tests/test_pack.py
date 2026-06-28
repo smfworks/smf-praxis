@@ -196,3 +196,35 @@ def test_create_from_homeschool_template_seeds_pack(tmp_path, monkeypatch):
     assert p is not None and p.compliance_mode == "autonomous"
     assert p.risk_policy["autonomousRisks"] == ["read", "draft"]
 
+
+# --- p10: pack knowledge bundles ---------------------------------------------
+def test_bundled_homeschool_pack_has_knowledge(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    assert "knowledge.md" in pack.list_packs()["homeschool"].knowledge
+
+
+def test_activate_ingests_knowledge_and_scopes_retrieval(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRAXIS_EMBED", "mock")
+    from hybridagent.persistence import Store
+    d = pack.packs_dir() / "hs"
+    d.mkdir(parents=True)
+    (d / "kn.md").write_text("Homeschool attendance logs span 180 instructional days.",
+                             encoding="utf-8")
+    (d / "pack.json").write_text(json.dumps({
+        "name": "hs", "knowledge": ["kn.md"], "complianceMode": "autonomous"}),
+        encoding="utf-8")
+    store = Store.open(tmp_path / "kb.db")
+    n = pack.ingest_knowledge(pack.load_pack("hs"), store)
+    assert n >= 1
+    pack.activate("hs")
+    hits = pack.knowledge_chunks("attendance instructional days", store, k=3)
+    assert hits and "attendance" in hits[0].text.lower()
+    assert store.count_vectors(pack.pack_ns("hs")) >= 1  # isolated namespace
+
+
+def test_knowledge_chunks_empty_without_active_pack(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    from hybridagent.persistence import Store
+    assert pack.knowledge_chunks("anything", Store.open(tmp_path / "k.db")) == []
+
