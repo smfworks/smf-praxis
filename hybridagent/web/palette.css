@@ -1,0 +1,38 @@
+/* Praxis Command Palette — Ctrl/Cmd+K to run any command or search across memory,
+   runs, board cards, and the audit trail. Modular shell asset. */
+
+#cmdk { cursor: pointer; font-family: ui-monospace, Consolas, monospace; }
+#cmdk:hover { border-color: var(--accent); color: var(--text); }
+
+.pl-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .55); backdrop-filter: blur(3px);
+  display: none; align-items: flex-start; justify-content: center; z-index: 80; padding: 8vh 1rem 1rem;
+}
+.pl-overlay.show { display: flex; }
+.pl-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: .9rem;
+  box-shadow: var(--shadow); width: min(620px, 96vw); max-height: 70vh; overflow: hidden; display: flex; flex-direction: column;
+}
+.pl-input {
+  background: transparent; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); font: inherit; font-size: 1rem; padding: .9rem 1rem; outline: none;
+}
+.pl-input::placeholder { color: var(--faint); }
+.pl-list { overflow-y: auto; padding: .35rem; }
+.pl-empty { color: var(--faint); font-size: .85rem; padding: .8rem 1rem; }
+.pl-item {
+  display: flex; align-items: center; gap: .6rem; padding: .5rem .6rem;
+  border-radius: .5rem; cursor: pointer;
+}
+.pl-item.active { background: var(--bg2); }
+.pl-badge {
+  font-size: .6rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 1rem; padding: .08rem .45rem; flex: 0 0 auto; min-width: 3.2rem; text-align: center;
+}
+.pl-badge.pl-cmd { color: var(--accent); border-color: var(--accent); }
+.pl-badge.pl-run { color: var(--ok); border-color: var(--ok); }
+.pl-badge.pl-audit { color: var(--warn); border-color: var(--warn); }
+.pl-badge.pl-card { color: var(--accent2); border-color: var(--accent2); }
+.pl-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; color: var(--text); }
+.pl-hint { color: var(--faint); font-size: .72rem; white-space: nowrap; }

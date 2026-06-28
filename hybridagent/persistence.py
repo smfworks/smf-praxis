@@ -338,6 +338,21 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def list_memory(self, tier: str | None = None, limit: int = 300) -> list[dict]:
+        """All memory items (optionally one tier), newest first — Memory Studio."""
+        cols = ("id,tier,text,provenance,kind,salience,access_count,"
+                "last_access_ts,expires_at,ts")
+        with self._lock:
+            if tier:
+                rows = self._conn.execute(
+                    f"SELECT {cols} FROM memory_items WHERE tier=? "
+                    "ORDER BY id DESC LIMIT ?", (tier, limit)).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT {cols} FROM memory_items ORDER BY id DESC LIMIT ?",
+                    (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
     def record_memory_access(self, memory_id: int) -> None:
         with self._lock:
             self._conn.execute(

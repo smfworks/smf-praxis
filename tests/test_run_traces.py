@@ -126,7 +126,7 @@ def test_traces_and_static_over_http(tmp_path, monkeypatch):
         with urllib.request.urlopen(f"{url}/web/run-graph.js", timeout=10) as r:
             body = r.read().decode()
             ctype = r.headers.get("Content-Type", "")
-        assert "EventSource" in body and "javascript" in ctype
+        assert "PraxisRunGraph" in body and "javascript" in ctype
 
         # Path traversal out of the web bundle is refused.
         try:

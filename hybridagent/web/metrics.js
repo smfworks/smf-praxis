@@ -148,8 +148,7 @@
 
   function connect() {
     try {
-      var es = new EventSource("/events");
-      es.addEventListener("run", function () { load(); });
+      window.PraxisBus.on("run", function () { load(); });
     } catch (_) {}
   }
 

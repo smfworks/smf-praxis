@@ -144,9 +144,8 @@
 
   function connect() {
     try {
-      var es = new EventSource("/events");
-      es.addEventListener("run", function () { load(); });
-      es.addEventListener("alert", function () { load(); });
+      window.PraxisBus.on("run", function () { load(); });
+      window.PraxisBus.on("alert", function () { load(); });
     } catch (_) {}
   }
 

@@ -1,0 +1,47 @@
+/* Praxis Memory & Knowledge Studio — browse tiered memory (working / episodic /
+   durable) with provenance + salience, add/delete entries. Modular shell asset. */
+
+#memory-mount { display: flex; flex-direction: column; gap: .5rem; }
+.mem-summary { display: flex; flex-wrap: wrap; gap: .3rem; }
+.mem-chip { font-size: .68rem; color: var(--muted); background: var(--bg2); border: 1px solid var(--border); border-radius: 1rem; padding: .12rem .5rem; }
+.mem-chip.mem-durable { color: var(--accent); }
+.mem-chip.mem-episodic { color: var(--ok); }
+.mem-open {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; font: inherit; font-size: .8rem;
+}
+.mem-open:hover { border-color: var(--accent); }
+
+.mem-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.mem-overlay.show { display: flex; }
+.mem-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(820px, 96vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.mem-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+.mem-head b { font-size: 1.05rem; }
+.mem-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.mem-close:hover { color: var(--text); border-color: var(--accent); }
+
+.mem-add { display: flex; gap: .4rem; margin-bottom: .6rem; flex-wrap: wrap; }
+.mem-add select, .mem-add input {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .45rem; padding: .4rem .5rem; font: inherit; font-size: .8rem;
+}
+.mem-add input { flex: 1; min-width: 10rem; }
+.mem-add button { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; border-radius: .45rem; padding: .4rem .8rem; cursor: pointer; font-size: .8rem; }
+
+.mem-section { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: .8rem 0 .4rem; }
+.mem-list { display: flex; flex-direction: column; gap: .35rem; }
+.mem-item { background: var(--bg2); border: 1px solid var(--border); border-radius: .55rem; padding: .5rem .6rem; }
+.mem-text { font-size: .82rem; color: var(--text); word-break: break-word; margin-bottom: .35rem; }
+.mem-meta { display: flex; align-items: center; gap: .5rem; font-size: .68rem; color: var(--faint); }
+.mem-prov { color: var(--accent); }
+.mem-del { margin-left: auto; background: var(--bg); border: 1px solid var(--border); color: var(--muted); border-radius: .4rem; padding: .1rem .45rem; cursor: pointer; }
+.mem-del:hover { color: var(--bad); border-color: var(--bad); }

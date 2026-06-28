@@ -244,8 +244,7 @@
 
   function connect() {
     try {
-      var es = new EventSource("/events");
-      es.addEventListener("run", function (e) {
+      window.PraxisBus.on("run", function (e) {
         var ev;
         try { ev = JSON.parse(e.data); } catch (_) { return; }
         var p = ev.payload || {};

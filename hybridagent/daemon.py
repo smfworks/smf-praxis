@@ -386,17 +386,51 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/safety.css" />
 <link rel="stylesheet" href="/web/metrics.css" />
 <link rel="stylesheet" href="/web/inference.css" />
+<link rel="stylesheet" href="/web/memory.css" />
+<link rel="stylesheet" href="/web/palette.css" />
+<script>
+/* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
+ * opening their own /events stream saturated the browser's 6-connection-per-host
+ * limit and starved every /api fetch (panels stuck on "Loading…"). A single
+ * stream fanned out to per-event subscribers keeps connections free for fetches. */
+window.PraxisBus = (function () {
+  var src = null, handlers = {}, bound = {};
+  function bind(type) {
+    if (!src || bound[type]) return;
+    bound[type] = true;
+    src.addEventListener(type, function (e) {
+      var hs = handlers[type] || [];
+      for (var i = 0; i < hs.length; i++) { try { hs[i](e); } catch (_) {} }
+    });
+  }
+  function ensure() {
+    if (src || typeof EventSource === "undefined") return;
+    try { src = new EventSource("/events"); } catch (_) { src = null; return; }
+    Object.keys(handlers).forEach(bind);
+  }
+  return {
+    on: function (type, fn) {
+      (handlers[type] = handlers[type] || []).push(fn);
+      ensure();
+      bind(type);
+    }
+  };
+})();
+</script>
 <script src="/web/run-graph.js" defer></script>
 <script src="/web/board.js" defer></script>
 <script src="/web/safety.js" defer></script>
 <script src="/web/metrics.js" defer></script>
 <script src="/web/inference.js" defer></script>
+<script src="/web/memory.js" defer></script>
+<script src="/web/palette.js" defer></script>
 </head>
 <body>
 <header>
   <div class="brand"><span class="logo"></span> Praxis</div>
   <span class="pill modelpill"><span class="dot"></span><span id="modelBadge">—</span></span>
   <span class="spacer"></span>
+  <button id="cmdk" class="badge" type="button" title="Command palette (Ctrl/Cmd+K)">⌘K</button>
   <span id="status" class="badge">checking…</span>
 </header>
 
@@ -482,6 +516,10 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
     <div class="panel pad">
       <h2>Metrics</h2>
       <div id="metrics-mount"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Memory</h2>
+      <div id="memory-mount"><div class="empty">Loading…</div></div>
     </div>
     <div class="panel pad">
       <h2>Approvals</h2>
@@ -1038,15 +1076,14 @@ async function approve(id){
 }
 function connectEvents(){
   try {
-    const es = new EventSource('/events');
-    es.addEventListener('task', (e) => {
+    window.PraxisBus.on('task', (e) => {
       try {
         const ev = JSON.parse(e.data); const p = ev.payload || {};
         showToast('Task '+(p.task_id||'')+' → '+(p.status||''));
       } catch(_) {}
       refresh();
     });
-    // EventSource auto-reconnects on error; the 4s poll below stays as a fallback.
+    // Shared bus auto-reconnects on error; the 4s poll below stays as a fallback.
   } catch(_) { /* SSE unsupported — polling still keeps the UI fresh. */ }
 }
 
@@ -1274,6 +1311,19 @@ class _StatusHandler(BaseHTTPRequestHandler):
                     self._json_response(self.daemon.budget_set(
                         float(payload.get("limit_usd", 0) or 0)))
                 return
+            if self.path == "/api/memory":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.memory_add(
+                    payload.get("tier", "durable"), payload.get("text", ""),
+                    payload.get("provenance", "dashboard")))
+                return
+            if self.path == "/api/memory/delete":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.memory_delete(
+                    int(payload.get("id", 0) or 0)))
+                return
             if self.path == "/api/board/create":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1431,6 +1481,16 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/budget":
                 body = json.dumps(self.daemon.budget_status(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/memory":
+                body = json.dumps(self.daemon.memory_list(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path.startswith("/api/search"):
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                body = json.dumps(self.daemon.search(q), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path.startswith("/web/"):
@@ -2183,6 +2243,55 @@ class Daemon:
                 router["n_samples"] = int(rm.get("n_samples", 0))
         return {"model": self.model_info(), "router": router,
                 "budget": self.budget_status()}
+
+    # ----------------------------------------------------------- memory studio
+    _MEM_TIERS = ("working", "episodic", "durable")
+
+    def memory_list(self) -> dict:
+        if self.store is None:
+            return {"items": [], "by_tier": {}, "tiers": list(self._MEM_TIERS)}
+        items = self.store.list_memory()
+        by_tier: dict[str, int] = {}
+        for it in items:
+            by_tier[it["tier"]] = by_tier.get(it["tier"], 0) + 1
+        return {"items": items, "by_tier": by_tier, "tiers": list(self._MEM_TIERS)}
+
+    def memory_add(self, tier: str, text: str, provenance: str = "dashboard") -> dict:
+        self._ensure_agent()
+        assert self.store is not None
+        tier = tier if tier in self._MEM_TIERS else "durable"
+        text = (text or "").strip()
+        if not text:
+            return {"error": "text required"}
+        mid = self.store.add_memory(tier, text, provenance or "dashboard",
+                                    kind="note")
+        return {"id": mid, "tier": tier}
+
+    def memory_delete(self, memory_id: int) -> dict:
+        if self.store is None:
+            return {"error": "no store"}
+        return {"deleted": bool(self.store.delete_memory(int(memory_id)))}
+
+    # ----------------------------------------------------------- global search
+    def search(self, q: str, limit: int = 8) -> dict:
+        """Cross-surface governed search over memory, runs, board cards, audit."""
+        q = (q or "").strip().lower()
+        if self.store is None or not q:
+            return {"query": q, "memory": [], "runs": [], "cards": [], "audit": []}
+
+        def hit(s: str) -> bool:
+            return q in (s or "").lower()
+
+        memory = [m for m in self.store.list_memory(limit=500)
+                  if hit(m["text"]) or hit(m["provenance"])][:limit]
+        runs = [r for r in self.store.list_runs(limit=200)
+                if hit(r["goal"]) or hit(r["run_id"])][:limit]
+        cards = [c for c in self.store.list_cards()
+                 if hit(c["title"]) or hit(c["goal"])][:limit]
+        audit = [a for a in self.store.list_audit(limit=500)
+                 if hit(a["tool"]) or hit(a["verdict"]) or hit(a["policy_rule"])][:limit]
+        return {"query": q, "memory": memory, "runs": runs, "cards": cards,
+                "audit": audit}
 
     def agent_card(self) -> dict:
         """A2A: advertise this agent's capabilities and tools for discovery."""
