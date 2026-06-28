@@ -2151,12 +2151,15 @@ class Daemon:
     @classmethod
     def from_env(cls, work_dir: str | None = None,
                  autonomous_risks: set[RiskClass] | None = None,
-                 status_port: int | None = None) -> "Daemon":
+                 status_port: int | None = None,
+                 status_host: str | None = None) -> "Daemon":
         store = Store.open()
         agent = PraxisAgent.persistent(llm=LLMClient(), work_dir=work_dir)
         if autonomous_risks is not None:
             agent.broker.policy.autonomous_risks = set(autonomous_risks)
-        return cls(store=store, agent=agent, status_port=status_port)
+        host = status_host or os.environ.get("PRAXIS_HOST", _DEFAULT_HOST)
+        return cls(store=store, agent=agent, status_port=status_port,
+                   status_host=host)
 
     def _setup_signal_handlers(self) -> None:
         for sig in (signal.SIGTERM, signal.SIGINT):

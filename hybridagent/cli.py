@@ -127,7 +127,8 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     from .daemon import Daemon, daemon_logs, daemon_status
     action = args.action or "status"
     if action == "start":
-        daemon = Daemon.from_env(work_dir=args.work_dir, status_port=args.port)
+        daemon = Daemon.from_env(work_dir=args.work_dir, status_port=args.port,
+                                 status_host=getattr(args, "host", None))
         return daemon.start()
     if action == "status":
         status = daemon_status()
@@ -1097,6 +1098,8 @@ def build_parser() -> argparse.ArgumentParser:
     pdm.add_argument("action", nargs="?", choices=["start", "stop", "status", "logs", "submit"],
                      help="daemon action")
     pdm.add_argument("--port", type=int, default=None, help="control HTTP port")
+    pdm.add_argument("--host", default=None,
+                     help="bind host (default 127.0.0.1; set 0.0.0.0 or PRAXIS_HOST in containers)")
     pdm.add_argument("--work-dir", default=None, help="working directory")
     pdm.add_argument("--goal", default="", help="goal to submit (with submit action)")
     pdm.add_argument("--max-attempts", type=int, default=3)

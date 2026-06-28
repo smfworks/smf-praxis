@@ -95,6 +95,19 @@ python -m venv .venv
 pip install -e ".[dev]"     # editable + dev tools; or `pip install .` for core only
 ```
 
+### Docker
+
+```bash
+docker compose up        # Command Deck at http://127.0.0.1:8643
+```
+
+The image builds a wheel (dashboard assets included) and runs the governed daemon
+as a non-root user; `/data` is a volume holding the SQLite store, knowledge base,
+and config. It binds `0.0.0.0` inside the container, mapped to host loopback only
+— the dashboard has no auth yet (roadmap p12). Pass provider keys via the
+environment; with none set it runs offline on the mock LLM. A devcontainer
+(`.devcontainer/`) is included for VS Code.
+
 Everything runs offline with a deterministic mock LLM — no API keys required.
 
 ## Configure a model provider

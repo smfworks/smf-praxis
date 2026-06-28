@@ -1,0 +1,21 @@
+# One-command Praxis: `docker compose up` -> Command Deck at http://127.0.0.1:8643
+services:
+  praxis:
+    build: .
+    image: praxis-agent:local
+    # Bind to host loopback only — the dashboard has no auth yet (roadmap p12).
+    ports:
+      - "127.0.0.1:8643:8643"
+    volumes:
+      - praxis-data:/data
+    environment:
+      # Optional: pass provider keys through from your shell or a .env file.
+      # With nothing set, Praxis runs offline on the deterministic mock LLM.
+      - PRAXIS_LLM
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - OPENROUTER_API_KEY
+    restart: unless-stopped
+
+volumes:
+  praxis-data:

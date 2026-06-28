@@ -125,3 +125,28 @@ jobs:
           pip install -e ".[dev,mutation]"
       - name: Mutation-test the governance broker
         run: python scripts/mutation_test.py --fail-over 10
+
+  docker:
+    # Build the image and smoke-test the containerized dashboard so the Dockerfile
+    # (multi-stage build, bundled web/ assets, 0.0.0.0 binding) can't silently rot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t praxis-agent:ci .
+      - name: Run container and probe the dashboard
+        run: |
+          docker run -d --name praxis -p 127.0.0.1:8643:8643 praxis-agent:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8643/status >/dev/null 2>&1; then
+              echo "dashboard is up"; ok=1; break
+            fi
+            sleep 2
+          done
+          # The dashboard HTML must reference the bundled web/ assets and serve them.
+          curl -fsS http://127.0.0.1:8643/ | grep -q "/web/safety.js"
+          curl -fsS http://127.0.0.1:8643/web/safety.js | head -c 1 >/dev/null
+          docker logs praxis | tail -n 20
+          docker rm -f praxis
+          test "${ok:-0}" = "1"
+

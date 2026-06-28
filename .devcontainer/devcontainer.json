@@ -1,0 +1,17 @@
+{
+  "name": "praxis-agent",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -e '.[dev]'",
+  "forwardPorts": [8643],
+  "remoteEnv": {
+    "PRAXIS_HOST": "0.0.0.0"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff"
+      ]
+    }
+  }
+}
