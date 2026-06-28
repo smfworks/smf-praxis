@@ -359,8 +359,9 @@ A minimal `pack.json`:
 }
 ```
 
-Eval packs, white-label theming, and ready-made legal + medical packs build on
-this core (roadmap p09–p11).
+**Full guide:** [`docs/PACKS.md`](docs/PACKS.md) documents every manifest field,
+the CLI, knowledge/skills/model/theme wiring, eval packs, and a step-by-step
+recipe for humans and AI agents to extend Praxis to a new domain.
 
 ## Persistent tasks
 
