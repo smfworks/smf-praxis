@@ -236,7 +236,15 @@ def write_provider(provider_id: str, base_url: str, compatibility: str,
 
 
 def get_default_model() -> str | None:
-    return (load_config().get("agents", {}).get("defaults", {}).get("model"))
+    explicit = load_config().get("agents", {}).get("defaults", {}).get("model")
+    if explicit:
+        return explicit
+    # An active vertical pack may pin a model; the explicit config default wins.
+    try:
+        from . import pack
+        return pack.resolve_model()
+    except Exception:
+        return None
 
 
 def get_embed_model() -> str | None:

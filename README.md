@@ -334,6 +334,8 @@ a ready-to-activate pack — both human-readable and reproducible by an agent:
    activate they're ingested into a `pack:<name>` RAG namespace and ground chat answers.
    To bundle **skills** (p11), add inline `{name, trigger, body}` entries (or SKILL.md
    refs) under `"skills": [...]`; activate installs them into the shared skill library.
+   A pack may also pin `"model": "provider/model"` (config defaults still win) and
+   `"theme": {...}` tokens surfaced on the dashboard `/status`.
 3. **Tests** — extend `tests/test_pack.py` (templates list, alias resolution, posture).
 4. **Eval pack** (p09) — add one `VerticalSpec` row to `hybridagent/vertical_evals.py`
    (name, persona keyword, autonomous + held risk classes, compliance mode). The

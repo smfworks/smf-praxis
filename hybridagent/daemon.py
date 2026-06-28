@@ -1743,10 +1743,14 @@ class _StatusHandler(BaseHTTPRequestHandler):
         try:
             if self.path == "/status":
                 mgr = self.daemon.manager
+                from . import pack as _pack
+                _ap = _pack.active()
                 body = json.dumps({
                     "running": self.daemon.running,
                     "port": self.daemon.status_port,
                     "state": self.daemon.state.to_dict(),
+                    "pack": ({"name": _ap.name, "vertical": _ap.vertical,
+                              "theme": _ap.theme, "model": _ap.model} if _ap else None),
                     "pending_tasks": len(mgr.list(status="pending")) if mgr else 0,
                     "running_tasks": len(mgr.list(status="running")) if mgr else 0,
                     "waiting_approval_tasks": (
