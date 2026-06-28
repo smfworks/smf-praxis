@@ -1,0 +1,61 @@
+/* Praxis Inference Control — model/provider, role-routing, and an enforceable
+   spend budget with a live cost HUD. Modular shell asset. */
+
+#inference-mount { display: flex; flex-direction: column; gap: .5rem; }
+.if-model { font-size: .82rem; color: var(--text); display: flex; align-items: center; gap: .4rem; }
+.if-model .tag { font-size: .64rem; color: var(--muted); background: var(--bg2); border: 1px solid var(--border); border-radius: 1rem; padding: 0 .4rem; }
+.if-model .tag.live { color: var(--ok); border-color: var(--ok); }
+.if-hud { display: flex; flex-direction: column; gap: .25rem; }
+.if-hud .row { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); }
+.if-track { background: var(--bg2); border-radius: 1rem; height: .5rem; overflow: hidden; }
+.if-fill { height: 100%; background: var(--accent); border-radius: 1rem; }
+.if-fill.warn { background: var(--warn); }
+.if-fill.bad { background: var(--bad); }
+.if-open {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; font: inherit; font-size: .8rem;
+}
+.if-open:hover { border-color: var(--accent); }
+
+.if-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.if-overlay.show { display: flex; }
+.if-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(720px, 96vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.if-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+.if-head b { font-size: 1.05rem; }
+.if-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.if-close:hover { color: var(--text); border-color: var(--accent); }
+.if-section { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: .9rem 0 .5rem; }
+
+.if-kv { display: flex; justify-content: space-between; font-size: .8rem; padding: .25rem 0; border-bottom: 1px solid var(--border); }
+.if-kv .k { color: var(--muted); }
+.if-kv .v { color: var(--text); }
+
+.if-roles { display: flex; flex-wrap: wrap; gap: .4rem; }
+.if-role { background: var(--bg2); border: 1px solid var(--border); border-radius: .5rem; padding: .35rem .55rem; }
+.if-role .name { font-size: .8rem; color: var(--accent); }
+.if-role .tools { font-size: .66rem; color: var(--faint); margin-top: .15rem; }
+
+.if-budget { background: var(--bg); border: 1px solid var(--border); border-radius: .7rem; padding: .7rem; }
+.if-budget.over { border-color: var(--bad); }
+.if-budget .big { font-size: .82rem; color: var(--text); margin-bottom: .5rem; }
+.if-budget .warnmsg { color: var(--bad); font-size: .76rem; margin-bottom: .5rem; }
+.if-budget .ctrls { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.if-budget input {
+  width: 6rem; background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .45rem; padding: .35rem .5rem; font: inherit; font-size: .8rem;
+}
+.if-budget button {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .45rem; padding: .35rem .65rem; cursor: pointer; font-size: .78rem;
+}
+.if-budget button.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; }
+.if-budget button:hover { border-color: var(--accent); }

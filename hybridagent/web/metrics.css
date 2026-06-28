@@ -1,0 +1,49 @@
+/* Praxis Observability — eval-trend, governance decision mix, and run-status
+   metrics aggregated from the durable tables. Modular shell asset. */
+
+#metrics-mount { display: flex; flex-direction: column; gap: .5rem; }
+.mx-stat { display: flex; align-items: baseline; justify-content: space-between; font-size: .82rem; }
+.mx-stat b { color: var(--muted); font-weight: 500; }
+.mx-stat span { color: var(--text); font-variant-numeric: tabular-nums; }
+.mx-mini { display: flex; gap: .5rem; font-size: .72rem; }
+.mx-mini .ok { color: var(--ok); }
+.mx-mini .warn { color: var(--warn); }
+.mx-mini .bad { color: var(--bad); }
+.mx-open {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; font: inherit; font-size: .8rem;
+}
+.mx-open:hover { border-color: var(--accent); }
+
+.mx-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.mx-overlay.show { display: flex; }
+.mx-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(820px, 96vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.mx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+.mx-head b { font-size: 1.05rem; }
+.mx-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.mx-close:hover { color: var(--text); border-color: var(--accent); }
+.mx-section { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: .9rem 0 .5rem; }
+
+.mx-trend { display: flex; align-items: flex-end; gap: .35rem; height: 5rem; padding: .3rem; background: var(--bg); border: 1px solid var(--border); border-radius: .6rem; }
+.mx-bar { flex: 1; min-width: 6px; background: linear-gradient(180deg, var(--ok), rgba(60, 207, 109, .35)); border-radius: 3px 3px 0 0; position: relative; }
+.mx-bar.miss { background: linear-gradient(180deg, var(--warn), rgba(245, 166, 35, .3)); }
+.mx-bar > span { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: .6rem; color: var(--faint); white-space: nowrap; }
+
+.mx-rows { display: flex; flex-direction: column; gap: .35rem; }
+.mx-row { display: grid; grid-template-columns: 8rem 1fr 2.5rem; align-items: center; gap: .5rem; font-size: .76rem; }
+.mx-row .lbl { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-track { background: var(--bg2); border-radius: 1rem; height: .55rem; overflow: hidden; }
+.mx-fill { height: 100%; border-radius: 1rem; background: var(--accent); }
+.mx-fill.ok { background: var(--ok); }
+.mx-fill.warn { background: var(--warn); }
+.mx-fill.bad { background: var(--bad); }
+.mx-row .num { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }

@@ -384,9 +384,13 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/run-graph.css" />
 <link rel="stylesheet" href="/web/board.css" />
 <link rel="stylesheet" href="/web/safety.css" />
+<link rel="stylesheet" href="/web/metrics.css" />
+<link rel="stylesheet" href="/web/inference.css" />
 <script src="/web/run-graph.js" defer></script>
 <script src="/web/board.js" defer></script>
 <script src="/web/safety.js" defer></script>
+<script src="/web/metrics.js" defer></script>
+<script src="/web/inference.js" defer></script>
 </head>
 <body>
 <header>
@@ -470,6 +474,14 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
     <div class="panel pad">
       <h2>Safety Center</h2>
       <div id="safety-mount"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Inference</h2>
+      <div id="inference-mount"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Metrics</h2>
+      <div id="metrics-mount"><div class="empty">Loading…</div></div>
     </div>
     <div class="panel pad">
       <h2>Approvals</h2>
@@ -1253,6 +1265,15 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.killswitch_set(
                     bool(payload.get("engaged", False))))
                 return
+            if self.path == "/api/budget":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                if payload.get("reset"):
+                    self._json_response(self.daemon.budget_reset())
+                else:
+                    self._json_response(self.daemon.budget_set(
+                        float(payload.get("limit_usd", 0) or 0)))
+                return
             if self.path == "/api/board/create":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1398,6 +1419,18 @@ class _StatusHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/killswitch":
                 body = json.dumps(self.daemon.killswitch_status(),
                                   default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/metrics":
+                body = json.dumps(self.daemon.metrics(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/inference":
+                body = json.dumps(self.daemon.inference_info(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/budget":
+                body = json.dumps(self.daemon.budget_status(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path.startswith("/web/"):
@@ -1960,12 +1993,26 @@ class Daemon:
 
         Records a durable, replayable run trace and pushes live ``run`` events to
         the dashboard SSE bus so the Run Graph can render the governed loop live.
+        Enforces the spend budget: if the cap is reached the run is blocked (and an
+        ``alert`` event is pushed) rather than executed — cost *control*, not just
+        cost visibility.
         """
         self._ensure_agent()
         assert self.agent is not None
         from .agent_service import AgentService
-        run_id = f"run-{uuid.uuid4().hex[:10]}"
         store = self.store
+        if store is not None:
+            b = store.get_budget()
+            if b["limit_usd"] > 0 and b["spent_usd"] >= b["limit_usd"]:
+                self.emit_event("alert", {"kind": "budget_exceeded",
+                                          "spent_usd": b["spent_usd"],
+                                          "limit_usd": b["limit_usd"]})
+                self._log("warning", "agent run blocked: budget cap reached")
+                return {"goal": goal, "status": "blocked",
+                        "summary": "budget cap reached; raise or reset the budget",
+                        "replans": 0, "steps": [], "held_approvals": [],
+                        "run_id": "", "blocked": True}
+        run_id = f"run-{uuid.uuid4().hex[:10]}"
         if store is not None:
             try:
                 store.start_run(run_id, goal, kind="plan")
@@ -1986,6 +2033,9 @@ class Daemon:
         if store is not None:
             try:
                 store.finish_run(run_id, str(result.get("status", "")))
+                # Estimate spend (placeholder until real provider token accounting);
+                # one step ~= $0.01. With a real provider, swap for actual cost.
+                store.add_spend(round(0.01 * max(1, len(result.get("steps", []))), 4))
             except Exception:
                 pass
         result["run_id"] = run_id
@@ -2087,6 +2137,52 @@ class Daemon:
         if self.store is None:
             return {"entries": []}
         return {"entries": self.store.list_audit(limit=limit)}
+
+    # ----------------------------------------------------------- observability
+    def metrics(self) -> dict:
+        """Aggregate eval + governance + run metrics for the observability panel."""
+        if self.store is None:
+            return {"evals": [],
+                    "decisions": {"by_verdict": {}, "by_rule": {}, "total": 0},
+                    "runs": {"by_status": {}, "total": 0}}
+        return {
+            "evals": list(reversed(self.store.list_eval_runs(limit=20))),
+            "decisions": self.store.audit_stats(),
+            "runs": self.store.run_stats(),
+        }
+
+    # ------------------------------------------------------- inference control
+    def budget_status(self) -> dict:
+        if self.store is None:
+            return {"limit_usd": 0.0, "spent_usd": 0.0, "runs": 0, "over": False}
+        b = self.store.get_budget()
+        b["over"] = bool(b["limit_usd"] > 0 and b["spent_usd"] >= b["limit_usd"])
+        return b
+
+    def budget_set(self, limit_usd: float) -> dict:
+        self._ensure_agent()
+        assert self.store is not None
+        self.store.set_budget_limit(limit_usd)
+        return self.budget_status()
+
+    def budget_reset(self) -> dict:
+        self._ensure_agent()
+        assert self.store is not None
+        self.store.reset_budget()
+        return self.budget_status()
+
+    def inference_info(self) -> dict:
+        """Model + provider, role-routing vocabulary + learned-router state, and
+        the live spend budget — the Inference Control Center payload."""
+        from .orchestrator import ROLE_TO_TOOLS
+        router = {"roles": sorted(ROLE_TO_TOOLS), "trained": False, "n_samples": 0}
+        if self.store is not None:
+            rm = self.store.load_router_model()
+            if rm:
+                router["trained"] = True
+                router["n_samples"] = int(rm.get("n_samples", 0))
+        return {"model": self.model_info(), "router": router,
+                "budget": self.budget_status()}
 
     def agent_card(self) -> dict:
         """A2A: advertise this agent's capabilities and tools for discovery."""

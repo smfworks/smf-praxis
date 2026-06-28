@@ -230,6 +230,13 @@ CREATE TABLE IF NOT EXISTS board_cards (
     created_ts REAL NOT NULL,
     updated_ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS budget (
+    name         TEXT PRIMARY KEY,
+    limit_usd    REAL NOT NULL DEFAULT 0,
+    spent_usd    REAL NOT NULL DEFAULT 0,
+    runs         INTEGER NOT NULL DEFAULT 0,
+    period_start REAL NOT NULL
+);
 """
 
 
@@ -1020,6 +1027,76 @@ class Store:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def audit_stats(self) -> dict:
+        """Decision mix by verdict and policy rule — powers the metrics panel."""
+        with self._lock:
+            vr = self._conn.execute(
+                "SELECT verdict, COUNT(*) n FROM audit_entries GROUP BY verdict",
+            ).fetchall()
+            rr = self._conn.execute(
+                "SELECT policy_rule, COUNT(*) n FROM audit_entries "
+                "WHERE policy_rule != '' GROUP BY policy_rule",
+            ).fetchall()
+            total = self._conn.execute(
+                "SELECT COUNT(*) n FROM audit_entries").fetchone()["n"]
+        return {
+            "by_verdict": {r["verdict"]: r["n"] for r in vr},
+            "by_rule": {r["policy_rule"]: r["n"] for r in rr},
+            "total": int(total),
+        }
+
+    def run_stats(self) -> dict:
+        """Run-trace counts by final status — powers the metrics panel."""
+        with self._lock:
+            rs = self._conn.execute(
+                "SELECT status, COUNT(*) n FROM runs GROUP BY status").fetchall()
+            total = self._conn.execute("SELECT COUNT(*) n FROM runs").fetchone()["n"]
+        return {"by_status": {r["status"]: r["n"] for r in rs}, "total": int(total)}
+
+    # ----------------------------------------------------------------- budget
+    def get_budget(self, name: str = "default") -> dict:
+        """Fetch (creating on first use) the spend budget for ``name``."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT name,limit_usd,spent_usd,runs,period_start FROM budget "
+                "WHERE name=?", (name,)).fetchone()
+            if row is None:
+                now = time.time()
+                self._conn.execute(
+                    "INSERT INTO budget(name,limit_usd,spent_usd,runs,period_start) "
+                    "VALUES (?,?,?,?,?)", (name, 0.0, 0.0, 0, now))
+                self._conn.commit()
+                return {"name": name, "limit_usd": 0.0, "spent_usd": 0.0,
+                        "runs": 0, "period_start": now}
+        return dict(row)
+
+    def set_budget_limit(self, limit_usd: float, name: str = "default") -> dict:
+        self.get_budget(name)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE budget SET limit_usd=? WHERE name=?",
+                (max(0.0, float(limit_usd)), name))
+            self._conn.commit()
+        return self.get_budget(name)
+
+    def add_spend(self, amount: float, name: str = "default") -> dict:
+        self.get_budget(name)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE budget SET spent_usd=spent_usd+?, runs=runs+1 WHERE name=?",
+                (max(0.0, float(amount)), name))
+            self._conn.commit()
+        return self.get_budget(name)
+
+    def reset_budget(self, name: str = "default") -> dict:
+        self.get_budget(name)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE budget SET spent_usd=0, runs=0, period_start=? WHERE name=?",
+                (time.time(), name))
+            self._conn.commit()
+        return self.get_budget(name)
 
     # ------------------------------------------------------------- work board
     def add_card(self, card_id: str, title: str, goal: str,
