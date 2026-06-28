@@ -53,7 +53,7 @@
       cards = d.cards || [];
       renderPanel();
       if (overlay && overlay.classList.contains("show")) renderBoard();
-    } catch (_) { /* keep prior view */ }
+    } catch (_) { window.PraxisPanelError(mount, "Work Board", load); }
   }
 
   function renderPanel() {

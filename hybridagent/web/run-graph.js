@@ -69,7 +69,7 @@
         row.onclick = function () { openRun(r.run_id); };
         list.appendChild(row);
       });
-    } catch (_) { /* daemon may be starting; keep prior view */ }
+    } catch (_) { window.PraxisPanelError(list, "Run Graph", loadRuns); }
   }
 
   function computeModel(events) {

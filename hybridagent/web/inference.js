@@ -44,7 +44,7 @@
       info = await api("/api/inference");
       renderPanel();
       if (overlay && overlay.classList.contains("show")) renderOverlay();
-    } catch (_) { /* keep prior */ }
+    } catch (_) { window.PraxisPanelError(mount, "Inference", load); }
   }
 
   function renderPanel() {

@@ -220,6 +220,21 @@ header {
 .badge { font-size: .75rem; padding: .28rem .6rem; border-radius: 999px; background: var(--border); color: var(--muted); }
 .badge.ok { background: rgba(60,207,109,.15); color: var(--ok); }
 .badge.bad { background: rgba(255,90,95,.15); color: var(--bad); }
+.pill.conn-live { color: var(--ok); }
+.pill.conn-live .dot { background: var(--ok); }
+.pill.conn-reconnecting { color: #f5a623; }
+.pill.conn-reconnecting .dot { background: #f5a623; animation: connpulse 1s ease-in-out infinite; }
+.pill.conn-offline { color: var(--bad); }
+.pill.conn-offline .dot { background: var(--bad); }
+@keyframes connpulse { 50% { opacity: .35; } }
+.toasts { position: fixed; bottom: 1.1rem; right: 1.1rem; display: flex; flex-direction: column; gap: .5rem; z-index: 9999; }
+.toast { padding: .55rem .85rem; border-radius: .6rem; font-size: .82rem; background: var(--panel2); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow); opacity: 0; transform: translateY(8px); transition: opacity .25s ease, transform .25s ease; max-width: 22rem; }
+.toast.show { opacity: 1; transform: none; }
+.toast.warn { border-color: #f5a623; }
+.toast.error { border-color: var(--bad); }
+.toast.ok { border-color: var(--ok); }
+.px-err { padding: .7rem; color: var(--bad); font-size: .82rem; }
+.px-err .px-retry { margin-left: .4rem; cursor: pointer; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: .4rem; padding: .15rem .5rem; font-size: .78rem; }
 
 main { display: grid; grid-template-columns: 15rem 1fr 22rem; gap: 1rem; padding: 1rem; max-width: 1600px; margin: 0 auto; }
 @media (max-width: 1200px) { main { grid-template-columns: 13rem 1fr 20rem; } }
@@ -395,6 +410,12 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
  * stream fanned out to per-event subscribers keeps connections free for fetches. */
 window.PraxisBus = (function () {
   var src = null, handlers = {}, bound = {};
+  var statusFns = [], state = "connecting";
+  function setState(s) {
+    if (s === state) return;
+    state = s;
+    for (var i = 0; i < statusFns.length; i++) { try { statusFns[i](state); } catch (_) {} }
+  }
   function bind(type) {
     if (!src || bound[type]) return;
     bound[type] = true;
@@ -405,7 +426,9 @@ window.PraxisBus = (function () {
   }
   function ensure() {
     if (src || typeof EventSource === "undefined") return;
-    try { src = new EventSource("/events"); } catch (_) { src = null; return; }
+    try { src = new EventSource("/events"); } catch (_) { src = null; setState("offline"); return; }
+    src.onopen = function () { setState("live"); };
+    src.onerror = function () { setState(src && src.readyState === 2 ? "offline" : "reconnecting"); };
     Object.keys(handlers).forEach(bind);
   }
   return {
@@ -413,9 +436,61 @@ window.PraxisBus = (function () {
       (handlers[type] = handlers[type] || []).push(fn);
       ensure();
       bind(type);
-    }
+    },
+    onStatus: function (fn) {
+      statusFns.push(fn);
+      ensure();
+      try { fn(state); } catch (_) {}
+    },
+    state: function () { return state; }
   };
 })();
+
+/* Transient toast notifications (errors + connection changes). */
+window.PraxisToast = function (msg, kind) {
+  var box = document.getElementById("toasts");
+  if (!box) return;
+  var t = document.createElement("div");
+  t.className = "toast " + (kind || "info");
+  t.textContent = msg;
+  box.appendChild(t);
+  setTimeout(function () { t.classList.add("show"); }, 10);
+  setTimeout(function () {
+    t.classList.remove("show");
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+  }, 4200);
+};
+
+/* Inline panel error: replace a still-loading mount with a retry prompt so a
+ * failed fetch never leaves a panel frozen on "Loading…". Real content is kept. */
+window.PraxisPanelError = function (mount, label, retry) {
+  if (!mount || mount.querySelector(".px-err")) return;
+  var txt = (mount.textContent || "").trim();
+  if (txt && txt.indexOf("Loading") === -1) return;
+  mount.innerHTML = '<div class="px-err">\u26a0 Couldn\u2019t load ' +
+    (label || "this panel") + '. <button type="button" class="px-retry">Retry</button></div>';
+  var b = mount.querySelector(".px-retry");
+  if (b) b.onclick = function () { mount.innerHTML = '<div class="empty">Loading\u2026</div>'; if (retry) retry(); };
+};
+
+/* Connection-status pill in the header + toasts on drop/recover. */
+document.addEventListener("DOMContentLoaded", function () {
+  var pill = document.getElementById("connPill");
+  var txt = document.getElementById("connText");
+  var labels = { live: "live", reconnecting: "reconnecting\u2026", offline: "offline", connecting: "connecting\u2026" };
+  var wasDown = false;
+  window.PraxisBus.onStatus(function (s) {
+    if (pill) pill.className = "pill conn conn-" + s;
+    if (txt) txt.textContent = labels[s] || s;
+    if (s === "reconnecting" || s === "offline") {
+      if (!wasDown) window.PraxisToast("Live updates lost \u2014 reconnecting\u2026", "warn");
+      wasDown = true;
+    } else if (s === "live") {
+      if (wasDown) window.PraxisToast("Reconnected", "ok");
+      wasDown = false;
+    }
+  });
+});
 </script>
 <script src="/web/run-graph.js" defer></script>
 <script src="/web/board.js" defer></script>
@@ -426,11 +501,13 @@ window.PraxisBus = (function () {
 <script src="/web/palette.js" defer></script>
 </head>
 <body>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 <header>
   <div class="brand"><span class="logo"></span> Praxis</div>
   <span class="pill modelpill"><span class="dot"></span><span id="modelBadge">—</span></span>
   <span class="spacer"></span>
   <button id="cmdk" class="badge" type="button" title="Command palette (Ctrl/Cmd+K)">⌘K</button>
+  <span id="connPill" class="pill conn conn-connecting" title="Live update stream"><span class="dot"></span><span id="connText">connecting…</span></span>
   <span id="status" class="badge">checking…</span>
 </header>
 

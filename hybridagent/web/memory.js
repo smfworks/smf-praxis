@@ -35,7 +35,7 @@
       data = await api("/api/memory");
       renderPanel();
       if (overlay && overlay.classList.contains("show")) renderStudio();
-    } catch (_) { /* keep prior */ }
+    } catch (_) { window.PraxisPanelError(mount, "Memory", load); }
   }
 
   function renderPanel() {

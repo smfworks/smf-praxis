@@ -39,7 +39,7 @@
       data = await getJSON("/api/metrics");
       renderPanel();
       if (overlay && overlay.classList.contains("show")) renderOverlay();
-    } catch (_) { /* keep prior */ }
+    } catch (_) { window.PraxisPanelError(mount, "Metrics", load); }
   }
 
   function renderPanel() {
