@@ -105,6 +105,28 @@ VERTICAL_TEMPLATES: dict[str, dict] = {
             "injectionCheck": True,
         },
     },
+    "homeschool": {
+        "vertical": "Homeschool",
+        "description": "Parent-educator aide: lesson planning, multi-grade tutoring, compliance records.",
+        "systemPrompt": (
+            "You are Praxis configured for the Homeschool vertical: a warm, patient aide "
+            "to a parent-educator teaching their own children at home. Help plan lessons, "
+            "map curricula to grade levels and learning standards, differentiate for "
+            "multiple ages at once, suggest hands-on activities, and keep the portfolio, "
+            "attendance, and grade records many states require. Tutor children by guiding "
+            "them to the answer rather than handing it over, and keep everything "
+            "age-appropriate, inclusive, and respectful of the family's values. The parent "
+            "is in charge: treat the children's names, work, and progress as private to the "
+            "household and never share them externally, and present curriculum and approach "
+            "as suggestions for the parent to approve."
+        ),
+        "complianceMode": "autonomous",
+        "riskPolicy": {
+            "dualApprovalRisks": ["send", "destructive"],
+            "autonomousRisks": ["read", "draft"],
+            "injectionCheck": True,
+        },
+    },
     "business": {
         "vertical": "Business",
         "description": "Executive assistant & analyst for drafting, summarizing, scheduling.",
@@ -146,6 +168,9 @@ _ALIASES = {
     "forensics": "forensic", "investigation": "forensic", "investigations": "forensic",
     "edu": "education", "teaching": "education", "teacher": "education",
     "student": "education", "academic": "education",
+    "homeschooling": "homeschool", "home-school": "homeschool",
+    "homeschooler": "homeschool", "home-education": "homeschool",
+    "k12": "homeschool", "parent-educator": "homeschool",
     "biz": "business", "exec": "business", "executive": "business",
     "dev": "developer", "developers": "developer", "coding": "developer",
     "engineer": "developer", "engineering": "developer", "software": "developer",

@@ -121,7 +121,7 @@ def test_templates_cover_core_verticals():
     from hybridagent import vertical_templates as vt
     names = set(vt.list_templates())
     assert {"general", "legal", "medical", "forensic",
-            "education", "business", "developer"} <= names
+            "education", "homeschool", "business", "developer"} <= names
 
 
 def test_get_template_is_case_insensitive_and_alias_aware():
@@ -166,4 +166,33 @@ def test_explicit_args_override_template(tmp_path, monkeypatch):
     assert p.system_prompt == "MY-OWN-PERSONA"
     assert p.description == "mine"
     assert p.compliance_mode == "enforced"  # still seeded from the template
+
+
+def test_homeschool_template_aliases_and_posture():
+    from hybridagent import vertical_templates as vt
+    assert "homeschool" in vt.list_templates()
+    for alias in ("homeschooling", "home-school", "k12", "parent-educator"):
+        assert vt.get_template(alias)["vertical"] == "Homeschool"
+    t = vt.get_template("homeschool")
+    assert t["complianceMode"] == "autonomous"
+    assert set(t["riskPolicy"]["dualApprovalRisks"]) == {"send", "destructive"}
+    assert set(t["riskPolicy"]["autonomousRisks"]) == {"read", "draft"}
+
+
+def test_bundled_homeschool_pack_discoverable(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    packs = pack.list_packs()
+    assert "homeschool" in packs
+    hs = packs["homeschool"]
+    assert hs.vertical == "Homeschool"
+    assert hs.compliance_mode == "autonomous"
+    assert "homeschool" in hs.system_prompt.lower()
+
+
+def test_create_from_homeschool_template_seeds_pack(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    pack.create_pack("family", vertical="homeschooling")
+    p = pack.load_pack("family")
+    assert p is not None and p.compliance_mode == "autonomous"
+    assert p.risk_policy["autonomousRisks"] == ["read", "draft"]
 
