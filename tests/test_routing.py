@@ -70,6 +70,26 @@ def test_usage_accounting_is_atomic_under_threads():
     assert snap["completion_tokens"] == total
 
 
+def test_note_escalation_captures_reason():
+    c = LLMClient(mode="mock")
+    c.reset_usage()
+    c.note_escalation("escalated")
+    c.note_escalation("unverified")          # latest reason wins
+    snap = c.usage_snapshot()
+    assert snap["escalations"] == 2
+    assert snap["escalation_reason"] == "unverified"
+
+
+def test_run_routing_records_escalation_reason(tmp_path):
+    s = Store(tmp_path / "r.db")
+    s.record_run_routing("run-er", "openai/gpt-4o", 100, 50, 0.01, 4,
+                         local=False, escalations=1, escalation_reason="unverified")
+    rows = s.list_run_routing()
+    assert rows[0]["escalations"] == 1
+    assert rows[0]["escalation_reason"] == "unverified"
+    s.close()
+
+
 # -------------------------------------------------------------------- daemon
 def test_agent_run_records_routing(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))

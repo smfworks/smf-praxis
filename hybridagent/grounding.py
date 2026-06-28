@@ -131,6 +131,8 @@ class GroundedResponder:
             return not text.strip().upper().startswith(ABSTAIN)
 
         result = AdaptiveCascade[str](self._can_escalate).run(solve, accept)
+        if result.escalated and hasattr(self.llm, "note_escalation"):
+            self.llm.note_escalation(result.reason)
         out = result.answer
         abstained = not accept(out)
         used = sorted({int(m) for m in _CITE_RE.findall(out)

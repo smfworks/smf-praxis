@@ -2233,7 +2233,8 @@ class Daemon:
                     int(usage.get("calls", 0) or 0),
                     ModelRouter.is_local_ref(primary),
                     int(usage.get("fallbacks", 0) or 0),
-                    int(usage.get("escalations", 0) or 0))
+                    int(usage.get("escalations", 0) or 0),
+                    str(usage.get("escalation_reason", "") or ""))
             except Exception:
                 pass
         result["run_id"] = run_id

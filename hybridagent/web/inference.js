@@ -148,7 +148,10 @@
         var tok = (Number(rt.prompt_tokens) || 0) + (Number(rt.completion_tokens) || 0);
         var where = rt.local ? "local" : "cloud";
         var fb = (Number(rt.fallbacks) || 0) > 0 ? " \u00b7 " + rt.fallbacks + " fallback" : "";
-        var escd = (Number(rt.escalations) || 0) > 0 ? " \u00b7 \u26a1 escalated" : "";
+        var reason = String(rt.escalation_reason || "");
+        var escd = (Number(rt.escalations) || 0) > 0
+          ? " \u00b7 \u26a1 escalated" + (reason && reason !== "escalated" ? " (" + esc(reason) + ")" : "")
+          : "";
         var v = esc(rt.model || "mock") + ' <span class="tag">' + where + "</span> \u00b7 " +
           tok + " tok \u00b7 $" + (Number(rt.cost_usd) || 0).toFixed(4) + fb + escd;
         box.appendChild(el("div", "if-kv",

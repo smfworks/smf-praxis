@@ -163,7 +163,7 @@ class LLMPlanner(Planner):
         result = AdaptiveCascade[list[Step]](
             can_escalate=self._can_escalate).run(solve, accept=bool)
         if result.escalated and hasattr(self.llm, "note_escalation"):
-            self.llm.note_escalation()
+            self.llm.note_escalation(result.reason)
         if result.answer:
             return Plan(goal=goal, steps=result.answer)
         return self.fallback_factory(self.registry, self.llm).plan(goal)

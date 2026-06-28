@@ -126,12 +126,14 @@ def test_llm_planner_escalates_when_routed_plan_is_empty():
         def __init__(self):
             self.diffs = []
             self.escalations = 0
+            self.reason = ""
 
         def _effective_mode(self):
             return "real"
 
-        def note_escalation(self):
+        def note_escalation(self, reason=""):
             self.escalations += 1
+            self.reason = reason
 
         def complete(self, prompt, system=None, role="general",
                      sensitivity="normal", difficulty=None):
@@ -145,6 +147,7 @@ def test_llm_planner_escalates_when_routed_plan_is_empty():
     LLMPlanner(default_registry(), llm).plan("organize my day")
     assert llm.diffs == [None, HARD]             # cheap pass, then escalated
     assert llm.escalations == 1
+    assert llm.reason in ("escalated", "unverified")   # P4b: cascade reason captured
 
 
 def test_llm_planner_respects_budget_gate():
@@ -161,7 +164,7 @@ def test_llm_planner_respects_budget_gate():
         def _effective_mode(self):
             return "real"
 
-        def note_escalation(self):
+        def note_escalation(self, reason=""):
             self.escalations += 1
 
         def complete(self, prompt, system=None, role="general",

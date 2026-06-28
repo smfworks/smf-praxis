@@ -71,6 +71,7 @@ class _RunUsage:
     models: list[str] = field(default_factory=list)
     fallbacks: int = 0
     escalations: int = 0
+    escalation_reason: str = ""
 
     def as_dict(self) -> dict:
         return {"prompt_tokens": self.prompt_tokens,
@@ -78,7 +79,8 @@ class _RunUsage:
                 "cost_usd": round(self.cost_usd, 6),
                 "calls": self.calls, "model": self.model,
                 "models": list(self.models), "fallbacks": self.fallbacks,
-                "escalations": self.escalations}
+                "escalations": self.escalations,
+                "escalation_reason": self.escalation_reason}
 
 
 @dataclass
@@ -116,10 +118,14 @@ class LLMClient:
         with self._usage_lock:
             return self._usage.as_dict()
 
-    def note_escalation(self) -> None:
-        """Record that an adaptive cascade escalated to a stronger tier this run."""
+    def note_escalation(self, reason: str = "") -> None:
+        """Record that an adaptive cascade escalated to a stronger tier this run,
+        keeping the latest cascade ``reason`` (e.g. ``escalated``/``unverified``)
+        for routing legibility."""
         with self._usage_lock:
             self._usage.escalations += 1
+            if reason:
+                self._usage.escalation_reason = reason
 
     def _account(self, model_ref: str, usage: dict) -> None:
         """Fold one real provider call's token usage + cost into the tally."""
