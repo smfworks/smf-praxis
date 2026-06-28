@@ -832,7 +832,9 @@ def cmd_demo(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
     parser = argparse.ArgumentParser(prog="praxis", description="Praxis hybrid-agent CLI")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ph = sub.add_parser("handle", help="run one full agent cycle for a goal")

@@ -4,13 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "praxis-agent"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Hybrid OpenClaw + Hermes autonomous AI colleague (proactive + governed)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "SMF Works" }]
+keywords = ["ai", "agent", "autonomous", "llm", "governance", "rag", "mcp", "assistant"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/smfworks/smf-praxis"
+Repository = "https://github.com/smfworks/smf-praxis"
+Issues = "https://github.com/smfworks/smf-praxis/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -58,6 +76,18 @@ praxis = "hybridagent.cli:main"
 
 [tool.setuptools]
 packages = ["hybridagent"]
+include-package-data = true
+
+# The Command Deck dashboard loads its JS/CSS from hybridagent/web/ at runtime
+# (daemon._serve_static reads Path(__file__).parent / "web"). These are data
+# files, not modules, so they must be declared here or a wheel install ships a
+# broken dashboard (editable installs mask this by pointing back at the source).
+[tool.setuptools.package-data]
+hybridagent = ["web/*"]
+
+# Single-source the version from hybridagent.__version__ (read statically).
+[tool.setuptools.dynamic]
+version = { attr = "hybridagent.__version__" }
 
 [tool.ruff]
 line-length = 100

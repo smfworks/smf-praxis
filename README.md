@@ -71,6 +71,19 @@ optional extras, `--no-configure` to skip onboarding, and
 `source .venv/bin/activate` (`.venv\Scripts\Activate.ps1` on Windows) and run
 `praxis demo`.
 
+### From PyPI
+
+Install the CLI directly — the Command Deck dashboard assets ship inside the wheel:
+
+```bash
+pipx install praxis-agent     # isolated CLI (recommended)
+# or
+pip install praxis-agent      # into the current environment
+praxis --version
+```
+
+Optional extras work the same way, e.g. `pipx install "praxis-agent[browser,docs]"`.
+
 ### Manual install
 
 ```bash
