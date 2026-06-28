@@ -72,8 +72,9 @@ The capability layer on top of the spine.
   token usage (per-model pricing; local/mock models are free), so the cap controls
   real cost rather than a placeholder estimate (`pricing.py`, `llm.py`).
 - **Routing observability** — every run records which model handled it,
-  local-vs-cloud, tokens, cost, and fallbacks, surfaced in the Inference Control
-  Center's *Recent routing* view (`run_routing` in `persistence.py`, `daemon.py`).
+  local-vs-cloud, tokens, cost, fallbacks, and adaptive-cascade escalations,
+  surfaced in the Inference Control Center's *Recent routing* view (`run_routing`
+  in `persistence.py`, `daemon.py`).
 
 ## 3. Reasoning & deliberation
 
@@ -85,7 +86,8 @@ The capability layer on top of the spine.
 - **Adaptive cascade inference** — the runtime counterpart to a-priori difficulty
   routing: run the cheaper routed tier first and **escalate to the strongest tier
   only when the answer is low-confidence *and* the budget allows** — modern hybrid
-  inference kept under the governance budget (`escalation.py`).
+  inference kept under the governance budget (`escalation.py`); wired into both
+  grounded Q&A and agent_run planning, and recorded per run for the dashboard.
 
 ## 4. Retrieval & memory
 

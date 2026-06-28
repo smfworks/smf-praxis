@@ -355,7 +355,7 @@ exhausting the browser's per-host connection pool.
   vocabulary and **learned-router** state, an **enforceable spend budget** that
   *halts* runs at the cap (billed from real token usage), and a **Recent routing**
   view showing which model handled each run (local-vs-cloud, tokens, cost,
-  fallbacks).
+  fallbacks, and adaptive-cascade escalations).
 - **Observability Metrics** — eval pass-rate trend, decision mix by verdict and
   policy rule (injection / egress / kill-switch / autonomous), and run-status
   counts.
