@@ -20,8 +20,9 @@ domain (legal, medical, ...). A pack is a directory with a ``pack.json`` manifes
 
 p07 applies the persona (system prompt), compliance mode, risk-policy overrides,
 and the tool allowlist; p10 ingests the manifest's ``knowledge`` files into a
-``pack:<name>`` RAG namespace on activation and grounds chat answers in them.
-Skills / theme / model are carried in the manifest for later roadmap items.
+``pack:<name>`` RAG namespace on activation and grounds chat answers in them; p11
+installs the manifest's ``skills`` (inline or SKILL.md refs) into the shared skill
+library. Theme / model are carried in the manifest for later roadmap items.
 """
 from __future__ import annotations
 
@@ -201,6 +202,11 @@ def activate(name: str, store=None) -> "VerticalPack":
             ingest_knowledge(pk, store)
         except Exception:
             pass
+    if pk.skills:
+        try:
+            install_skills(pk, store)
+        except Exception:
+            pass
     return pk
 
 
@@ -295,6 +301,35 @@ def knowledge_chunks(query: str, store=None, k: int = 4) -> list:
         return Rag(store, ns=pack_ns(pk.name)).retrieve(query, k=k)
     except Exception:
         return []
+
+
+def install_skills(pk: "VerticalPack", store=None) -> int:
+    """Install a pack's skills into the shared SkillLibrary (idempotent).
+
+    Each ``skills`` entry is an inline dict (``name``/``trigger``/``body``) or a
+    path (relative to the pack dir) to a ``SKILL.md`` file. Skills are tagged with
+    the pack provenance so they ground perception/chat retrieval. Returns the
+    count installed. Never raises if RAG/embeddings are unavailable.
+    """
+    if not pk.skills:
+        return 0
+    from .persistence import Store
+    from .skills import Skill, SkillLibrary
+    lib = SkillLibrary(store=store or Store.open())
+    base = Path(pk.path) if pk.path else None
+    count = 0
+    for entry in pk.skills:
+        sk: "Skill | None" = None
+        if isinstance(entry, dict) and entry.get("name"):
+            sk = Skill(name=str(entry["name"]), trigger=str(entry.get("trigger", "")),
+                       body=str(entry.get("body", "")), provenance=f"pack:{pk.name}")
+        elif isinstance(entry, str) and base is not None and (base / entry).is_file():
+            sk = Skill.from_markdown((base / entry).read_text(encoding="utf-8"))
+            sk.provenance = f"pack:{pk.name}"
+        if sk:
+            lib.add(sk)
+            count += 1
+    return count
 
 
 def compose_system(base: str) -> str:

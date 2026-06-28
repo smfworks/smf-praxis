@@ -228,3 +228,24 @@ def test_knowledge_chunks_empty_without_active_pack(tmp_path, monkeypatch):
     from hybridagent.persistence import Store
     assert pack.knowledge_chunks("anything", Store.open(tmp_path / "k.db")) == []
 
+
+# --- p11: pack skills ---------------------------------------------------------
+def test_bundled_homeschool_pack_has_skill():
+    assert any(s.get("name") == "lesson-plan"
+               for s in pack.list_packs()["homeschool"].skills)
+
+
+def test_install_skills_inline_and_retrievable(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRAXIS_EMBED", "mock")
+    from hybridagent.persistence import Store
+    from hybridagent.skills import SkillLibrary
+    pk = pack.VerticalPack(name="hs", path=str(tmp_path), skills=[
+        {"name": "lesson-plan", "trigger": "planning a homeschool lesson",
+         "body": "1. objectives 2. activity 3. log it"}])
+    store = Store.open(tmp_path / "kb.db")
+    assert pack.install_skills(pk, store) == 1
+    hits = SkillLibrary(store=store).retrieve("plan a homeschool lesson", k=1)
+    assert hits and hits[0].name == "lesson-plan"
+    assert hits[0].provenance == "pack:hs"
+
