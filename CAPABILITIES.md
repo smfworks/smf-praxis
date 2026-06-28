@@ -36,6 +36,12 @@ The control plane every other capability flows through (`broker.py`,
 - **Allowlist + least privilege** and a **kill‑switch** that disables all
   consequential tools instantly — **persisted across restarts** and gating new
   runs outright, so an engaged brake survives a crash instead of silently releasing.
+- **Operator‑selectable compliance modes** — the approval gate is a runtime,
+  persisted posture: **enforced** (default; hold send/destructive for approval),
+  **autonomous** (run without approval — egress firewall + injection detection +
+  kill‑switch stay on), or **permissive** (guards off, kill‑switch only; for
+  trusted/sandboxed use). Relaxed modes support a **timed auto‑revert** that fails
+  safe back to enforced. Set from the Safety Center or `praxis governance`.
 - **Schema validation** — malformed tool arguments are rejected before the broker
   ever sees them.
 - **Prompt‑injection boundary** — retrieved/tool content is treated as *data,
@@ -154,14 +160,17 @@ The capability layer on top of the spine.
   (`daemon.py`). The **Command Deck** surfaces the governed loop as panels over
   one shared SSE stream: **Live Run Graph** (durable, replayable run DAG), governed
   **Work Board** (kanban-that-executes), **Approvals & Safety Center** (queue +
-  redacted audit + persistent kill-switch), **Inference Control Center**
+  redacted audit + persistent kill-switch + **compliance-mode selector** with
+  timed auto-revert), **Inference Control Center**
   (model/router, enforceable budget, per-run routing + cost), **Observability
   Metrics** (governance decision mix + spend trend & per-model cost), **Memory
   Studio**, and a `Ctrl/Cmd+K` **command palette** (`hybridagent/web/`). Panel
   overlays are keyboard-accessible (Escape-to-close, dialog roles).
-- **Voice** — turn‑based and **realtime** (mic → transcribe → governed turn →
-  audio) over a hand‑rolled, dependency‑free WebSocket, with an OpenAI Realtime
-  bridge; operator‑selectable per agent config (`voice.py`, `wsutil.py`).
+- **Voice** — turn‑based and **realtime** with **live PCM16 microphone streaming**
+  (push‑to‑talk) over a persistent, hand‑rolled, dependency‑free WebSocket; each
+  turn runs the governed loop and the reply is spoken back. Upstream is the OpenAI
+  Realtime API (governed function calls) or an offline loopback; operator‑selectable
+  per agent config (`voice.py`, `wsutil.py`).
 - **Multimodal** — vision (image → text) and speech‑to‑text (`multimodal.py`,
   optional `multimodal` extra).
 - **Model‑agnostic** — OpenAI, Anthropic, Ollama (local), OpenRouter, and more

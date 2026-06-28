@@ -96,7 +96,7 @@ perceive  →  plan  →  govern  →  act / draft  →  reflect  →  consolida
 |---|---|
 | Proactive perception (heartbeat, injection screen) | `perception.py`, `agent.heartbeat()` |
 | Planner (goal → tool-bound steps) | `planner.py` |
-| Governance broker (allowlist, risk class, approval queue, kill-switch, audit, redaction) | `broker.py` |
+| Governance broker (allowlist, risk class, approval queue, compliance modes, kill-switch, audit, redaction) | `broker.py` |
 | Narrow risk-classified tools (read/draft autonomous; send/destructive gated) | `tools.py` |
 | Multi-tier memory with provenance | `memory.py` |
 | Reflection + consolidation (self-improvement) | `reflection.py` |
@@ -140,7 +140,9 @@ single-colleague foundation.
   `~/.praxis/praxis.db` (`persistence.py`); semantic recall via `rag.py`.
 - Provider calls retry with backoff and log structured events; held actions carry
   a TTL. The kill-switch persists across restarts and halts new runs outright, not
-  just consequential tools.
+  just consequential tools. The approval gate itself is an operator-selectable,
+  persisted compliance mode (enforced / autonomous / permissive) with optional
+  timed auto-revert back to enforced; the kill-switch overrides every mode.
 
 ### Build phases (post-review roadmap)
 1. **Foundations** — SQLite persistence, resilience (retry/backoff/logging), TTLs. ✅

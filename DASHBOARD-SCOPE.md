@@ -104,7 +104,9 @@ OpenClaw's Workboard; templates + quick-create. WIP limits, dependencies, fan-ou
 
 ### P3 — Approvals & Safety Center
 A live **approval queue**: one-click approve/deny, risk class, arg/diff preview,
-**egress-taint flags**, dual-approval, **kill-switch**, idempotency view. Optional
+**egress-taint flags**, dual-approval, **kill-switch**, **operator-selectable
+compliance modes** (enforced/autonomous/permissive, with timed auto-revert),
+idempotency view. Optional
 **smart triage** (LLM risk assessment) à la Hermes. Plus an **audit-trail viewer**
 with secret redaction and export.
 > Beats OpenClaw (exec approvals are CLI/native-prompt, no web queue, no web audit
