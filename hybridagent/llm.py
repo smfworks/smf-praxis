@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -90,6 +91,15 @@ class LLMClient:
     keep_recent_turns: int = 8
     _usage: _RunUsage = field(default_factory=_RunUsage, init=False, repr=False)
 
+    def __post_init__(self) -> None:
+        # Usage accounting is a single shared tally guarded by a lock — NOT
+        # thread-local. Subagent fan-out runs LLM calls on worker threads
+        # (orchestrator's ThreadPoolExecutor), and those tokens must still fold
+        # into the originating run's tally, so a thread-local accumulator would
+        # silently under-count. The lock instead makes the read-modify-write
+        # increments atomic so concurrent calls can't lose an update.
+        self._usage_lock = threading.Lock()
+
     def _effective_mode(self) -> str:
         if self.mode in ("mock", "real"):
             return self.mode
@@ -98,27 +108,31 @@ class LLMClient:
     # ------------------------------------------------------------- accounting
     def reset_usage(self) -> None:
         """Zero the per-run token/cost tally (call before a governed run)."""
-        self._usage = _RunUsage()
+        with self._usage_lock:
+            self._usage = _RunUsage()
 
     def usage_snapshot(self) -> dict:
         """Tokens + USD cost tallied since the last :meth:`reset_usage`."""
-        return self._usage.as_dict()
+        with self._usage_lock:
+            return self._usage.as_dict()
 
     def note_escalation(self) -> None:
         """Record that an adaptive cascade escalated to a stronger tier this run."""
-        self._usage.escalations += 1
+        with self._usage_lock:
+            self._usage.escalations += 1
 
     def _account(self, model_ref: str, usage: dict) -> None:
         """Fold one real provider call's token usage + cost into the tally."""
         p = int(usage.get("prompt_tokens", 0) or 0)
         c = int(usage.get("completion_tokens", 0) or 0)
-        self._usage.prompt_tokens += p
-        self._usage.completion_tokens += c
-        self._usage.cost_usd += price_usd(model_ref, p, c)
-        self._usage.calls += 1
-        self._usage.model = model_ref
-        if model_ref not in self._usage.models:
-            self._usage.models.append(model_ref)
+        with self._usage_lock:
+            self._usage.prompt_tokens += p
+            self._usage.completion_tokens += c
+            self._usage.cost_usd += price_usd(model_ref, p, c)
+            self._usage.calls += 1
+            self._usage.model = model_ref
+            if model_ref not in self._usage.models:
+                self._usage.models.append(model_ref)
 
     # ------------------------------------------------------------------ public
     def complete(self, prompt: str, system: str | None = None,

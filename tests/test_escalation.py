@@ -145,3 +145,33 @@ def test_llm_planner_escalates_when_routed_plan_is_empty():
     LLMPlanner(default_registry(), llm).plan("organize my day")
     assert llm.diffs == [None, HARD]             # cheap pass, then escalated
     assert llm.escalations == 1
+
+
+def test_llm_planner_respects_budget_gate():
+    """P4b: when the budget gate is closed, the planner keeps the cheap (empty)
+    plan and falls back to the heuristic instead of escalating to the costly tier."""
+    from hybridagent.planner import LLMPlanner
+    from hybridagent.tools import default_registry
+
+    class _PlannerLLM:
+        def __init__(self):
+            self.diffs = []
+            self.escalations = 0
+
+        def _effective_mode(self):
+            return "real"
+
+        def note_escalation(self):
+            self.escalations += 1
+
+        def complete(self, prompt, system=None, role="general",
+                     sensitivity="normal", difficulty=None):
+            self.diffs.append(difficulty)
+            if difficulty:
+                return '{"steps": [{"intent": "do it", "tool": "noop", "args": {}}]}'
+            return '{"steps": []}'
+
+    llm = _PlannerLLM()
+    LLMPlanner(default_registry(), llm, can_escalate=lambda: False).plan("organize my day")
+    assert llm.diffs == [None]                    # escalation skipped at the cap
+    assert llm.escalations == 0

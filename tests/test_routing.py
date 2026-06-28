@@ -43,6 +43,33 @@ def test_accumulator_tracks_distinct_models():
     assert snap["fallbacks"] == 0
 
 
+def test_usage_accounting_is_atomic_under_threads():
+    """P4b: the shared usage tally is lock-guarded, so concurrent _account calls
+    (as happen when subagent fan-out runs LLM calls on worker threads) never lose
+    a read-modify-write increment."""
+    import threading
+
+    c = LLMClient(mode="mock")
+    c.reset_usage()
+    workers, per = 16, 250
+
+    def hammer():
+        for _ in range(per):
+            c._account("local/free", {"prompt_tokens": 1, "completion_tokens": 1})
+
+    threads = [threading.Thread(target=hammer) for _ in range(workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    snap = c.usage_snapshot()
+    total = workers * per
+    assert snap["calls"] == total
+    assert snap["prompt_tokens"] == total
+    assert snap["completion_tokens"] == total
+
+
 # -------------------------------------------------------------------- daemon
 def test_agent_run_records_routing(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))

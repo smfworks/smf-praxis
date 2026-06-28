@@ -124,9 +124,11 @@ class LLMPlanner(Planner):
         registry: ToolRegistry,
         llm: LLMClient | None = None,
         fallback: Callable[[ToolRegistry, LLMClient | None], Planner] | None = None,
+        can_escalate: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(registry, llm)
         self.fallback_factory = fallback or Planner
+        self._can_escalate = can_escalate
 
     def plan(self, goal: str) -> Plan:
         if self.llm._effective_mode() != "real":
@@ -156,7 +158,10 @@ class LLMPlanner(Planner):
 
         # Cheap-first: plan at the routed tier; if it yields no valid steps,
         # escalate to the strongest model before falling back to the heuristic.
-        result = AdaptiveCascade[list[Step]]().run(solve, accept=bool)
+        # The escalation respects the spend budget (``can_escalate``) so a run
+        # can't jump to the costly tier once the cap is reached.
+        result = AdaptiveCascade[list[Step]](
+            can_escalate=self._can_escalate).run(solve, accept=bool)
         if result.escalated and hasattr(self.llm, "note_escalation"):
             self.llm.note_escalation()
         if result.answer:

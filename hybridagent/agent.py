@@ -77,7 +77,8 @@ class PraxisAgent:
             self.skills = SkillLibrary(store=store, embedder=embedder)
         self.perception = Perception(self.registry, self.broker, self.memory,
                                      rag=self.rag, skills=self.skills)
-        self.planner = planner if planner is not None else LLMPlanner(self.registry, self.llm)
+        self.planner = planner if planner is not None else LLMPlanner(
+            self.registry, self.llm, can_escalate=self._under_budget)
         self.reflector = Reflector(self.memory, self.llm)
         # Optionally import tools from external MCP servers.
         self.mcp_servers = mcp_servers or []
@@ -337,6 +338,17 @@ class PraxisAgent:
         return self.handle(watch_goal)
 
     # ------------------------------------------------- grounded Q&A (no hallucination)
+    def _under_budget(self) -> bool:
+        """True while the spend budget has room (no cap set, or under the cap).
+        Gates adaptive-cascade escalation — a low-confidence cheap answer is kept
+        rather than escalating to the costly tier once the cap is hit, so cost
+        control wins over a marginal quality bump. Shared by the planner and the
+        grounded responder."""
+        if self.store is None:
+            return True
+        b = self.store.get_budget()
+        return not (b["limit_usd"] > 0 and b["spent_usd"] >= b["limit_usd"])
+
     def ask(self, question: str, k: int = 5, *,
             refresh_wiki: bool = True):
         """Answer a question grounded in retrieved sources; abstain if unsupported.
@@ -360,13 +372,8 @@ class PraxisAgent:
             sources.append(RetrievedChunk(
                 text=item.text, source=f"memory:{item.kind}", score=1.0,
                 kind="memory", provenance=item.provenance))
-        def _under_budget() -> bool:
-            if self.store is None:
-                return True
-            b = self.store.get_budget()
-            return not (b["limit_usd"] > 0 and b["spent_usd"] >= b["limit_usd"])
         answer = GroundedResponder(
-            self.llm, can_escalate=_under_budget).answer(question, sources)
+            self.llm, can_escalate=self._under_budget).answer(question, sources)
         # Annotate with contradiction findings — caller / CLI can show these.
         try:
             from .contradiction import detect
