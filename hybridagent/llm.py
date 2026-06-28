@@ -67,12 +67,15 @@ class _RunUsage:
     cost_usd: float = 0.0
     calls: int = 0
     model: str = ""
+    models: list[str] = field(default_factory=list)
+    fallbacks: int = 0
 
     def as_dict(self) -> dict:
         return {"prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
                 "cost_usd": round(self.cost_usd, 6),
-                "calls": self.calls, "model": self.model}
+                "calls": self.calls, "model": self.model,
+                "models": list(self.models), "fallbacks": self.fallbacks}
 
 
 @dataclass
@@ -108,6 +111,8 @@ class LLMClient:
         self._usage.cost_usd += price_usd(model_ref, p, c)
         self._usage.calls += 1
         self._usage.model = model_ref
+        if model_ref not in self._usage.models:
+            self._usage.models.append(model_ref)
 
     # ------------------------------------------------------------------ public
     def complete(self, prompt: str, system: str | None = None,
@@ -254,6 +259,7 @@ class LLMClient:
             try:
                 return self._complete_with_ref(ref, prompt, system)
             except RuntimeError as exc:
+                self._usage.fallbacks += 1
                 last_exc = exc
                 _log.warning("model %s failed (%s); trying next candidate", ref, exc)
                 continue
@@ -300,6 +306,7 @@ class LLMClient:
             try:
                 return self._chat_with_ref(ref, messages, system)
             except RuntimeError as exc:
+                self._usage.fallbacks += 1
                 last_exc = exc
                 _log.warning("model %s failed (%s); trying next candidate", ref, exc)
                 continue

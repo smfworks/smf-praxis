@@ -242,6 +242,17 @@ CREATE TABLE IF NOT EXISTS killswitch (
     engaged    INTEGER NOT NULL DEFAULT 0,
     updated_ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS run_routing (
+    run_id            TEXT PRIMARY KEY,
+    model             TEXT NOT NULL DEFAULT '',
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd          REAL NOT NULL DEFAULT 0,
+    calls             INTEGER NOT NULL DEFAULT 0,
+    local             INTEGER NOT NULL DEFAULT 0,
+    fallbacks         INTEGER NOT NULL DEFAULT 0,
+    ts                REAL NOT NULL
+);
 """
 
 
@@ -1020,6 +1031,32 @@ class Store:
                 "FROM runs WHERE run_id=?", (run_id,),
             ).fetchone()
         return dict(row) if row else None
+
+    # ------------------------------------------------------------- run routing
+    def record_run_routing(self, run_id: str, model: str, prompt_tokens: int,
+                           completion_tokens: int, cost_usd: float, calls: int,
+                           local: bool, fallbacks: int = 0) -> None:
+        """Persist which model handled a run + its tokens/cost — routing legibility."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO run_routing(run_id,model,prompt_tokens,"
+                "completion_tokens,cost_usd,calls,local,fallbacks,ts) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (run_id, model, int(prompt_tokens), int(completion_tokens),
+                 float(cost_usd), int(calls), 1 if local else 0,
+                 int(fallbacks), time.time()))
+            self._conn.commit()
+
+    def list_run_routing(self, limit: int = 20) -> list[dict]:
+        """Recent per-run routing decisions joined with the run's goal/status."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT rr.run_id, rr.model, rr.prompt_tokens, rr.completion_tokens, "
+                "rr.cost_usd, rr.calls, rr.local, rr.fallbacks, rr.ts, "
+                "r.goal AS goal, r.status AS status "
+                "FROM run_routing rr LEFT JOIN runs r ON r.run_id = rr.run_id "
+                "ORDER BY rr.ts DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
     def list_run_events(self, run_id: str, limit: int = 2000) -> list[dict]:
         with self._lock:

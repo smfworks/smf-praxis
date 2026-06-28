@@ -2110,6 +2110,18 @@ class Daemon:
                 # Accrue real provider cost (tokens x per-model price). Local and
                 # mock models are free, so an offline run adds a run but $0 spend.
                 store.add_spend(round(float(usage.get("cost_usd", 0.0)), 6))
+                # Persist the run's routing decision so the dashboard can show
+                # which model handled it, local-vs-cloud, tokens, cost, fallbacks.
+                from .router import ModelRouter
+                primary = str(usage.get("model") or "mock")
+                store.record_run_routing(
+                    run_id, primary,
+                    int(usage.get("prompt_tokens", 0) or 0),
+                    int(usage.get("completion_tokens", 0) or 0),
+                    float(usage.get("cost_usd", 0.0) or 0.0),
+                    int(usage.get("calls", 0) or 0),
+                    ModelRouter.is_local_ref(primary),
+                    int(usage.get("fallbacks", 0) or 0))
             except Exception:
                 pass
         result["run_id"] = run_id
@@ -2256,8 +2268,9 @@ class Daemon:
             if rm:
                 router["trained"] = True
                 router["n_samples"] = int(rm.get("n_samples", 0))
+        routes = self.store.list_run_routing(limit=12) if self.store is not None else []
         return {"model": self.model_info(), "router": router,
-                "budget": self.budget_status()}
+                "budget": self.budget_status(), "routes": routes}
 
     # ----------------------------------------------------------- memory studio
     _MEM_TIERS = ("working", "episodic", "durable")
