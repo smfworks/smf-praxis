@@ -1208,7 +1208,7 @@ def build_parser() -> argparse.ArgumentParser:
     pev = sub.add_parser("eval", help="run the offline capability + safety eval suite")
     pev.add_argument("--category", default=None,
                      help="only run cases in this category "
-                          "(tool_use, approval, safety, schema)")
+                          "(tool_use, approval, safety, schema, vertical, ...)")
     pev.add_argument("--json", nargs="?", const="", default=None, metavar="PATH",
                      help="emit the scorecard as JSON (to PATH, or stdout)")
     pev.add_argument("--save", action="store_true",

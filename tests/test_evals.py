@@ -2,11 +2,12 @@
 present, the category filter works, and a deliberately failing case is caught."""
 
 from hybridagent.evals import BUILTIN_EVALS, EvalCase, run_evals
+from hybridagent.vertical_evals import vertical_eval_cases
 
 
 def test_builtin_evals_all_pass():
     report = run_evals()
-    assert report.total == len(BUILTIN_EVALS)
+    assert report.total == len(BUILTIN_EVALS) + len(vertical_eval_cases())
     assert report.passed, report.render()
 
 

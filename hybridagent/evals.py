@@ -11,6 +11,7 @@ Categories:
     approval  — consequential actions are held (and dual-approved) not executed
     safety    — kill-switch, allowlist, injection flagging, secret redaction
     schema    — malformed tool arguments are rejected before authorization
+    vertical  — per-vertical packs ship the promised persona + governance posture
 """
 from __future__ import annotations
 
@@ -746,10 +747,19 @@ def run_evals(category: str | None = None,
     failure rather than hanging the whole suite — defense in depth so a slow or
     wedged case can never stall the run.
     """
-    selected = cases if cases is not None else BUILTIN_EVALS
+    selected = cases if cases is not None else (BUILTIN_EVALS + _vertical_cases())
     if category:
         selected = [c for c in selected if c.category == category]
     return EvalReport([_evaluate_bounded(c, timeout) for c in selected])
+
+
+def _vertical_cases() -> "list[EvalCase]":
+    """Per-vertical eval packs (p09), imported lazily to avoid a circular import."""
+    try:
+        from .vertical_evals import vertical_eval_cases
+        return vertical_eval_cases()
+    except Exception:
+        return []
 
 
 def _evaluate_bounded(case: EvalCase, timeout: float | None) -> EvalResult:

@@ -331,7 +331,13 @@ a ready-to-activate pack — both human-readable and reproducible by an agent:
    the template so users can `praxis pack activate <name>` with no scaffolding. The
    wheel ships `packs/*/pack.json` automatically.
 3. **Tests** — extend `tests/test_pack.py` (templates list, alias resolution, posture).
-4. Or skip the code path entirely: `praxis pack create mine --vertical homeschool` then
+4. **Eval pack** (p09) — add one `VerticalSpec` row to `hybridagent/vertical_evals.py`
+   (name, persona keyword, autonomous + held risk classes, compliance mode). The
+   persona + posture cases are generated for you and run under `praxis eval
+   --category vertical`, gating "does activating this vertical still give the
+   promised governance posture?" offline. Bundled `homeschool`, `legal`, `medical`,
+   `forensic`, and `education` each have an eval pack.
+5. Or skip the code path entirely: `praxis pack create mine --vertical homeschool` then
    edit the generated `pack.json` by hand.
 
 A minimal `pack.json`:
