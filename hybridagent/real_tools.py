@@ -114,18 +114,35 @@ def fetch_url(url: str, **_kw) -> str:
         return f"[fetch_url] error: {exc}"
 
 
-def search_web(query: str, **_kw) -> str:
-    """Web search stub.
+def search_web(query: str, max_results: int = 5, **_kw) -> str:
+    """Search the web via the configured provider.
 
-    By default this returns a concise placeholder because a real search requires
-    an API key (SerpAPI, Bing, DuckDuckGo scraper, etc.). Set ``PRAXIS_SEARCH_URL``
-    to a search endpoint to enable a real backend; otherwise the agent can still
-    use :func:`fetch_url` on known URLs discovered elsewhere.
+    Set ``PRAXIS_SEARCH=tavily|brave|serpapi`` (or ``agents.search.provider`` in
+    praxis.json) with the provider's API-key env var (``TAVILY_API_KEY`` etc.) for
+    real results. Falls back to a generic ``PRAXIS_SEARCH_URL`` (``?q=`` endpoint),
+    then to an honest placeholder when nothing is configured.
     """
+    from .search import web_search
+
+    results = web_search(query, max_results=max_results)
+    if results is not None:
+        if not results:
+            return f"[search_web] no results for {query!r}."
+        lines = []
+        for i, r in enumerate(results, 1):
+            snippet = " ".join((r.snippet or "").split())
+            if len(snippet) > 280:
+                snippet = snippet[:277] + "..."
+            lines.append(f"{i}. {r.title} — {snippet}\n   {r.url}")
+        return (f"[search_web] {len(results)} result(s) for {query!r}:\n"
+                + "\n".join(lines))
+
     endpoint = os.environ.get("PRAXIS_SEARCH_URL")
-    if not endpoint:
-        return (
-            f"[search_web] no search backend configured for query: {query!r}. "
-            "Set PRAXIS_SEARCH_URL to a search API endpoint."
-        )
-    return fetch_url(f"{endpoint}?q={query}")
+    if endpoint:
+        import urllib.parse
+        return fetch_url(f"{endpoint}?q={urllib.parse.quote(query)}")
+    return (
+        f"[search_web] no search backend configured for query: {query!r}. "
+        "Set PRAXIS_SEARCH=tavily|brave|serpapi with the provider's API key "
+        "(e.g. TAVILY_API_KEY), or PRAXIS_SEARCH_URL for a custom endpoint."
+    )
