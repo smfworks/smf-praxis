@@ -34,15 +34,17 @@ def test_killswitch_toggle(tmp_path, monkeypatch):
     assert d.killswitch_set(False)["engaged"] is False
 
 
-def test_engaged_killswitch_denies_send(tmp_path, monkeypatch):
+def test_engaged_killswitch_blocks_run(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
     from hybridagent.daemon import Daemon
     d = Daemon(llm=LLMClient(mode="mock"))
     d.killswitch_set(True)
-    d.agent_run("follow up with the customer")
-    # With the kill-switch engaged, the send step is denied, not held.
-    audit = d.audit_log()["entries"]
-    assert any(e["policy_rule"] == "kill_switch_denied" for e in audit)
+    res = d.agent_run("follow up with the customer")
+    # An engaged kill-switch blocks the run outright -- before any planning,
+    # inference, or held send -- a stronger guarantee than denying the send mid-run.
+    assert res["status"] == "blocked" and res.get("blocked") is True
+    assert not res["run_id"]                 # never started a run
+    assert not d.list_approvals()            # nothing was held for approval
 
 
 # --------------------------------------------------------------- deny + audit

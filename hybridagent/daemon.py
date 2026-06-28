@@ -2055,11 +2055,19 @@ class Daemon:
         the dashboard SSE bus so the Run Graph can render the governed loop live.
         Enforces the spend budget: if the cap is reached the run is blocked (and an
         ``alert`` event is pushed) rather than executed — cost *control*, not just
-        cost visibility.
+        cost visibility. An engaged kill-switch blocks the run outright (before any
+        planning or inference), not just its consequential tools.
         """
         self._ensure_agent()
         assert self.agent is not None
         from .agent_service import AgentService
+        if self.agent.broker.kill.tripped:
+            self.emit_event("alert", {"kind": "kill_switch_engaged"})
+            self._log("warning", "agent run blocked: kill-switch engaged")
+            return {"goal": goal, "status": "blocked",
+                    "summary": "kill-switch engaged; release it to run",
+                    "replans": 0, "steps": [], "held_approvals": [],
+                    "run_id": "", "blocked": True}
         store = self.store
         if store is not None:
             b = store.get_budget()

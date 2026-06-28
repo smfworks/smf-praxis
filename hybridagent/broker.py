@@ -132,14 +132,23 @@ class PendingApproval:
 
 
 class KillSwitch:
-    def __init__(self) -> None:
-        self._tripped = False
+    """Emergency brake. When tripped, the broker denies every consequential
+    action and the daemon refuses to start new runs. Store-backed so an engaged
+    brake survives a daemon restart instead of silently releasing."""
+
+    def __init__(self, store: "Store | None" = None) -> None:
+        self._store = store
+        self._tripped = bool(store.get_killswitch()) if store is not None else False
 
     def trip(self) -> None:
         self._tripped = True
+        if self._store is not None:
+            self._store.set_killswitch(True)
 
     def reset(self) -> None:
         self._tripped = False
+        if self._store is not None:
+            self._store.set_killswitch(False)
 
     @property
     def tripped(self) -> bool:
@@ -168,7 +177,7 @@ class GovernanceBroker:
     def __init__(self, policy: GovernancePolicy | None = None,
                  store: "Store | None" = None) -> None:
         self.policy = policy or GovernancePolicy()
-        self.kill = KillSwitch()
+        self.kill = KillSwitch(store)
         self.audit: list[AuditEntry] = []
         self.pending: dict[str, PendingApproval] = {}
         # Untrusted spans flagged for injection, as an insertion-ordered set so the

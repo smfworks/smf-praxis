@@ -237,6 +237,11 @@ CREATE TABLE IF NOT EXISTS budget (
     runs         INTEGER NOT NULL DEFAULT 0,
     period_start REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS killswitch (
+    name       TEXT PRIMARY KEY,
+    engaged    INTEGER NOT NULL DEFAULT 0,
+    updated_ts REAL NOT NULL
+);
 """
 
 
@@ -1112,6 +1117,23 @@ class Store:
                 (time.time(), name))
             self._conn.commit()
         return self.get_budget(name)
+
+    # ------------------------------------------------------------- killswitch
+    def get_killswitch(self, name: str = "default") -> bool:
+        """Whether the governance kill-switch is engaged (persisted across restarts)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT engaged FROM killswitch WHERE name=?", (name,)).fetchone()
+        return bool(row["engaged"]) if row is not None else False
+
+    def set_killswitch(self, engaged: bool, name: str = "default") -> bool:
+        """Persist the kill-switch state so an engaged brake survives a restart."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO killswitch(name,engaged,updated_ts) "
+                "VALUES (?,?,?)", (name, 1 if engaged else 0, time.time()))
+            self._conn.commit()
+        return bool(engaged)
 
     # ------------------------------------------------------------- work board
     def add_card(self, card_id: str, title: str, goal: str,

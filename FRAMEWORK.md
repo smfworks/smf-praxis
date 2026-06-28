@@ -139,7 +139,8 @@ single-colleague foundation.
 - Durable memory + audit + held approvals + RAG vectors persist to
   `~/.praxis/praxis.db` (`persistence.py`); semantic recall via `rag.py`.
 - Provider calls retry with backoff and log structured events; held actions carry
-  a TTL. Kill-switch still needs wiring to a real disable path.
+  a TTL. The kill-switch persists across restarts and halts new runs outright, not
+  just consequential tools.
 
 ### Build phases (post-review roadmap)
 1. **Foundations** — SQLite persistence, resilience (retry/backoff/logging), TTLs. ✅
