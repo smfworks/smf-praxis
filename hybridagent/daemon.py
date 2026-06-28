@@ -374,7 +374,19 @@ select:focus, .txt:focus { border-color: var(--accent); }
 .task-status { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .approval .primary { margin-top: .4rem; padding: .35rem .7rem; font-size: .76rem; }
 pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .74rem; color: var(--faint); max-height: 11rem; overflow-y: auto; margin: 0; }
-.empty { color: var(--faint); font-size: .85rem; }
+.empty { color: var(--faint); font-size: .85rem; padding: .15rem 0; }
+/* Visible keyboard focus inside modal overlays (a11y). */
+[role="dialog"] :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+/* Loading skeletons — a calmer first paint than bare "Loading…" text. */
+.skel { display: flex; flex-direction: column; gap: .45rem; padding: .25rem 0; }
+.skel span { height: .7rem; border-radius: .4rem; background: linear-gradient(90deg, var(--bg2) 25%, var(--border) 37%, var(--bg2) 63%); background-size: 400% 100%; animation: pxshim 1.4s ease infinite; }
+.skel span:nth-child(2) { width: 78%; }
+.skel span:nth-child(3) { width: 56%; }
+@keyframes pxshim { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel span { animation: none; } }
+/* First-run call-to-action when running the offline mock model. */
+.cta { margin-top: .5rem; padding: .5rem .6rem; font-size: .76rem; line-height: 1.4; color: var(--text); background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: .5rem; }
+.cta code { background: var(--bg); padding: .05rem .3rem; border-radius: .3rem; font-size: .9em; }
 
 /* file upload */
 .dropzone { border: 1.5px dashed var(--border); border-radius: .7rem; padding: 1.1rem .8rem; text-align: center; cursor: pointer; transition: all .15s ease; background: var(--bg); }
@@ -470,7 +482,7 @@ window.PraxisPanelError = function (mount, label, retry) {
   mount.innerHTML = '<div class="px-err">\u26a0 Couldn\u2019t load ' +
     (label || "this panel") + '. <button type="button" class="px-retry">Retry</button></div>';
   var b = mount.querySelector(".px-retry");
-  if (b) b.onclick = function () { mount.innerHTML = '<div class="empty">Loading\u2026</div>'; if (retry) retry(); };
+  if (b) b.onclick = function () { mount.innerHTML = '<div class="skel" aria-hidden="true"><span></span><span></span><span></span></div>'; if (retry) retry(); };
 };
 
 /* Connection-status pill in the header + toasts on drop/recover. */
@@ -502,10 +514,46 @@ document.addEventListener("keydown", function (e) {
   for (var i = 0; i < open.length; i++) open[i].classList.remove("show");
 });
 (function () {
+  var lastFocused = null;
+  var OPEN_SEL = ".wb-overlay.show,.if-overlay.show,.mem-overlay.show," +
+    ".mx-overlay.show,.rg-overlay.show,.sf-overlay.show";
+
+  function focusables(root) {
+    var list = root.querySelectorAll(
+      "a[href],button:not([disabled]),input:not([disabled])," +
+      "select:not([disabled]),textarea:not([disabled])," +
+      "[tabindex]:not([tabindex='-1'])");
+    return Array.prototype.slice.call(list).filter(function (el) {
+      return el.offsetParent !== null;        // visible only
+    });
+  }
+  function onShow(ov) {
+    lastFocused = document.activeElement;
+    if (ov.contains(lastFocused)) return;      // already managing its own focus
+    // Focus the persistent box node (not a child control): panels re-render the
+    // box's innerHTML on live updates, which would blow away focus on a child.
+    var box = ov.querySelector("[class$='-box']") || ov;
+    if (!box.hasAttribute("tabindex")) box.setAttribute("tabindex", "-1");
+    box.focus();
+  }
+  function onHide() {
+    if (lastFocused && typeof lastFocused.focus === "function") lastFocused.focus();
+    lastFocused = null;
+  }
+  function watch(ov) {
+    var was = ov.classList.contains("show");
+    new MutationObserver(function () {
+      var now = ov.classList.contains("show");
+      if (now === was) return;                 // ignore non-toggling class churn
+      was = now;
+      if (now) onShow(ov); else onHide();
+    }).observe(ov, { attributes: true, attributeFilter: ["class"] });
+  }
   function tag(n) {
     if (n && n.nodeType === 1 && /(^|\s)[a-z]+-overlay(\s|$)/.test(n.className || "")) {
       n.setAttribute("role", "dialog");
       n.setAttribute("aria-modal", "true");
+      watch(n);
     }
   }
   function start() {
@@ -524,6 +572,18 @@ document.addEventListener("keydown", function (e) {
   }
   if (document.body) start();
   else document.addEventListener("DOMContentLoaded", start);
+
+  // Focus-trap: keep Tab focus inside whichever panel overlay is open.
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    var ov = document.querySelector(OPEN_SEL);
+    if (!ov) return;
+    var f = focusables(ov);
+    if (!f.length) { e.preventDefault(); return; }
+    var first = f[0], last = f[f.length - 1], a = document.activeElement;
+    if (e.shiftKey && (a === first || !ov.contains(a))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (a === last || !ov.contains(a))) { e.preventDefault(); first.focus(); }
+  });
 })();
 </script>
 <script src="/web/run-graph.js" defer></script>
@@ -588,6 +648,7 @@ document.addEventListener("keydown", function (e) {
         <button class="primary" onclick="applyModel()">Use</button>
       </div>
       <div class="hint" id="keyHint"></div>
+      <div class="cta" id="firstRunCta" hidden>⚡ You're on the offline <strong>mock</strong> model. Pick a provider above, or run <code>praxis onboard</code> in a terminal to connect a live model.</div>
     </div>
     <div class="panel pad">
       <h2>Voice</h2>
@@ -614,23 +675,23 @@ document.addEventListener("keydown", function (e) {
     </div>
     <div class="panel pad">
       <h2>Work Board</h2>
-      <div id="board-mount"><div class="empty">Loading…</div></div>
+      <div id="board-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
     </div>
     <div class="panel pad">
       <h2>Safety Center</h2>
-      <div id="safety-mount"><div class="empty">Loading…</div></div>
+      <div id="safety-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
     </div>
     <div class="panel pad">
       <h2>Inference</h2>
-      <div id="inference-mount"><div class="empty">Loading…</div></div>
+      <div id="inference-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
     </div>
     <div class="panel pad">
       <h2>Metrics</h2>
-      <div id="metrics-mount"><div class="empty">Loading…</div></div>
+      <div id="metrics-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
     </div>
     <div class="panel pad">
       <h2>Memory</h2>
-      <div id="memory-mount"><div class="empty">Loading…</div></div>
+      <div id="memory-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
     </div>
     <div class="panel pad">
       <h2>Approvals</h2>
@@ -1018,7 +1079,7 @@ async function applyModel(){
   const res = await api('/api/model', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider, model})});
   if(res.error){ showToast('Could not switch: '+res.error); } else { showToast('Model set → '+res.model); loadModel(); }
 }
-async function loadModel(){ const m = await api('/api/model'); document.getElementById('modelBadge').textContent = m.model || 'mock'; }
+async function loadModel(){ const m = await api('/api/model'); document.getElementById('modelBadge').textContent = m.model || 'mock'; var cta = document.getElementById('firstRunCta'); if(cta) cta.hidden = !!m.configured; }
 
 let _toastT;
 function showToast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(_toastT); _toastT = setTimeout(()=>t.classList.remove('show'), 2600); }
