@@ -2797,10 +2797,15 @@ class Daemon:
         assert self.agent is not None
         if hasattr(self.agent.llm, "reset_usage"):
             self.agent.llm.reset_usage()
-        text = self.agent.llm.chat(messages, system=system or _CHAT_SYSTEM,
+        text = self.agent.llm.chat(messages, system=self._chat_system(system),
                                    role="general")
         self._bill_chat()
         return {"text": text, "model": cfg.get_default_model() or "mock (offline)"}
+
+    def _chat_system(self, system: str | None) -> str:
+        """The chat persona, with the active vertical pack's persona prepended."""
+        from . import pack
+        return system or pack.compose_system(_CHAT_SYSTEM)
 
     def chat_stream(self, messages: list[dict],
                     system: str | None = None) -> Iterator[str]:
@@ -2815,7 +2820,7 @@ class Daemon:
         if hasattr(self.agent.llm, "reset_usage"):
             self.agent.llm.reset_usage()
         yield from self.agent.llm.chat_stream(
-            messages, system=system or _CHAT_SYSTEM, role="general")
+            messages, system=self._chat_system(system), role="general")
         self._bill_chat()
 
     def chat_agent(self, messages: list[dict],

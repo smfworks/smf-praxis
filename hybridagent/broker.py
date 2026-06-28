@@ -200,6 +200,10 @@ class GovernancePolicy:
     # Egress firewall: deny a consequential action whose arguments would relay
     # content from an untrusted source previously flagged for prompt injection.
     egress_check: bool = True
+    # Optional vertical-pack tool allowlist: when set, a tool must also be in this
+    # set (separate from allowed_tools so the daemon's allowlist refresh can't undo
+    # the pack restriction). None = no pack restriction.
+    pack_tools: set[str] | None = None
 
 
 class GovernanceBroker:
@@ -295,6 +299,12 @@ class GovernanceBroker:
                                       "tool not in allowlist", decision_id=decision_id,
                                       cycle_id=cycle_id, policy_rule="allowlist_denied",
                                       args_hash=args_hash)
+        if (self.policy.pack_tools is not None
+                and tool not in self.policy.pack_tools):
+            return self._log_decision(actor, tool, risk, Verdict.DENY,
+                                      "tool not enabled by the active pack",
+                                      decision_id=decision_id, cycle_id=cycle_id,
+                                      policy_rule="pack_restricted", args_hash=args_hash)
         if risk in CONSEQUENTIAL and self.kill.tripped:
             return self._log_decision(actor, tool, risk, Verdict.DENY,
                                       "kill-switch engaged", decision_id=decision_id,

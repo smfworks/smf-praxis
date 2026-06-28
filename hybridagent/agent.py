@@ -65,6 +65,10 @@ class PraxisAgent:
             GovernancePolicy(allowed_tools=set(self.registry.names())),
             store=store,
         )
+        # A vertical pack (if one is active) tailors the governance posture and
+        # tool allowlist for a domain; the persona is composed at the chat surface.
+        from . import pack as _pack
+        _pack.apply_active_to_broker(self.broker)
         # RAG is available when there's a store to back the vector table.
         self.rag = None
         self.skills = None

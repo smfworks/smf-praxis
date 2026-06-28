@@ -86,7 +86,7 @@ include-package-data = true
 # files, not modules, so they must be declared here or a wheel install ships a
 # broken dashboard (editable installs mask this by pointing back at the source).
 [tool.setuptools.package-data]
-hybridagent = ["web/*"]
+hybridagent = ["web/*", "packs/*/pack.json", "packs/*/*.md", "packs/*/*.txt"]
 
 # Single-source the version from hybridagent.__version__ (read statically).
 [tool.setuptools.dynamic]

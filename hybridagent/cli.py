@@ -367,6 +367,71 @@ def cmd_secrets(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_pack(args: argparse.Namespace) -> int:
+    """Manage vertical packs (bundle prompt + policy + tools for a domain)."""
+    from . import pack
+    action = (args.action or "list").lower()
+    if action == "list":
+        packs = pack.list_packs()
+        active_name = cfg.get_active_pack_name()
+        if not packs:
+            print("no packs installed. Scaffold one with: praxis pack create <name>")
+            return 0
+        for name in sorted(packs):
+            p = packs[name]
+            mark = "*" if name == active_name else " "
+            print(f"  {mark} {name:<16} {(p.vertical or ''):<12} {p.description[:48]}")
+        return 0
+    if action == "show":
+        shown = pack.load_pack(args.name) if args.name else pack.active()
+        if shown is None:
+            print("pack not found (or no active pack).")
+            return 1
+        print(json.dumps(shown.to_manifest(), indent=2))
+        return 0
+    if action == "create":
+        if not args.name:
+            print("usage: praxis pack create <name>")
+            return 1
+        try:
+            d = pack.create_pack(args.name, vertical=(args.vertical or ""))
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return 1
+        print(f"created pack at {d}")
+        return 0
+    if action == "install":
+        if not args.name:
+            print("usage: praxis pack install <path>")
+            return 1
+        try:
+            p = pack.install_pack(args.name)
+            pack.activate(p.name)
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return 1
+        print(f"installed and activated '{p.name}'")
+        return 0
+    if action == "activate":
+        if not args.name:
+            print("usage: praxis pack activate <name>")
+            return 1
+        try:
+            p = pack.activate(args.name)
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return 1
+        extra = f" (compliance: {p.compliance_mode})" if p.compliance_mode else ""
+        print(f"activated '{p.name}'{extra}")
+        return 0
+    if action == "deactivate":
+        pack.deactivate()
+        print("deactivated; no active pack.")
+        return 0
+    print(f"unknown pack action: {action}")
+    return 1
+
+
 def cmd_remember(args: argparse.Namespace) -> int:
     agent = PraxisAgent.persistent()
     agent.learn(args.fact, kind=args.kind, provenance="cli")
@@ -1243,6 +1308,16 @@ def build_parser() -> argparse.ArgumentParser:
     psec.add_argument("--provider", default=None, help="provider id (for set/rm)")
     psec.set_defaults(func=cmd_secrets)
 
+    ppk = sub.add_parser(
+        "pack", help="vertical packs: bundle prompt + policy + tools for a domain")
+    ppk.add_argument(
+        "action", nargs="?",
+        choices=["list", "show", "create", "install", "activate", "deactivate"],
+        help="list (default), show, create, install, activate, deactivate")
+    ppk.add_argument("name", nargs="?", help="pack name (or a directory path for install)")
+    ppk.add_argument("--vertical", default=None, help="vertical label (for create)")
+    ppk.set_defaults(func=cmd_pack)
+
     return parser
 
 
@@ -1251,7 +1326,7 @@ def _maybe_first_run_onboard(command: str) -> None:
     if command in ("onboard", "demo", "eval", "tui", "m365", "mcp", "daemon",
                    "approvals", "approve", "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance", "governance", "update",
-                   "secrets",
+                   "secrets", "pack",
                    "skill-record", "skill-evaluate",
                    "subagent-run", "subagents",
                    "task-create", "tasks", "task-run", "task-cancel",

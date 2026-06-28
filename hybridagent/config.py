@@ -275,6 +275,20 @@ def is_configured() -> bool:
     return get_default_model() is not None
 
 
+def get_active_pack_name() -> str | None:
+    """Name of the active vertical pack, or None."""
+    return load_config().get("activePack") or None
+
+
+def set_active_pack_name(name: str | None) -> Path:
+    cfg = load_config()
+    if name:
+        cfg["activePack"] = name
+    else:
+        cfg.pop("activePack", None)
+    return save_config(cfg)
+
+
 def get_voice_config() -> dict:
     """Operator-selected voice settings (agents.voice in praxis.json)."""
     return load_config().get("agents", {}).get("voice", {}) or {}

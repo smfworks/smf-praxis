@@ -285,6 +285,45 @@ record an operator and justification (`--approved-by`, `--notes`). `praxis
 compliance` renders an attestation proving recorded SEND/DESTRUCTIVE actions were
 approved, pending, or denied before execution.
 
+## Vertical packs
+
+A **vertical pack** is a shareable, installable bundle that retargets Praxis for a
+domain — legal, medical/dental, forensic, education, or your own. One pack can set
+the agent's **persona** (system prompt), **compliance mode**
+(`enforced`/`autonomous`/`permissive`), **risk policy** (which risk classes are
+autonomous vs. dual-approval, egress/injection checks, approval TTL), and a **tool
+allowlist** that further narrows what the agent may call — independently of the
+global allowlist, so it survives runtime tool registration.
+
+Packs live in `~/.praxis/packs/<name>/pack.json`; a bundled **general** pack ships
+with Praxis. Activate one and the persona is prepended to chat and its governance
+posture is applied to the broker on every agent build.
+
+```bash
+praxis pack list                       # show installed packs (* = active)
+praxis pack create legal --vertical Legal   # scaffold ~/.praxis/packs/legal
+praxis pack install ./my-pack          # copy + activate an external pack
+praxis pack activate legal             # apply persona + compliance + risk policy
+praxis pack show                       # print the active pack's manifest
+praxis pack deactivate                 # back to defaults
+```
+
+A minimal `pack.json`:
+
+```json
+{
+  "name": "legal",
+  "vertical": "Legal",
+  "systemPrompt": "You are Praxis configured for the Legal vertical ...",
+  "complianceMode": "enforced",
+  "tools": ["read_email", "draft_email", "rag_search"],
+  "riskPolicy": { "dualApprovalRisks": ["destructive", "send"], "approvalTtlSeconds": 1800 }
+}
+```
+
+Per-vertical prompt/risk templates, eval packs, theming, and ready-made legal +
+medical packs build on this core (roadmap p08–p11).
+
 ## Persistent tasks
 
 Long-running work can be placed into a durable task queue. Tasks track status,
