@@ -156,8 +156,9 @@ The capability layer on top of the spine.
   **Work Board** (kanban-that-executes), **Approvals & Safety Center** (queue +
   redacted audit + persistent kill-switch), **Inference Control Center**
   (model/router, enforceable budget, per-run routing + cost), **Observability
-  Metrics**, **Memory Studio**, and a `Ctrl/Cmd+K` **command palette**
-  (`hybridagent/web/`).
+  Metrics** (governance decision mix + spend trend & per-model cost), **Memory
+  Studio**, and a `Ctrl/Cmd+K` **command palette** (`hybridagent/web/`). Panel
+  overlays are keyboard-accessible (Escape-to-close, dialog roles).
 - **Voice** — turn‑based and **realtime** (mic → transcribe → governed turn →
   audio) over a hand‑rolled, dependency‑free WebSocket, with an OpenAI Realtime
   bridge; operator‑selectable per agent config (`voice.py`, `wsutil.py`).

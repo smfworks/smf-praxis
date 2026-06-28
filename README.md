@@ -7,6 +7,13 @@ proactive *and* safe.
 
 > **Principle:** autonomy for preparation, approval for consequence.
 
+![The Praxis Command Deck — a chat-first colleague with a live run graph, work board, governance approvals, inference and spend control, and observability panels.](docs/command-deck.png)
+
+> The **Command Deck**: chat-first on the left; on the right a live **run graph**,
+> a **work board** of autonomous goals, a **governance broker** holding
+> consequential actions for approval, **inference + spend** control, and full
+> **observability** — all updating over a single live event stream.
+
 See **[FRAMEWORK.md](FRAMEWORK.md)** for the full strengths/weaknesses analysis
 of OpenClaw and Hermes and the design rationale, and
 **[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability map.
