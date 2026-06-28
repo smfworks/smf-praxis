@@ -92,7 +92,59 @@ def _load_auth() -> dict:
         return {}
 
 
-def save_api_key(provider_id: str, api_key: str) -> None:
+# --- secret storage: OS keychain (optional `keyring` extra) with file fallback ---
+KEYCHAIN_SERVICE = "praxis-agent"
+
+
+def _keyring():
+    """Return the keyring module when a usable backend is present, else None."""
+    try:
+        import keyring
+        from keyring.backends.fail import Keyring as _Fail
+        if isinstance(keyring.get_keyring(), _Fail):
+            return None
+        return keyring
+    except Exception:
+        return None
+
+
+def keychain_available() -> bool:
+    return _keyring() is not None
+
+
+def keychain_get(provider_id: str) -> str | None:
+    kr = _keyring()
+    if kr is None:
+        return None
+    try:
+        return kr.get_password(KEYCHAIN_SERVICE, provider_id)
+    except Exception:
+        return None
+
+
+def keychain_set(provider_id: str, api_key: str) -> bool:
+    kr = _keyring()
+    if kr is None:
+        return False
+    try:
+        kr.set_password(KEYCHAIN_SERVICE, provider_id, api_key)
+        return True
+    except Exception:
+        return False
+
+
+def keychain_delete(provider_id: str) -> bool:
+    kr = _keyring()
+    if kr is None:
+        return False
+    try:
+        kr.delete_password(KEYCHAIN_SERVICE, provider_id)
+        return True
+    except Exception:
+        return False
+
+
+def _write_file_key(provider_id: str, api_key: str) -> None:
     home_dir().mkdir(parents=True, exist_ok=True)
     auth = _load_auth()
     auth.setdefault(provider_id, {})["apiKey"] = api_key
@@ -101,6 +153,69 @@ def save_api_key(provider_id: str, api_key: str) -> None:
         os.chmod(auth_path(), 0o600)
     except OSError:
         pass
+
+
+def _delete_file_key(provider_id: str) -> None:
+    p = auth_path()
+    if not p.exists():
+        return
+    auth = _load_auth()
+    if provider_id not in auth:
+        return
+    auth.pop(provider_id, None)
+    if auth:
+        p.write_text(json.dumps(auth, indent=2), encoding="utf-8")
+    else:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def save_api_key(provider_id: str, api_key: str) -> str:
+    """Store an API key in the OS keychain when available, else a gitignored
+    plaintext file. Returns the backend used: 'keychain' or 'file'."""
+    if keychain_set(provider_id, api_key):
+        _delete_file_key(provider_id)   # promote off any stale plaintext copy
+        return "keychain"
+    _write_file_key(provider_id, api_key)
+    return "file"
+
+
+def delete_api_key(provider_id: str) -> None:
+    """Remove a stored key from both the keychain and the plaintext file."""
+    keychain_delete(provider_id)
+    _delete_file_key(provider_id)
+
+
+def migrate_secrets_to_keychain() -> int:
+    """Move any plaintext file-stored keys into the OS keychain. Returns the count
+    moved; a no-op when no keychain backend is available."""
+    if not keychain_available():
+        return 0
+    auth = _load_auth()
+    moved = 0
+    for provider_id, rec in list(auth.items()):
+        key = rec.get("apiKey") if isinstance(rec, dict) else None
+        if key and keychain_set(provider_id, key):
+            _delete_file_key(provider_id)
+            moved += 1
+    return moved
+
+
+def key_location(provider_id: str) -> str:
+    """Human label of where a provider's key resolves: env:NAME / keychain /
+    file (plaintext) / not set."""
+    entry = provider_entry(provider_id) or {}
+    ref = entry.get("keyRef") or {}
+    if ref.get("source") == "env":
+        name = ref.get("id", "")
+        return f"env:{name}" + ("" if os.environ.get(name) else " (unset)")
+    if keychain_get(provider_id):
+        return "keychain"
+    if _load_auth().get(provider_id, {}).get("apiKey"):
+        return "file (plaintext)"
+    return "not set"
 
 
 def write_provider(provider_id: str, base_url: str, compatibility: str,
@@ -146,16 +261,14 @@ def provider_entry(provider_id: str) -> dict | None:
 
 
 def resolve_api_key(provider_id: str) -> str | None:
-    """Resolve a key from env ref or stored auth profile (env wins)."""
+    """Resolve a key: an env reference wins, otherwise the local secret store
+    (OS keychain when available, then the gitignored plaintext file)."""
     entry = provider_entry(provider_id) or {}
     ref = entry.get("keyRef")
-    if ref:
-        if ref.get("source") == "env":
-            return os.environ.get(ref.get("id", ""))
-        if ref.get("source") == "auth-profile":
-            return _load_auth().get(provider_id, {}).get("apiKey")
-    # Fall back to a stored key if present.
-    return _load_auth().get(provider_id, {}).get("apiKey")
+    if ref and ref.get("source") == "env":
+        return os.environ.get(ref.get("id", ""))
+    # auth-profile, or no/unknown ref: read the local secret store.
+    return keychain_get(provider_id) or _load_auth().get(provider_id, {}).get("apiKey")
 
 
 def is_configured() -> bool:

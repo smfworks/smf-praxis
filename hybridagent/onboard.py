@@ -41,12 +41,14 @@ def run_noninteractive(provider_id: str, model: str,
                        use_env_ref: bool = True) -> dict:
     provider = CATALOG[provider_id]
     base = base_url or provider.base_url
+    backend = None
     if api_key and not use_env_ref:
-        cfg.save_api_key(provider_id, api_key)
+        backend = cfg.save_api_key(provider_id, api_key)
     model_ref = f"{provider_id}/{model}"
     cfg.write_provider(provider_id, base, provider.compatibility, model_ref,
                        provider.key_env, use_env_ref=use_env_ref)
-    return {"provider": provider_id, "model": model_ref, "base_url": base}
+    return {"provider": provider_id, "model": model_ref, "base_url": base,
+            "key_backend": backend}
 
 
 def run() -> dict:
@@ -119,6 +121,9 @@ def run() -> dict:
     if provider.needs_key and use_env_ref:
         print(f" Key source: env var {provider.key_env}")
     elif provider.needs_key:
-        print(f" Key source: {cfg.auth_path()} (gitignored)")
+        if summary.get("key_backend") == "keychain":
+            print(" Key source: OS keychain")
+        else:
+            print(f" Key source: {cfg.auth_path()} (gitignored)")
     print("=" * 64)
     return summary

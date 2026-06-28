@@ -70,6 +70,9 @@ mcp = ["mcp>=1.0"]
 # Navigation/read fall back to a stdlib fetch when absent; interaction needs a
 # real browser, so this installs Playwright.
 browser = ["playwright>=1.40"]
+# OS-keychain storage for provider API keys (Windows Credential Manager, macOS
+# Keychain, Linux Secret Service). Without it, keys fall back to a gitignored file.
+keyring = ["keyring>=24"]
 
 [project.scripts]
 praxis = "hybridagent.cli:main"

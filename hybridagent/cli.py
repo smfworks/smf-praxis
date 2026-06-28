@@ -323,6 +323,50 @@ def cmd_update(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_secrets(args: argparse.Namespace) -> int:
+    """Inspect and manage stored provider API keys (OS keychain / gitignored file)."""
+    action = (args.action or "status").lower()
+    if action == "status":
+        if cfg.keychain_available():
+            print("keychain backend: available")
+        else:
+            print("keychain backend: unavailable — keys fall back to a gitignored "
+                  "file (install the 'keyring' extra for OS-keychain storage)")
+        providers = cfg.load_config().get("providers", {})
+        if not providers:
+            print("no providers configured.")
+            return 0
+        for pid in sorted(providers):
+            print(f"  {pid:<16} {cfg.key_location(pid)}")
+        return 0
+    if action == "migrate":
+        if not cfg.keychain_available():
+            print("no keychain backend available (install the 'keyring' extra); "
+                  "nothing migrated.")
+            return 1
+        moved = cfg.migrate_secrets_to_keychain()
+        print(f"migrated {moved} key(s) from the plaintext file to the OS keychain.")
+        return 0
+    if action in ("set", "rm") and not args.provider:
+        print(f"usage: praxis secrets {action} --provider <id>")
+        return 1
+    if action == "set":
+        import getpass
+        key = getpass.getpass(f"Paste API key for {args.provider}: ").strip()
+        if not key:
+            print("no key entered.")
+            return 1
+        backend = cfg.save_api_key(args.provider, key)
+        print(f"stored key for {args.provider} in {backend}.")
+        return 0
+    if action == "rm":
+        cfg.delete_api_key(args.provider)
+        print(f"removed any stored key for {args.provider}.")
+        return 0
+    print(f"unknown secrets action: {action}")
+    return 1
+
+
 def cmd_remember(args: argparse.Namespace) -> int:
     agent = PraxisAgent.persistent()
     agent.learn(args.fact, kind=args.kind, provenance="cli")
@@ -1191,6 +1235,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="only check for a newer version, don't install")
     pup.set_defaults(func=cmd_update)
 
+    psec = sub.add_parser("secrets",
+                          help="manage stored provider API keys (keychain/file)")
+    psec.add_argument("action", nargs="?",
+                      choices=["status", "set", "rm", "migrate"],
+                      help="status (default), set, rm, or migrate to the OS keychain")
+    psec.add_argument("--provider", default=None, help="provider id (for set/rm)")
+    psec.set_defaults(func=cmd_secrets)
+
     return parser
 
 
@@ -1199,6 +1251,7 @@ def _maybe_first_run_onboard(command: str) -> None:
     if command in ("onboard", "demo", "eval", "tui", "m365", "mcp", "daemon",
                    "approvals", "approve", "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance", "governance", "update",
+                   "secrets",
                    "skill-record", "skill-evaluate",
                    "subagent-run", "subagents",
                    "task-create", "tasks", "task-run", "task-cancel",

@@ -118,6 +118,20 @@ praxis update --check    # just check whether a newer version is available
 `update` upgrades in place (pip or pipx) and runs any config migrations; from a
 source checkout, use `git pull` instead.
 
+### Secrets
+
+API keys default to an **environment-variable reference** (nothing stored). When
+you paste a key, it goes to the **OS keychain** (Windows Credential Manager, macOS
+Keychain, Linux Secret Service) if the `keyring` extra is installed
+(`pip install "praxis-agent[keyring]"`), otherwise a gitignored file. Manage them
+with `praxis secrets`:
+
+```bash
+praxis secrets status                  # where each provider's key resolves
+praxis secrets migrate                 # move plaintext keys into the OS keychain
+praxis secrets set --provider openai   # store a key (prompts, hidden input)
+```
+
 Everything runs offline with a deterministic mock LLM — no API keys required.
 
 ## Configure a model provider
