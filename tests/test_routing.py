@@ -59,3 +59,12 @@ def test_agent_run_records_routing(tmp_path, monkeypatch):
     info = d.inference_info()
     assert "routes" in info
     assert any(r["run_id"] == rid for r in info["routes"])
+
+
+def test_run_routing_records_escalations(tmp_path):
+    s = Store(tmp_path / "r.db")
+    s.record_run_routing("run-e", "openai/gpt-4o", 100, 50, 0.01, 4,
+                         local=False, fallbacks=1, escalations=2)
+    rows = s.list_run_routing()
+    assert rows[0]["escalations"] == 2 and rows[0]["fallbacks"] == 1
+    s.close()

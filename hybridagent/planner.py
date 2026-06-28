@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .escalation import AdaptiveCascade
 from .llm import LLMClient
 from .structured import generate_json
 from .tools import ToolRegistry
@@ -130,27 +131,36 @@ class LLMPlanner(Planner):
     def plan(self, goal: str) -> Plan:
         if self.llm._effective_mode() != "real":
             return super().plan(goal)
-        try:
-            prompt = (
-                f"Goal: {goal}\n\n"
-                "Available tools (use ONLY these tool names; every step must use a "
-                "declared tool and its arguments must match the parameters schema):\n"
-                f"{_tool_catalog(self.registry)}\n\n"
-                "Return a single JSON object with this exact shape:\n"
-                '{"steps": [{"intent": "concise human-readable intent", '
-                '"tool": "tool_name", "args": {}}]}'
-            )
-            obj = generate_json(self.llm, prompt, ["steps"], role="planner")
-            valid_steps: list[Step] = []
+        prompt = (
+            f"Goal: {goal}\n\n"
+            "Available tools (use ONLY these tool names; every step must use a "
+            "declared tool and its arguments must match the parameters schema):\n"
+            f"{_tool_catalog(self.registry)}\n\n"
+            "Return a single JSON object with this exact shape:\n"
+            '{"steps": [{"intent": "concise human-readable intent", '
+            '"tool": "tool_name", "args": {}}]}'
+        )
+
+        def solve(difficulty: str | None) -> list[Step]:
+            try:
+                obj = generate_json(self.llm, prompt, ["steps"], role="planner",
+                                    difficulty=difficulty)
+            except Exception:
+                return []
+            steps: list[Step] = []
             for raw in obj.get("steps", []):
                 parsed = _validate_step(self.registry, raw)
                 if parsed is not None:
-                    valid_steps.append(parsed)
-            if valid_steps:
-                return Plan(goal=goal, steps=valid_steps)
-        except Exception:
-            # Any planner failure should degrade to the safe heuristic baseline.
-            pass
+                    steps.append(parsed)
+            return steps
+
+        # Cheap-first: plan at the routed tier; if it yields no valid steps,
+        # escalate to the strongest model before falling back to the heuristic.
+        result = AdaptiveCascade[list[Step]]().run(solve, accept=bool)
+        if result.escalated and hasattr(self.llm, "note_escalation"):
+            self.llm.note_escalation()
+        if result.answer:
+            return Plan(goal=goal, steps=result.answer)
         return self.fallback_factory(self.registry, self.llm).plan(goal)
 
     def read_tools_for(self, goal: str) -> list[str]:

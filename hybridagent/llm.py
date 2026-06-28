@@ -69,13 +69,15 @@ class _RunUsage:
     model: str = ""
     models: list[str] = field(default_factory=list)
     fallbacks: int = 0
+    escalations: int = 0
 
     def as_dict(self) -> dict:
         return {"prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
                 "cost_usd": round(self.cost_usd, 6),
                 "calls": self.calls, "model": self.model,
-                "models": list(self.models), "fallbacks": self.fallbacks}
+                "models": list(self.models), "fallbacks": self.fallbacks,
+                "escalations": self.escalations}
 
 
 @dataclass
@@ -101,6 +103,10 @@ class LLMClient:
     def usage_snapshot(self) -> dict:
         """Tokens + USD cost tallied since the last :meth:`reset_usage`."""
         return self._usage.as_dict()
+
+    def note_escalation(self) -> None:
+        """Record that an adaptive cascade escalated to a stronger tier this run."""
+        self._usage.escalations += 1
 
     def _account(self, model_ref: str, usage: dict) -> None:
         """Fold one real provider call's token usage + cost into the tally."""

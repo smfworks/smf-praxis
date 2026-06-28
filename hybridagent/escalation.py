@@ -13,36 +13,36 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 from .router import HARD
 
-# solve(difficulty: str | None) -> answer text. None routes at the auto/cheap tier;
-# HARD forces the strongest configured tier.
-SolveFn = Callable[["str | None"], str]
-# accept(answer) -> True when the answer is good enough (no escalation needed).
-AcceptFn = Callable[[str], bool]
+T = TypeVar("T")
 
 
 @dataclass
-class CascadeResult:
-    answer: str
+class CascadeResult(Generic[T]):
+    answer: T
     escalated: bool = False
     tier: str = "routed"          # "routed" | "strong"
     reason: str = "accepted"      # accepted | escalated | budget | unverified
     passes: int = 1
 
 
-class AdaptiveCascade:
+class AdaptiveCascade(Generic[T]):
     """Cheap-first, escalate-on-low-confidence, budget-gated completion.
 
-    ``can_escalate`` is an optional gate (e.g. a budget check); when it returns
-    False the cheap answer is kept rather than spending more — cost control wins.
+    Generic over the answer type, so the same primitive serves grounded Q&A
+    (``str``) and planning (a list of steps). ``can_escalate`` is an optional gate
+    (e.g. a budget check); when it returns False the cheap answer is kept rather
+    than spending more — cost control wins.
     """
 
     def __init__(self, can_escalate: "Callable[[], bool] | None" = None) -> None:
         self._can_escalate = can_escalate
 
-    def run(self, solve: SolveFn, accept: AcceptFn) -> CascadeResult:
+    def run(self, solve: "Callable[[str | None], T]",
+            accept: "Callable[[T], bool]") -> "CascadeResult[T]":
         first = solve(None)                        # routed (auto difficulty) tier
         if accept(first):
             return CascadeResult(first, reason="accepted")

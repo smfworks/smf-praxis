@@ -52,7 +52,8 @@ def _extract_json(text: str) -> dict | None:
 
 def generate_json(llm: LLMClient, prompt: str, required_keys: list[str],
                   role: str = "planner", retries: int = 2,
-                  sensitivity: str | None = None) -> dict:
+                  sensitivity: str | None = None,
+                  difficulty: str | None = None) -> dict:
     """Ask the LLM for a single JSON object containing ``required_keys``.
 
     The prompt is auto-tagged as sensitive when it contains likely secrets (SSN,
@@ -65,7 +66,7 @@ def generate_json(llm: LLMClient, prompt: str, required_keys: list[str],
     last = ""
     for _ in range(retries + 1):
         out = llm.complete(prompt + "\nJSON:", system, role=role,
-                           sensitivity=sensitivity)
+                           sensitivity=sensitivity, difficulty=difficulty)
         obj = _extract_json(out)
         if obj is not None and all(k in obj for k in required_keys):
             return obj

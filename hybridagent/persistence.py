@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS run_routing (
     calls             INTEGER NOT NULL DEFAULT 0,
     local             INTEGER NOT NULL DEFAULT 0,
     fallbacks         INTEGER NOT NULL DEFAULT 0,
+    escalations       INTEGER NOT NULL DEFAULT 0,
     ts                REAL NOT NULL
 );
 """
@@ -310,6 +311,9 @@ class Store:
         self._ensure_columns_locked("tasks", {
             "output": "TEXT NOT NULL DEFAULT ''",
             "plan": "TEXT NOT NULL DEFAULT ''",
+        })
+        self._ensure_columns_locked("run_routing", {
+            "escalations": "INTEGER NOT NULL DEFAULT 0",
         })
 
     def _ensure_columns_locked(self, table: str, columns: dict[str, str]) -> None:
@@ -1035,16 +1039,17 @@ class Store:
     # ------------------------------------------------------------- run routing
     def record_run_routing(self, run_id: str, model: str, prompt_tokens: int,
                            completion_tokens: int, cost_usd: float, calls: int,
-                           local: bool, fallbacks: int = 0) -> None:
+                           local: bool, fallbacks: int = 0,
+                           escalations: int = 0) -> None:
         """Persist which model handled a run + its tokens/cost — routing legibility."""
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO run_routing(run_id,model,prompt_tokens,"
-                "completion_tokens,cost_usd,calls,local,fallbacks,ts) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "completion_tokens,cost_usd,calls,local,fallbacks,escalations,ts) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (run_id, model, int(prompt_tokens), int(completion_tokens),
                  float(cost_usd), int(calls), 1 if local else 0,
-                 int(fallbacks), time.time()))
+                 int(fallbacks), int(escalations), time.time()))
             self._conn.commit()
 
     def list_run_routing(self, limit: int = 20) -> list[dict]:
@@ -1052,7 +1057,7 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT rr.run_id, rr.model, rr.prompt_tokens, rr.completion_tokens, "
-                "rr.cost_usd, rr.calls, rr.local, rr.fallbacks, rr.ts, "
+                "rr.cost_usd, rr.calls, rr.local, rr.fallbacks, rr.escalations, rr.ts, "
                 "r.goal AS goal, r.status AS status "
                 "FROM run_routing rr LEFT JOIN runs r ON r.run_id = rr.run_id "
                 "ORDER BY rr.ts DESC LIMIT ?", (limit,)).fetchall()

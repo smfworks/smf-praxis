@@ -95,3 +95,53 @@ def test_grounded_responder_respects_budget_gate():
         "What is the capital of France?", _src())
     assert ans.escalated is False and ans.abstained is True
     assert llm.difficulties == [None]            # escalation skipped
+
+
+# ----------------------------------------------------- generic + planner wiring
+def test_cascade_is_generic_over_answer_type():
+    res = AdaptiveCascade[list]().run(
+        lambda diff: [] if diff is None else [1, 2], accept=bool)
+    assert res.answer == [1, 2] and res.escalated is True and res.tier == "strong"
+
+
+def test_generate_json_threads_difficulty():
+    from hybridagent.structured import generate_json
+    captured = {}
+
+    class _LLM:
+        def complete(self, prompt, system=None, role="general",
+                     sensitivity="normal", difficulty=None):
+            captured["difficulty"] = difficulty
+            return '{"steps": []}'
+
+    out = generate_json(_LLM(), "plan it", ["steps"], difficulty="hard")
+    assert out == {"steps": []} and captured["difficulty"] == "hard"
+
+
+def test_llm_planner_escalates_when_routed_plan_is_empty():
+    from hybridagent.planner import LLMPlanner
+    from hybridagent.tools import default_registry
+
+    class _PlannerLLM:
+        def __init__(self):
+            self.diffs = []
+            self.escalations = 0
+
+        def _effective_mode(self):
+            return "real"
+
+        def note_escalation(self):
+            self.escalations += 1
+
+        def complete(self, prompt, system=None, role="general",
+                     sensitivity="normal", difficulty=None):
+            self.diffs.append(difficulty)
+            # routed -> empty plan (low confidence); HARD -> a candidate step
+            if difficulty:
+                return '{"steps": [{"intent": "do it", "tool": "noop", "args": {}}]}'
+            return '{"steps": []}'
+
+    llm = _PlannerLLM()
+    LLMPlanner(default_registry(), llm).plan("organize my day")
+    assert llm.diffs == [None, HARD]             # cheap pass, then escalated
+    assert llm.escalations == 1

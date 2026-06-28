@@ -15,7 +15,7 @@ class FakeLLM:
     def _effective_mode(self):
         return self._mode
 
-    def complete(self, prompt, system=None, role="general", sensitivity="normal"):
+    def complete(self, prompt, system=None, role="general", sensitivity="normal", difficulty=None):
         return self.out
 
 
@@ -80,7 +80,7 @@ def test_generate_json_keeps_sensitive_prompt_off_cloud():
         def _effective_mode(self):
             return "real"
 
-        def complete(self, prompt, system=None, role="general", sensitivity="normal"):
+        def complete(self, prompt, system=None, role="general", sensitivity="normal", difficulty=None):
             captured["sensitivity"] = sensitivity
             return '{"ok": true}'
 

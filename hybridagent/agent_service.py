@@ -40,6 +40,7 @@ class AgentService:
         self.agent.broker.policy.allowed_tools.update(self.agent.registry.names())
         report = PlanExecutor(
             self.agent.registry, self.agent.broker,
+            planner=getattr(self.agent, "planner", None),
             store=getattr(self.agent, "store", None),
             on_event=on_event,
             max_replans=max_replans).execute(goal)

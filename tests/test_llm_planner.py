@@ -16,7 +16,7 @@ class FakeLLM:
     def _effective_mode(self):
         return self._mode
 
-    def complete(self, prompt, system=None, role="general", sensitivity="normal"):
+    def complete(self, prompt, system=None, role="general", sensitivity="normal", difficulty=None):
         return self.out
 
 
