@@ -169,12 +169,18 @@ Extend the existing daemon; **no new heavyweight deps**.
 
 ## 6. Phased roadmap
 
+**Status (2026-06-28): D1–D6 all shipped on `main`.**
+
 | Phase | Deliverable | Why first |
 |---|---|---|
 | **D1** | Modular shell + durable push event bus + **Live Run Graph (P1)** | Observability crown; unlocks every other panel |
 | **D2** | **Governed Work Board (P2)** + **Approvals & Safety Center (P3)** | The kanban-executes-workflow wedge + governance moat |
 | **D3** | **Inference Control Center (P4)** + budgets + **Metrics (P5)** | Pairs with LLM wiring / contextual model work |
 | **D4** | **Memory Studio (P6)** + **Command Palette (P7)** + design polish (P8) | Depth + delight |
+| **D4.1** | **Kill-switch hardening** — persisted across restarts + halts new runs | A real emergency brake before live inference |
+| **D5a** | **Real token-cost accounting** — budget bills actual provider usage | Cost *control*, not a placeholder |
+| **D5b** | **Routing observability** — per-run model / tokens / cost / fallbacks | Make contextual routing legible |
+| **D6** | **Adaptive cascade inference** — cheap-first, escalate on low confidence | Runtime hybrid inference under budget |
 
 Each phase ships behind the existing green gate (ruff + mypy + pytest + `praxis
 eval` 30/30) and adds eval cases + tests for new endpoints.

@@ -321,12 +321,48 @@ card numbers, "confidential" markers) is pinned to a **local** model or the
 offline mock and is **never sent to a cloud provider**. On error the client falls
 back to the next candidate. Inspect the matrix with `praxis route`.
 
+Inference cost is **metered for real**: the spend budget bills actual provider
+token usage (per-model pricing; local and offline models are free), and an
+**adaptive cascade** runs the cheaper routed tier first, escalating to the
+strongest model only when the answer is low-confidence *and* the budget allows.
+
 Images, audio, and video are first-class inputs (`praxis describe <file>` or
 `praxis ingest <file>`). Offline, Praxis emits honest *metadata* (size, duration,
 dimensions) and never fabricates a description or transcript; set `PRAXIS_MM=real`
 with a vision model (`agents.roles.vision`) and speech-to-text (local Whisper or
 `agents.roles.transcribe`) to caption/transcribe for real. Extracted text flows
 into the same RAG + perception pipeline, injection-screened like any document.
+
+## Command Deck — the governed web dashboard
+
+`praxis daemon` serves a single-page **Command Deck** (default `127.0.0.1:8643`):
+a long-running worker plus an operator console where the whole governed loop is
+observable and controllable. Every panel shares **one** server-sent-events stream
+(a single `EventSource` fanned out to all panels), so the UI stays live without
+exhausting the browser's per-host connection pool.
+
+- **Live Run Graph** — durable, replayable run traces rendered as the governed
+  loop's DAG (plan → govern → act → reflect) with a scrubber over persisted
+  events — not an ephemeral live-only view.
+- **Work Board** — a kanban whose lanes are the governed-loop states
+  (Backlog / Planned / Running / Held / Done / Failed): add a goal, **Run** it
+  under the broker, and a card needing a consequential action lands in **Held**.
+- **Approvals & Safety Center** — the human-in-the-loop control plane: a live
+  approval queue (approve/deny), a redacted **audit-trail** viewer with policy
+  flags, and a **kill-switch** that **persists across restarts** and **blocks new
+  runs outright** (not just consequential tools) until released.
+- **Inference Control Center** — current model/provider, the role-routing
+  vocabulary and **learned-router** state, an **enforceable spend budget** that
+  *halts* runs at the cap (billed from real token usage), and a **Recent routing**
+  view showing which model handled each run (local-vs-cloud, tokens, cost,
+  fallbacks).
+- **Observability Metrics** — eval pass-rate trend, decision mix by verdict and
+  policy rule (injection / egress / kill-switch / autonomous), and run-status
+  counts.
+- **Memory Studio** — browse and edit tiered memory (working / episodic /
+  durable) with provenance and per-tier counts.
+- **Command Palette** — `Ctrl/Cmd+K` global search across memory, runs, board
+  cards, and the audit trail.
 
 ## Voice (configurable)
 
@@ -496,9 +532,11 @@ print(agent.memory.stats())        # working/episodic/durable/skills
 - ✅ Reads & drafts happen autonomously
 - ✅ Sends & deletes are held for human approval (draft-before-send)
 - ✅ Prompt injection in retrieved content is flagged and treated as data
-- ✅ Kill-switch blocks consequential actions while reads still work
+- ✅ Kill-switch persists across restarts and halts new runs (not just consequential tools)
+- ✅ Inference cost is metered for real and capped by an enforceable budget
+- ✅ Adaptive inference escalates to a stronger model only when needed *and* affordable
 - ✅ Tiered memory consolidates into durable facts + skills with provenance
-- ✅ Every governed action is audited (secrets redacted)
+- ✅ Every governed action is audited (secrets redacted), and the Command Deck makes the whole loop observable
 
 ## Relationship to Clawmes Orchestrator
 

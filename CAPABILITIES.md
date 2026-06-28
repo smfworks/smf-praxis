@@ -34,7 +34,8 @@ The control plane every other capability flows through (`broker.py`,
   its pending approval instead of queuing a duplicate (no double‑execution),
   scoped to the live broker session.
 - **Allowlist + least privilege** and a **kill‑switch** that disables all
-  consequential tools instantly.
+  consequential tools instantly — **persisted across restarts** and gating new
+  runs outright, so an engaged brake survives a crash instead of silently releasing.
 - **Schema validation** — malformed tool arguments are rejected before the broker
   ever sees them.
 - **Prompt‑injection boundary** — retrieved/tool content is treated as *data,
@@ -67,6 +68,12 @@ The capability layer on top of the spine.
   from governed outcome history, with a heuristic fallback and an injection‑pin
   safety invariant (`router_model.py`, `router.py`); difficulty/sensitivity
   routing across local + cloud providers.
+- **Real inference cost accounting** — the spend budget bills actual provider
+  token usage (per-model pricing; local/mock models are free), so the cap controls
+  real cost rather than a placeholder estimate (`pricing.py`, `llm.py`).
+- **Routing observability** — every run records which model handled it,
+  local-vs-cloud, tokens, cost, and fallbacks, surfaced in the Inference Control
+  Center's *Recent routing* view (`run_routing` in `persistence.py`, `daemon.py`).
 
 ## 3. Reasoning & deliberation
 
@@ -75,6 +82,10 @@ The capability layer on top of the spine.
 - **Deep‑think mode** — difficulty‑gated, **multi‑round** deliberation: if the
   solvers disagree, they debate again seeing each other's attempts, then the
   result is verified (`deepthink.py`). Composes routing + debate + verification.
+- **Adaptive cascade inference** — the runtime counterpart to a-priori difficulty
+  routing: run the cheaper routed tier first and **escalate to the strongest tier
+  only when the answer is low-confidence *and* the budget allows** — modern hybrid
+  inference kept under the governance budget (`escalation.py`).
 
 ## 4. Retrieval & memory
 
@@ -138,7 +149,13 @@ The capability layer on top of the spine.
   `daemon`, and more (`cli.py`).
 - **Web dashboard + daemon** — long‑running worker with a single‑page dashboard
   (Chat / Ask / Do / Agent modes), SSE streaming, approvals, and a status API
-  (`daemon.py`).
+  (`daemon.py`). The **Command Deck** surfaces the governed loop as panels over
+  one shared SSE stream: **Live Run Graph** (durable, replayable run DAG), governed
+  **Work Board** (kanban-that-executes), **Approvals & Safety Center** (queue +
+  redacted audit + persistent kill-switch), **Inference Control Center**
+  (model/router, enforceable budget, per-run routing + cost), **Observability
+  Metrics**, **Memory Studio**, and a `Ctrl/Cmd+K` **command palette**
+  (`hybridagent/web/`).
 - **Voice** — turn‑based and **realtime** (mic → transcribe → governed turn →
   audio) over a hand‑rolled, dependency‑free WebSocket, with an OpenAI Realtime
   bridge; operator‑selectable per agent config (`voice.py`, `wsutil.py`).
