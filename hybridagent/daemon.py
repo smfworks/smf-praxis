@@ -1595,7 +1595,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
                 self._json_response(self.daemon.compliance_set(
-                    str(payload.get("mode", ""))))
+                    str(payload.get("mode", "")),
+                    ttl_seconds=payload.get("ttl_seconds")))
                 return
             if self.path == "/api/budget":
                 length = int(self.headers.get("Content-Length", 0))
@@ -2233,6 +2234,7 @@ class Daemon:
         try:
             while self.running and not self._stop_event.is_set():
                 self.tick()
+                self._compliance_autorevert()
                 if self._consecutive_errors >= self.max_consecutive_errors:
                     self._log("error", "too many consecutive errors; shutting down")
                     break
@@ -2250,6 +2252,17 @@ class Daemon:
         )
         interval = self.tick_interval if has_work else self.idle_interval
         self._stop_event.wait(interval)
+
+    def _compliance_autorevert(self) -> None:
+        """Promptly flip an expired timed relaxation back to enforced even when the
+        daemon is otherwise idle. authorize() is fail-safe regardless, but this
+        keeps the persisted state and dashboard honest."""
+        if self.agent is None:
+            return
+        try:
+            self.agent.broker.effective_mode()
+        except Exception:
+            pass
 
     def _shutdown(self) -> None:
         self.running = False
@@ -2526,7 +2539,11 @@ class Daemon:
         from .broker import COMPLIANCE_MODES
         self._ensure_agent()
         assert self.agent is not None
-        current = self.agent.broker.mode.value
+        broker = self.agent.broker
+        current = broker.effective_mode().value   # also auto-reverts on expiry
+        expires_ts = broker.mode_expires_ts
+        expires_in = (max(0, int(expires_ts - time.time()))
+                      if expires_ts is not None else None)
         labels = {
             "enforced": ("Enforced",
                          "Send & destructive actions are held for your approval. "
@@ -2540,6 +2557,8 @@ class Daemon:
         }
         return {
             "mode": current,
+            "expires_ts": expires_ts,
+            "expires_in_seconds": expires_in,
             "modes": [
                 {"id": m.value, "label": labels[m.value][0],
                  "description": labels[m.value][1], "active": m.value == current}
@@ -2547,18 +2566,30 @@ class Daemon:
             ],
         }
 
-    def compliance_set(self, mode: str) -> dict:
+    def compliance_set(self, mode: str, ttl_seconds: float | None = None) -> dict:
         """Set the governance compliance mode (persisted). 'enforced' is the
         locked-down default; 'autonomous'/'permissive' relax the approval gate.
-        The kill-switch is independent and always overrides regardless of mode."""
+        Optional ttl_seconds schedules an automatic revert to enforced. The
+        kill-switch is independent and always overrides regardless of mode."""
         from .broker import COMPLIANCE_MODES
         self._ensure_agent()
         assert self.agent is not None
         if mode not in {m.value for m in COMPLIANCE_MODES}:
             return {"error": f"unknown compliance mode '{mode}'"}
-        applied = self.agent.broker.set_mode(mode)
+        ttl: float | None = None
+        if ttl_seconds is not None:
+            try:
+                ttl = float(ttl_seconds)
+            except (TypeError, ValueError):
+                return {"error": "ttl_seconds must be a number"}
+            if ttl <= 0:
+                ttl = None
+            elif ttl > 604800:        # cap at 7 days to avoid a runaway relaxation
+                ttl = 604800.0
+        applied = self.agent.broker.set_mode(mode, ttl_seconds=ttl)
+        window = f" for {int(ttl)}s" if ttl else ""
         self._log("warning" if applied.value != "enforced" else "info",
-                  f"compliance mode set to '{applied.value}' via dashboard")
+                  f"compliance mode set to '{applied.value}'{window} via dashboard")
         return self.compliance_status()
 
     def audit_log(self, limit: int = 100) -> dict:

@@ -37,10 +37,19 @@
     if (m === "autonomous") return " warn";
     return "";
   }
-  function setCompliance(mode) {
-    api("/api/compliance", { mode: mode }).then(function (res) {
+  function setCompliance(mode, ttlSeconds) {
+    var body = { mode: mode };
+    if (ttlSeconds != null) body.ttl_seconds = ttlSeconds;
+    api("/api/compliance", body).then(function (res) {
       if (!(res && res.error)) load();
     }).catch(function () {});
+  }
+  function fmtSecs(s) {
+    s = Math.max(0, Math.floor(s));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (h) return h + "h" + (m ? " " + m + "m" : "");
+    if (m) return m + "m";
+    return sec + "s";
   }
   var RULE_LABEL = {
     egress_blocked: "egress", kill_switch_denied: "kill-switch",
@@ -75,8 +84,10 @@
     mount.appendChild(ks);
 
     var cmp = el("div", "sf-cmp" + complianceClass());
+    var cmpVal = esc(compliance.mode || "enforced");
+    if (compliance.expires_in_seconds != null) cmpVal += " (" + fmtSecs(compliance.expires_in_seconds) + ")";
     cmp.innerHTML = '<span class="sf-cmp-label">Compliance</span>' +
-      '<span class="sf-cmp-val">' + esc(compliance.mode || "enforced") + '</span>';
+      '<span class="sf-cmp-val">' + cmpVal + '</span>';
     mount.appendChild(cmp);
 
     mount.appendChild(el("div", "sf-pending",
@@ -143,6 +154,21 @@
         ? "Permissive: consequential actions run unsupervised and the egress/injection guards are OFF \u2014 only the kill-switch remains. Use in trusted or sandboxed environments only."
         : "Autonomous: consequential actions run without approval. The egress firewall, injection detection, and kill-switch all remain active.";
       box.appendChild(warn);
+
+      var ttlRow = el("div", "sf-cmp-ttl");
+      ttlRow.appendChild(el("span", "sf-cmp-ttl-label", "Auto-revert:"));
+      [["Off", 0], ["15 min", 900], ["1 hour", 3600], ["4 hours", 14400]].forEach(function (o) {
+        var chip = el("button", "sf-cmp-chip");
+        chip.type = "button";
+        chip.textContent = o[0];
+        chip.onclick = function () { setCompliance(cmode, o[1]); };
+        ttlRow.appendChild(chip);
+      });
+      box.appendChild(ttlRow);
+      if (compliance.expires_in_seconds != null) {
+        box.appendChild(el("div", "sf-cmp-count",
+          "Reverts to enforced in " + fmtSecs(compliance.expires_in_seconds) + "."));
+      }
     }
 
     // Approval queue

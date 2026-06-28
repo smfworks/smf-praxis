@@ -179,6 +179,35 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 1
 
 
+def _parse_duration(text: str) -> float | None:
+    """Parse '90s', '15m', '1h', '1h30m', or a bare seconds number -> seconds."""
+    import re
+    text = (text or "").strip().lower()
+    if not text:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return float(text)
+    total, matched = 0.0, False
+    for num, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([smhd])", text):
+        matched = True
+        total += float(num) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    return total if matched else None
+
+
+def _fmt_duration(secs: float) -> str:
+    secs = int(secs)
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s and not h:
+        parts.append(f"{s}s")
+    return " ".join(parts) or "0s"
+
+
 def cmd_governance(args: argparse.Namespace) -> int:
     """View or set the governance compliance mode via the running daemon."""
     import urllib.request
@@ -196,8 +225,15 @@ def cmd_governance(args: argparse.Namespace) -> int:
             with urllib.request.urlopen(url, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
         else:
+            body: dict = {"mode": action}
+            if getattr(args, "for_", None):
+                ttl = _parse_duration(args.for_)
+                if ttl is None:
+                    print(f"could not parse duration '{args.for_}' (try 30m, 1h, 90s)")
+                    return 1
+                body["ttl_seconds"] = ttl
             req = urllib.request.Request(
-                url, data=json.dumps({"mode": action}).encode(),
+                url, data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
@@ -207,7 +243,11 @@ def cmd_governance(args: argparse.Namespace) -> int:
     if data.get("error"):
         print(f"error: {data['error']}")
         return 1
-    print(f"compliance mode: {data.get('mode')}")
+    line = f"compliance mode: {data.get('mode')}"
+    secs = data.get("expires_in_seconds")
+    if secs:
+        line += f"  (auto-reverts to enforced in {_fmt_duration(secs)})"
+    print(line)
     for m in data.get("modes", []):
         mark = "*" if m.get("active") else " "
         print(f"  {mark} {m['id']:<11} {m.get('description', '')}")
@@ -1067,6 +1107,9 @@ def build_parser() -> argparse.ArgumentParser:
         "action", nargs="?",
         choices=["status", "enforced", "autonomous", "permissive"],
         help="show status, or set the mode (enforced/autonomous/permissive)")
+    pgov.add_argument(
+        "--for", dest="for_", default=None,
+        help="auto-revert to enforced after this duration (e.g. 30m, 1h, 90s)")
     pgov.set_defaults(func=cmd_governance)
 
     return parser

@@ -100,3 +100,8 @@
   border: 1px solid var(--warn); border-radius: .55rem; padding: .45rem .6rem; margin-top: .5rem;
 }
 .sf-cmp-warn.bad { color: var(--bad); background: rgba(255, 90, 95, .1); border-color: var(--bad); }
+.sf-cmp-ttl { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin-top: .5rem; }
+.sf-cmp-ttl-label { font-size: .72rem; color: var(--muted); }
+.sf-cmp-chip { background: var(--bg2); border: 1px solid var(--border); color: var(--text); border-radius: 1rem; padding: .2rem .6rem; cursor: pointer; font: inherit; font-size: .72rem; }
+.sf-cmp-chip:hover { border-color: var(--accent); }
+.sf-cmp-count { font-size: .72rem; color: var(--muted); margin-top: .35rem; }

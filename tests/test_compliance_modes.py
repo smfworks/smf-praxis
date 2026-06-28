@@ -4,6 +4,8 @@ The lockdown is on by default (enforced); operators can relax it to autonomous
 (no approval gate, guards still on) or permissive (guards off, kill-switch only).
 """
 
+import time
+
 from hybridagent.broker import (
     ComplianceMode,
     GovernanceBroker,
@@ -126,3 +128,67 @@ def test_mode_persists_across_restart(tmp_path):
     b2 = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}), store=s2)
     assert b2.mode is ComplianceMode.AUTONOMOUS
     s2.close()
+
+
+# --- Timed auto-revert --------------------------------------------------------
+
+def test_ttl_expiry_reverts_to_enforced():
+    b = _broker("send_email")
+    b.set_mode(ComplianceMode.AUTONOMOUS, ttl_seconds=0.05)
+    assert b.effective_mode() is ComplianceMode.AUTONOMOUS         # not yet expired
+    assert _send(b).policy_rule == "compliance_off_allow"
+    time.sleep(0.08)
+    assert b.effective_mode() is ComplianceMode.ENFORCED           # auto-reverted
+    assert b.mode_expires_ts is None
+    assert _send(b).verdict is Verdict.NEEDS_APPROVAL              # back to holding
+
+
+def test_set_enforced_clears_pending_ttl():
+    b = _broker("send_email")
+    b.set_mode(ComplianceMode.PERMISSIVE, ttl_seconds=3600)
+    assert b.mode_expires_ts is not None
+    b.set_mode(ComplianceMode.ENFORCED)
+    assert b.mode_expires_ts is None
+
+
+def test_relaxed_without_ttl_is_open_ended():
+    b = _broker("send_email")
+    b.set_mode(ComplianceMode.AUTONOMOUS)
+    assert b.mode_expires_ts is None
+    assert b.effective_mode() is ComplianceMode.AUTONOMOUS
+
+
+def test_zero_or_negative_ttl_is_open_ended():
+    b = _broker("send_email")
+    b.set_mode(ComplianceMode.AUTONOMOUS, ttl_seconds=0)
+    assert b.mode_expires_ts is None
+
+
+def test_ttl_persists_across_restart(tmp_path):
+    db = tmp_path / "praxis.db"
+    s = Store(db)
+    b = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}), store=s)
+    b.set_mode(ComplianceMode.PERMISSIVE, ttl_seconds=3600)
+    exp = b.mode_expires_ts
+    assert exp is not None
+    s.close()
+
+    s2 = Store(db)
+    assert abs((s2.get_compliance_expiry() or 0) - exp) < 1.0
+    b2 = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}), store=s2)
+    assert b2.mode is ComplianceMode.PERMISSIVE and b2.mode_expires_ts is not None
+    s2.close()
+
+
+def test_expired_ttl_on_restart_fails_safe(tmp_path):
+    db = tmp_path / "praxis.db"
+    s = Store(db)
+    # An already-expired permissive relaxation persisted before a restart.
+    s.set_compliance_mode("permissive", expires_ts=time.time() - 1)
+    b = GovernanceBroker(GovernancePolicy(allowed_tools={"send_email"}), store=s)
+    # Hydrated as permissive, but the first consult fails safe to enforced...
+    assert b.effective_mode() is ComplianceMode.ENFORCED
+    # ...and the revert is persisted.
+    assert s.get_compliance_mode() == "enforced"
+    assert s.get_compliance_expiry() is None
+    s.close()

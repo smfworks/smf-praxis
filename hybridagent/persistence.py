@@ -245,6 +245,7 @@ CREATE TABLE IF NOT EXISTS killswitch (
 CREATE TABLE IF NOT EXISTS compliance (
     name       TEXT PRIMARY KEY,
     mode       TEXT NOT NULL DEFAULT 'enforced',
+    expires_ts REAL,
     updated_ts REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS run_routing (
@@ -322,6 +323,7 @@ class Store:
             "escalations": "INTEGER NOT NULL DEFAULT 0",
             "escalation_reason": "TEXT NOT NULL DEFAULT ''",
         })
+        self._ensure_columns_locked("compliance", {"expires_ts": "REAL"})
 
     def _ensure_columns_locked(self, table: str, columns: dict[str, str]) -> None:
         existing = {
@@ -1244,12 +1246,24 @@ class Store:
                 "SELECT mode FROM compliance WHERE name=?", (name,)).fetchone()
         return str(row["mode"]) if row is not None else "enforced"
 
-    def set_compliance_mode(self, mode: str, name: str = "default") -> str:
-        """Persist the compliance mode so the operator's choice survives restarts."""
+    def get_compliance_expiry(self, name: str = "default") -> float | None:
+        """When a timed relaxation auto-reverts to enforced (epoch seconds), or
+        None for an open-ended mode."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT expires_ts FROM compliance WHERE name=?", (name,)).fetchone()
+        if row is None or row["expires_ts"] is None:
+            return None
+        return float(row["expires_ts"])
+
+    def set_compliance_mode(self, mode: str, expires_ts: float | None = None,
+                            name: str = "default") -> str:
+        """Persist the compliance mode (and optional auto-revert time) so the
+        operator's choice survives restarts."""
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO compliance(name,mode,updated_ts) "
-                "VALUES (?,?,?)", (name, mode, time.time()))
+                "INSERT OR REPLACE INTO compliance(name,mode,expires_ts,updated_ts) "
+                "VALUES (?,?,?,?)", (name, mode, expires_ts, time.time()))
             self._conn.commit()
         return mode
 

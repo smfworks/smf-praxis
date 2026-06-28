@@ -161,7 +161,7 @@ praxis --help
 | `praxis approvals` | list held consequential actions (persisted across runs) |
 | `praxis approve <id> --approved-by <name> --notes "<why>"` | approve + execute a held action by id, recording operator/justification |
 | `praxis compliance` | render an audit attestation over cycles, approvals, and consequential actions |
-| `praxis governance [enforced\|autonomous\|permissive]` | view/set the governance compliance mode (default enforced; relax for unattended/sandboxed use) |
+| `praxis governance [enforced\|autonomous\|permissive] [--for 1h]` | view/set the governance compliance mode (default enforced; `--for` auto-reverts to enforced after a duration) |
 | `praxis task-create "<goal>"` | create a persistent resumable task |
 | `praxis tasks` | list persistent tasks and statuses |
 | `praxis task-run <id>` | run one task attempt (records cycle/result) |
@@ -364,8 +364,10 @@ exhausting the browser's per-host connection pool.
   **compliance-mode** selector — **enforced** (default: hold send/destructive for
   approval), **autonomous** (run them without approval; egress firewall, injection
   detection, and kill-switch stay on), or **permissive** (guards off, kill-switch
-  only; for trusted/sandboxed environments). Persisted across restarts and also
-  settable with `praxis governance <mode>`.
+  only; for trusted/sandboxed environments). Relaxed modes support a **timed
+  auto-revert** (e.g. permissive for 1 hour, then fail safe back to enforced).
+  Persisted across restarts and also settable with `praxis governance <mode>
+  [--for 1h]`.
 - **Inference Control Center** — current model/provider, the role-routing
   vocabulary and **learned-router** state, an **enforceable spend budget** that
   *halts* runs at the cap (billed from real token usage), and a **Recent routing**

@@ -220,6 +220,8 @@ class GovernanceBroker:
         self.log = get_logger("praxis.broker")
         self.mode = (coerce_compliance_mode(store.get_compliance_mode())
                      if store is not None else ComplianceMode.ENFORCED)
+        self.mode_expires_ts = (store.get_compliance_expiry()
+                                if store is not None else None)
         if store is not None:
             self._hydrate(store)
 
@@ -244,14 +246,42 @@ class GovernanceBroker:
                 approval_id=row.get("approval_id", ""),
                 args_hash=row.get("args_hash", ""), ts=row["ts"]))
 
-    def set_mode(self, mode: "ComplianceMode | str") -> ComplianceMode:
+    def set_mode(self, mode: "ComplianceMode | str",
+                 ttl_seconds: float | None = None) -> ComplianceMode:
         """Set the governance posture (compliance mode), persisting it so the
         choice survives a daemon restart. The kill-switch is independent and
-        always overrides regardless of mode."""
+        always overrides regardless of mode.
+
+        ``ttl_seconds`` schedules an automatic revert to enforced after that many
+        seconds (only meaningful for a relaxed mode); selecting enforced always
+        clears any pending revert."""
         self.mode = coerce_compliance_mode(mode)
+        if self.mode is ComplianceMode.ENFORCED or not ttl_seconds or ttl_seconds <= 0:
+            self.mode_expires_ts = None
+        else:
+            self.mode_expires_ts = time.time() + float(ttl_seconds)
         if self.store is not None:
-            self.store.set_compliance_mode(self.mode.value)
+            self.store.set_compliance_mode(self.mode.value, self.mode_expires_ts)
         return self.mode
+
+    def effective_mode(self) -> ComplianceMode:
+        """The mode in force right now, auto-reverting to enforced when a timed
+        relaxation has expired. Fail-safe: expiry always returns to the default."""
+        if (self.mode is not ComplianceMode.ENFORCED
+                and self.mode_expires_ts is not None
+                and time.time() >= self.mode_expires_ts):
+            self._revert_to_enforced()
+        return self.mode
+
+    def _revert_to_enforced(self) -> None:
+        prior = self.mode.value
+        self.mode = ComplianceMode.ENFORCED
+        self.mode_expires_ts = None
+        if self.store is not None:
+            self.store.set_compliance_mode(ComplianceMode.ENFORCED.value, None)
+        self.log.warning(
+            "compliance auto-reverted to enforced (timed '%s' relaxation expired)",
+            prior)
 
     # ---------------------------------------------------------- authorization
     def authorize(self, actor: str, tool: str, risk: RiskClass, args: dict,
@@ -275,10 +305,13 @@ class GovernanceBroker:
                                       "autonomous (read/draft)", decision_id=decision_id,
                                       cycle_id=cycle_id, policy_rule="autonomous_allow",
                                       args_hash=args_hash)
+        # Resolve the mode in force now (this also auto-reverts an expired
+        # timed relaxation back to enforced).
+        mode = self.effective_mode()
         # Egress firewall: refuse to relay untrusted, injection-flagged content
         # out through a consequential action (exfiltration / injection propagation).
         # Active in enforced + autonomous modes; permissive turns it off.
-        if self.policy.egress_check and self.mode is not ComplianceMode.PERMISSIVE:
+        if self.policy.egress_check and mode is not ComplianceMode.PERMISSIVE:
             blocked = self._egress_blocked(args)
             if blocked:
                 return self._log_decision(actor, tool, risk, Verdict.DENY, blocked,
@@ -288,10 +321,10 @@ class GovernanceBroker:
         # Compliance off (autonomous/permissive): consequential actions run without
         # human approval. The kill-switch already had its say above, and each such
         # action is audit-logged distinctly so unsupervised runs stay visible.
-        if self.mode is not ComplianceMode.ENFORCED:
+        if mode is not ComplianceMode.ENFORCED:
             return self._log_decision(
                 actor, tool, risk, Verdict.ALLOW,
-                f"auto-allowed (compliance {self.mode.value})",
+                f"auto-allowed (compliance {mode.value})",
                 decision_id=decision_id, cycle_id=cycle_id,
                 policy_rule="compliance_off_allow", args_hash=args_hash)
         # Idempotency: an identical action (same tool + args) already pending and
@@ -421,7 +454,7 @@ class GovernanceBroker:
         return None
 
     def is_injection(self, text: str) -> bool:
-        if self.mode is ComplianceMode.PERMISSIVE:
+        if self.effective_mode() is ComplianceMode.PERMISSIVE:
             return False
         if not (self.policy.injection_check and text):
             return False
