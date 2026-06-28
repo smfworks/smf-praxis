@@ -48,6 +48,40 @@ def save_config(cfg: dict) -> Path:
     return p
 
 
+# --- schema migrations -------------------------------------------------------
+# Bump CONFIG_VERSION when praxis.json's shape changes and append a migration.
+CONFIG_VERSION = 1
+
+
+def _migrate_v0_to_v1(cfg: dict) -> dict:
+    """Baseline: stamp pre-versioned configs. No structural change yet — this
+    establishes the upgrade path so later versions can transform old configs."""
+    return cfg
+
+
+# Indexed by from-version: _CONFIG_MIGRATIONS[0] upgrades v0 -> v1, etc.
+_CONFIG_MIGRATIONS = [_migrate_v0_to_v1]
+
+
+def migrate_config() -> int | None:
+    """Upgrade praxis.json to CONFIG_VERSION, applying each migration in order.
+
+    Returns the new version when a migration ran, else None. Cheap to call on
+    every startup — an already-current config is a single read with no write."""
+    p = config_path()
+    if not p.exists():
+        return None
+    data = load_config()
+    ver = int(data.get("configVersion", 0))
+    if ver >= CONFIG_VERSION:
+        return None
+    for from_ver in range(ver, CONFIG_VERSION):
+        data = _CONFIG_MIGRATIONS[from_ver](data)
+    data["configVersion"] = CONFIG_VERSION
+    save_config(data)
+    return CONFIG_VERSION
+
+
 def _load_auth() -> dict:
     p = auth_path()
     if not p.exists():

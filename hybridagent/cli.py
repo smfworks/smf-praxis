@@ -255,6 +255,74 @@ def cmd_governance(args: argparse.Namespace) -> int:
     return 0
 
 
+def _is_editable_install() -> bool:
+    """True when praxis-agent runs from a source/editable checkout rather than a
+    normal site-packages install (so `pip install --upgrade` shouldn't clobber it)."""
+    try:
+        import importlib.metadata as im
+        durl = im.distribution("praxis-agent").read_text("direct_url.json")
+        if durl and json.loads(durl).get("dir_info", {}).get("editable"):
+            return True
+    except Exception:
+        pass
+    # Legacy `pip install -e` (egg-link/.pth) or running straight from a clone:
+    # the package directory won't live under a site-packages directory.
+    try:
+        from pathlib import Path
+
+        import hybridagent
+        pkg = Path(hybridagent.__file__).resolve().parent
+        return "site-packages" not in pkg.parts
+    except Exception:
+        return False
+
+
+def _latest_pypi_version() -> str | None:
+    """The newest praxis-agent version on PyPI, or None if unreachable."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                "https://pypi.org/pypi/praxis-agent/json", timeout=5) as resp:
+            return str(json.loads(resp.read().decode())["info"]["version"])
+    except Exception:
+        return None
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Upgrade the installed praxis-agent package and migrate config."""
+    import subprocess
+
+    from . import __version__
+    if _is_editable_install():
+        print(f"praxis {__version__} is an editable/source checkout — update with "
+              "`git pull` (then re-run ./install.sh if needed), not `praxis update`.")
+        return 1
+    latest = _latest_pypi_version()
+    if args.check:
+        if latest is None:
+            print(f"praxis {__version__} (could not reach PyPI to check for updates)")
+        elif latest == __version__:
+            print(f"praxis {__version__} is up to date.")
+        else:
+            print(f"praxis {__version__} -> {latest} available. Run `praxis update`.")
+        return 0
+    if latest is not None and latest == __version__:
+        print(f"praxis {__version__} is already up to date.")
+        cfg.migrate_config()
+        return 0
+    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "praxis-agent"]
+    print("Updating:", " ".join(cmd))
+    rc = subprocess.call(cmd)
+    if rc == 0:
+        migrated = cfg.migrate_config()
+        if migrated:
+            print(f"Config migrated to v{migrated}.")
+        print("Updated. Run `praxis --version` to confirm.")
+    else:
+        print("Update failed.")
+    return rc
+
+
 def cmd_remember(args: argparse.Namespace) -> int:
     agent = PraxisAgent.persistent()
     agent.learn(args.fact, kind=args.kind, provenance="cli")
@@ -1117,6 +1185,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="auto-revert to enforced after this duration (e.g. 30m, 1h, 90s)")
     pgov.set_defaults(func=cmd_governance)
 
+    pup = sub.add_parser("update",
+                         help="upgrade the installed praxis-agent + migrate config")
+    pup.add_argument("--check", action="store_true",
+                     help="only check for a newer version, don't install")
+    pup.set_defaults(func=cmd_update)
+
     return parser
 
 
@@ -1124,7 +1198,7 @@ def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "eval", "tui", "m365", "mcp", "daemon",
                    "approvals", "approve", "ingest", "recall", "describe", "route", "ask",
-                   "learn", "skills", "skill", "compliance", "governance",
+                   "learn", "skills", "skill", "compliance", "governance", "update",
                    "skill-record", "skill-evaluate",
                    "subagent-run", "subagents",
                    "task-create", "tasks", "task-run", "task-cancel",
@@ -1145,6 +1219,10 @@ def _maybe_first_run_onboard(command: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        cfg.migrate_config()
+    except Exception:
+        pass
     _maybe_first_run_onboard(args.command)
     return args.func(args)
 

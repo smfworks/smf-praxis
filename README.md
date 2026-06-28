@@ -108,6 +108,16 @@ and config. It binds `0.0.0.0` inside the container, mapped to host loopback onl
 environment; with none set it runs offline on the mock LLM. A devcontainer
 (`.devcontainer/`) is included for VS Code.
 
+### Updating
+
+```bash
+praxis update            # upgrade to the latest PyPI release + migrate config
+praxis update --check    # just check whether a newer version is available
+```
+
+`update` upgrades in place (pip or pipx) and runs any config migrations; from a
+source checkout, use `git pull` instead.
+
 Everything runs offline with a deterministic mock LLM — no API keys required.
 
 ## Configure a model provider
