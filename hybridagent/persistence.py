@@ -1063,6 +1063,49 @@ class Store:
                 "ORDER BY rr.ts DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    def routing_cost_stats(self, trend_limit: int = 24) -> dict:
+        """Spend aggregates from ``run_routing``: grand totals, per-model cost,
+        and a recent per-run cost trend — powers the Metrics spend charts."""
+        with self._lock:
+            per_model = self._conn.execute(
+                "SELECT model, COUNT(*) runs, "
+                "SUM(prompt_tokens+completion_tokens) tokens, "
+                "SUM(cost_usd) cost, SUM(local) local_runs "
+                "FROM run_routing GROUP BY model ORDER BY cost DESC, runs DESC"
+            ).fetchall()
+            totals = self._conn.execute(
+                "SELECT COUNT(*) runs, "
+                "COALESCE(SUM(prompt_tokens+completion_tokens),0) tokens, "
+                "COALESCE(SUM(cost_usd),0) cost, COALESCE(SUM(local),0) local_runs "
+                "FROM run_routing"
+            ).fetchone()
+            trend_rows = self._conn.execute(
+                "SELECT rr.run_id, rr.model, rr.cost_usd, rr.local, rr.ts, "
+                "r.goal AS goal FROM run_routing rr "
+                "LEFT JOIN runs r ON r.run_id = rr.run_id "
+                "ORDER BY rr.ts DESC LIMIT ?", (trend_limit,)
+            ).fetchall()
+        by_model = [
+            {"model": (r["model"] or "\u2014"), "runs": int(r["runs"]),
+             "tokens": int(r["tokens"] or 0), "cost_usd": float(r["cost"] or 0.0),
+             "local_runs": int(r["local_runs"] or 0)}
+            for r in per_model
+        ]
+        trend = [
+            {"run_id": r["run_id"], "model": (r["model"] or "\u2014"),
+             "cost_usd": float(r["cost_usd"] or 0.0), "local": bool(r["local"]),
+             "ts": float(r["ts"]), "goal": r["goal"]}
+            for r in reversed(trend_rows)
+        ]
+        return {
+            "total_cost_usd": float(totals["cost"] or 0.0),
+            "total_tokens": int(totals["tokens"] or 0),
+            "total_runs": int(totals["runs"] or 0),
+            "local_runs": int(totals["local_runs"] or 0),
+            "by_model": by_model,
+            "trend": trend,
+        }
+
     def list_run_events(self, run_id: str, limit: int = 2000) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(

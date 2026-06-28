@@ -2343,11 +2343,15 @@ class Daemon:
         if self.store is None:
             return {"evals": [],
                     "decisions": {"by_verdict": {}, "by_rule": {}, "total": 0},
-                    "runs": {"by_status": {}, "total": 0}}
+                    "runs": {"by_status": {}, "total": 0},
+                    "routing": {"total_cost_usd": 0.0, "total_tokens": 0,
+                                "total_runs": 0, "local_runs": 0,
+                                "by_model": [], "trend": []}}
         return {
             "evals": list(reversed(self.store.list_eval_runs(limit=20))),
             "decisions": self.store.audit_stats(),
             "runs": self.store.run_stats(),
+            "routing": self.store.routing_cost_stats(),
         }
 
     # ------------------------------------------------------- inference control

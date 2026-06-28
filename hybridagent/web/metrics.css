@@ -47,3 +47,8 @@
 .mx-fill.warn { background: var(--warn); }
 .mx-fill.bad { background: var(--bad); }
 .mx-row .num { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.mx-row.cost { grid-template-columns: 8rem 1fr 4.4rem; }
+.mx-sub { font-size: .66rem; color: var(--faint); margin: -.15rem 0 .2rem 8.5rem; }
+.mx-spend-sum { display: flex; flex-wrap: wrap; gap: .85rem; font-size: .72rem; color: var(--muted); margin-bottom: .55rem; font-variant-numeric: tabular-nums; }
+.mx-spend-sum span { color: var(--text); }
+.mx-bar.cloud { background: linear-gradient(180deg, var(--accent), rgba(90, 140, 255, .3)); }

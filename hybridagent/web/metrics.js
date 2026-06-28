@@ -26,6 +26,11 @@
     Object.keys(obj || {}).forEach(function (k) { t += obj[k]; });
     return t;
   }
+  function fmtUsd(n) { return "$" + (Number(n) || 0).toFixed(4); }
+  function fmtTok(n) {
+    n = Number(n) || 0;
+    return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+  }
   var RULE_LABEL = {
     autonomous_allow: "autonomous", allowlist_denied: "allowlist block",
     egress_blocked: "egress block", kill_switch_denied: "kill-switch",
@@ -52,6 +57,9 @@
       "<b>Evals</b><span>" + (last ? last.passes + "/" + last.total : "\u2014") + "</span>"));
     mount.appendChild(el("div", "mx-stat",
       "<b>Decisions</b><span>" + ((data.decisions || {}).total || 0) + "</span>"));
+    var rt0 = data.routing || {};
+    mount.appendChild(el("div", "mx-stat",
+      "<b>Spend</b><span>" + fmtUsd(rt0.total_cost_usd) + "</span>"));
     var mix = el("div", "mx-mini");
     mix.innerHTML =
       '<span class="ok">' + (bv.allow || 0) + ' allow</span>' +
@@ -90,6 +98,45 @@
       rows.appendChild(row);
     });
     return rows;
+  }
+
+  function costBars(models) {
+    var rows = el("div", "mx-rows");
+    if (!models || !models.length) {
+      rows.appendChild(el("div", "empty", "No spend recorded yet."));
+      return rows;
+    }
+    var max = models.reduce(function (m, x) { return Math.max(m, x.cost_usd); }, 0) || 1;
+    models.forEach(function (x) {
+      var pct = x.cost_usd > 0 ? Math.max(2, Math.round((x.cost_usd / max) * 100)) : 0;
+      var allLocal = x.runs > 0 && x.local_runs >= x.runs;
+      var row = el("div", "mx-row cost");
+      row.innerHTML =
+        '<span class="lbl" title="' + esc(x.model) + '">' + esc(x.model) + '</span>' +
+        '<span class="mx-track"><span class="mx-fill ' + (allLocal ? 'ok' : '') +
+        '" style="width:' + pct + '%"></span></span>' +
+        '<span class="num">' + fmtUsd(x.cost_usd) + '</span>';
+      rows.appendChild(row);
+      rows.appendChild(el("div", "mx-sub",
+        x.runs + ' run' + (x.runs === 1 ? '' : 's') + ' \u00b7 ' +
+        fmtTok(x.tokens) + ' tok' + (allLocal ? ' \u00b7 local (free)' : '')));
+    });
+    return rows;
+  }
+
+  function spendTrend(trend) {
+    if (!trend || !trend.length) return el("div", "empty", "No spend trend yet.");
+    var wrap = el("div", "mx-trend");
+    var max = trend.reduce(function (m, x) { return Math.max(m, x.cost_usd); }, 0) || 1;
+    trend.forEach(function (x) {
+      var bar = el("div", "mx-bar" + (x.cost_usd > 0 ? " cloud" : ""));
+      bar.style.height = (x.cost_usd > 0 ? Math.max(6, Math.round((x.cost_usd / max) * 100)) : 4) + "%";
+      bar.appendChild(el("span", null, fmtUsd(x.cost_usd)));
+      bar.title = (x.goal || x.run_id) + " \u2014 " + fmtUsd(x.cost_usd) +
+        (x.local ? " (local)" : "");
+      wrap.appendChild(bar);
+    });
+    return wrap;
   }
 
   function renderOverlay() {
@@ -144,6 +191,19 @@
       if (k === "needs_approval") return "warn";
       return "";
     }));
+
+    // Spend (from run_routing)
+    var rt = data.routing || {};
+    box.appendChild(el("div", "mx-section", "Model spend"));
+    box.appendChild(el("div", "mx-spend-sum",
+      '<span>' + fmtUsd(rt.total_cost_usd) + ' total</span>' +
+      '<span>' + fmtTok(rt.total_tokens) + ' tokens</span>' +
+      '<span>' + (rt.total_runs || 0) + ' routed runs</span>' +
+      '<span>' + (rt.local_runs || 0) + ' local</span>'));
+    box.appendChild(costBars(rt.by_model));
+
+    box.appendChild(el("div", "mx-section", "Spend trend (recent runs)"));
+    box.appendChild(spendTrend(rt.trend));
   }
 
   function connect() {

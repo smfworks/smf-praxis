@@ -68,3 +68,45 @@ def test_run_routing_records_escalations(tmp_path):
     rows = s.list_run_routing()
     assert rows[0]["escalations"] == 2 and rows[0]["fallbacks"] == 1
     s.close()
+
+
+# ------------------------------------------------------------- cost stats (P6)
+def test_routing_cost_stats_aggregates(tmp_path):
+    s = Store(tmp_path / "r.db")
+    s.start_run("run-a", goal="cloud task", kind="plan")
+    s.record_run_routing("run-a", "openai/gpt-4o", 1000, 500, 0.02, 3, local=False)
+    s.record_run_routing("run-b", "openai/gpt-4o-mini", 800, 200, 0.004, 2, local=False)
+    s.record_run_routing("run-c", "openai/gpt-4o", 200, 100, 0.006, 1, local=False)
+    s.record_run_routing("run-d", "ollama/llama3.1", 50, 50, 0.0, 1, local=True)
+
+    stats = s.routing_cost_stats()
+    assert round(stats["total_cost_usd"], 4) == 0.03    # 0.02 + 0.004 + 0.006 + 0
+    assert stats["total_tokens"] == 2900               # 1500 + 1000 + 300 + 100
+    assert stats["total_runs"] == 4
+    assert stats["local_runs"] == 1
+
+    # Per-model: gpt-4o is costliest (0.026 across 2 runs) so it sorts first.
+    by_model = {m["model"]: m for m in stats["by_model"]}
+    assert stats["by_model"][0]["model"] == "openai/gpt-4o"
+    assert round(by_model["openai/gpt-4o"]["cost_usd"], 4) == 0.026
+    assert by_model["openai/gpt-4o"]["runs"] == 2
+    assert by_model["openai/gpt-4o"]["tokens"] == 1800
+    assert by_model["ollama/llama3.1"]["local_runs"] == 1
+
+    # Trend carries every routed run + the joined goal/local flag (order-free:
+    # rapid inserts can share a time.time() tick, so don't assert sequence).
+    assert len(stats["trend"]) == 4
+    assert {t["run_id"] for t in stats["trend"]} == {"run-a", "run-b", "run-c", "run-d"}
+    goals = {t["run_id"]: t["goal"] for t in stats["trend"]}
+    locals_ = {t["run_id"]: t["local"] for t in stats["trend"]}
+    assert goals["run-a"] == "cloud task"
+    assert locals_["run-d"] is True and locals_["run-a"] is False
+    s.close()
+
+
+def test_routing_cost_stats_empty(tmp_path):
+    s = Store(tmp_path / "r.db")
+    stats = s.routing_cost_stats()
+    assert stats["total_cost_usd"] == 0.0 and stats["total_runs"] == 0
+    assert stats["by_model"] == [] and stats["trend"] == []
+    s.close()
