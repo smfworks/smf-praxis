@@ -109,8 +109,8 @@ def test_single_approval_releases_and_clears_pending():
     assert d.approval_id not in b.pending      # consumed
 
 
-def test_four_eyes_requires_two_distinct_approvers():
-    store = Store.open()
+def test_four_eyes_requires_two_distinct_approvers(tmp_path):
+    store = Store.open(tmp_path / "praxis.db")
     b = GovernanceBroker(GovernancePolicy(allowed_tools={"delete_record"}),
                          store=store)
     d = b.authorize("praxis", "delete_record", RiskClass.DESTRUCTIVE, {})
@@ -252,10 +252,10 @@ def test_audit_entry_records_real_approval_id():
     assert b.audit[-1].approval_id.startswith("appr-")
 
 
-def test_four_eyes_second_approver_may_sort_before_first():
+def test_four_eyes_second_approver_may_sort_before_first(tmp_path):
     # Second approver sorts BEFORE the first; kills `==` -> `>=` on the signer
     # check (which would wrongly reject a lexicographically-smaller approver).
-    store = Store.open()
+    store = Store.open(tmp_path / "praxis.db")
     b = GovernanceBroker(GovernancePolicy(allowed_tools={"delete_record"}),
                          store=store)
     d = b.authorize("praxis", "delete_record", RiskClass.DESTRUCTIVE, {})
@@ -265,10 +265,10 @@ def test_four_eyes_second_approver_may_sort_before_first():
     assert released is not None                           # must still release
 
 
-def test_four_eyes_uses_value_equality_not_identity():
+def test_four_eyes_uses_value_equality_not_identity(tmp_path):
     # Two equal-but-distinct approver strings; kills `==` -> `is` on the signer
     # check (identity would let the same person sign twice).
-    store = Store.open()
+    store = Store.open(tmp_path / "praxis.db")
     b = GovernanceBroker(GovernancePolicy(allowed_tools={"delete_record"}),
                          store=store)
     d = b.authorize("praxis", "delete_record", RiskClass.DESTRUCTIVE, {})
@@ -281,8 +281,8 @@ def test_four_eyes_uses_value_equality_not_identity():
 
 
 # --------------------------------------------------------------- invariants
-def test_broker_hydrates_pending_and_audit_from_store():
-    store = Store.open()
+def test_broker_hydrates_pending_and_audit_from_store(tmp_path):
+    store = Store.open(tmp_path / "praxis.db")
     b1 = GovernanceBroker(GovernancePolicy(allowed_tools={"delete_record"}),
                           store=store)
     d = b1.authorize("praxis", "delete_record", RiskClass.DESTRUCTIVE, {"id": 7})
