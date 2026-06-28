@@ -988,9 +988,11 @@ function playAudioB64(b64, mime){
     const bin = atob(b64); const arr = new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
     const url = URL.createObjectURL(new Blob([arr], {type: mime || 'audio/wav'}));
-    const a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); a.play().catch(()=>{});
+    const a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); _rtPlaying = a; a.play().catch(()=>{});
   } catch(_){}
 }
+let _rtPlaying = null;
+function stopPlayback(){ try { if(_rtPlaying){ _rtPlaying.pause(); _rtPlaying = null; } } catch(_){} }
 /* Persistent realtime session: one WebSocket for the whole conversation, with
    live PCM16 mic streaming (push-to-talk). The governed event protocol is shared
    with the loopback and OpenAI bridges, so the UI is identical either way. */
@@ -1066,6 +1068,7 @@ function rtOnEvent(ev, readyResolve){
   else if(ev.type === 'denied'){ rtSetCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
   else if(ev.type === 'final'){ T.finalText = ev.text || T.finalText; }
   else if(ev.type === 'audio'){ playAudioB64(ev.data, ev.mime); }
+  else if(ev.type === 'interrupted'){ stopPlayback(); }
   else if(ev.type === 'error'){ T.finalText = (T.finalText?T.finalText+'\n\n':'') + '⚠️ ' + (ev.error || 'error'); }
   else if(ev.type === 'done'){ rtFinishTurn(); }
 }
@@ -1113,6 +1116,7 @@ async function rtBeginMic(){
   _rtNode.onaudioprocess = (e) => { rtSendPcm(e.inputBuffer.getChannelData(0), _rtAudioCtx.sampleRate); };
   _rtSource.connect(_rtNode); _rtNode.connect(_rtSink); _rtSink.connect(_rtAudioCtx.destination);
   _rtStreaming = true;
+  stopPlayback(); if(rtSocketReady()) _rtWs.send(JSON.stringify({type:'interrupt'}));  // barge-in
   const mic = document.getElementById('mic'); if(mic) mic.classList.add('recording');
 }
 function rtStopAudioGraph(){
