@@ -416,6 +416,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/memory.css" />
 <link rel="stylesheet" href="/web/palette.css" />
 <link rel="stylesheet" href="/web/settings.css" />
+<link rel="stylesheet" href="/web/onboard.css" />
 <script>
 /* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
  * opening their own /events stream saturated the browser's 6-connection-per-host
@@ -595,6 +596,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/memory.js" defer></script>
 <script src="/web/palette.js" defer></script>
 <script src="/web/settings.js" defer></script>
+<script src="/web/onboard.js" defer></script>
 </head>
 <body>
 <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -651,7 +653,7 @@ document.addEventListener("keydown", function (e) {
         <button class="primary" onclick="applyModel()">Use</button>
       </div>
       <div class="hint" id="keyHint"></div>
-      <div class="cta" id="firstRunCta" hidden>⚡ You're on the offline <strong>mock</strong> model. Pick a provider above, or run <code>praxis onboard</code> in a terminal to connect a live model.</div>
+      <div class="cta" id="firstRunCta" hidden>⚡ You're on the offline <strong>mock</strong> model. <button type="button" class="cta-btn" onclick="if(window.PraxisOnboard)PraxisOnboard.open()">Set up Praxis</button> to connect a live model.</div>
     </div>
     <div class="panel pad">
       <h2>Voice</h2>
@@ -1624,6 +1626,22 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 else:
                     self._json_response({"error": f"unknown action '{action}'"},
                                         status=400)
+                return
+            if self.path == "/api/onboard":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                # A pasted key is a secret -> accept it only from localhost.
+                if payload.get("api_key") and not self._is_loopback():
+                    self._json_response(
+                        {"error": "pasting a key is only allowed from localhost"},
+                        status=403)
+                    return
+                self._json_response(self.daemon.onboard_apply(
+                    str(payload.get("provider", "")),
+                    str(payload.get("model", "")),
+                    base_url=payload.get("base_url"),
+                    api_key=payload.get("api_key"),
+                    use_env_ref=bool(payload.get("use_env_ref", True))))
                 return
             if self.path == "/api/budget":
                 length = int(self.headers.get("Content-Length", 0))
@@ -2981,6 +2999,25 @@ class Daemon:
         out = self.secrets_status()
         out["migrated"] = moved
         return out
+
+    def onboard_apply(self, provider: str, model: str, base_url: str | None = None,
+                      api_key: str | None = None, use_env_ref: bool = True) -> dict:
+        """Apply dashboard setup: write the provider + default model (and store a
+        pasted key). The router reads config live, so the next turn uses it."""
+        from . import onboard as onboard_mod
+        from .providers import CATALOG
+        provider = (provider or "").strip()
+        model = (model or "").strip()
+        if provider not in CATALOG:
+            return {"error": f"unknown provider '{provider}'"}
+        if not model:
+            return {"error": "a model is required"}
+        summary = onboard_mod.run_noninteractive(
+            provider, model, base_url=(base_url or None),
+            api_key=(api_key or None), use_env_ref=use_env_ref)
+        self._log("info", f"onboarded '{provider}/{model}' via dashboard")
+        return {"ok": True, "model": summary.get("model"),
+                "key_backend": summary.get("key_backend")}
     def switch_model(self, provider_id: str, model: str,
                      base_url: str | None = None) -> dict:
         """Set the default model from the dashboard picker.

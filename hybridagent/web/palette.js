@@ -40,7 +40,8 @@
     { label: "Open latest Run Graph", hint: "trace DAG", run: function () { clickSel("#runlist .rg-run"); } },
     { label: "New chat", hint: "start fresh", run: function () { if (window.newChat) window.newChat(); close(); } },
     { label: "Engage / release kill-switch", hint: "halt consequential actions", run: function () { clickSel("#safety-mount .sf-ks-btn"); } },
-    { label: "Open Settings", hint: "keys \u00b7 config \u00b7 version", run: function () { if (window.PraxisSettings) window.PraxisSettings.open(); close(); } }
+    { label: "Open Settings", hint: "keys \u00b7 config \u00b7 version", run: function () { if (window.PraxisSettings) window.PraxisSettings.open(); close(); } },
+    { label: "Run setup wizard", hint: "connect a model", run: function () { if (window.PraxisOnboard) window.PraxisOnboard.open(); close(); } }
   ];
 
   var overlay = null, input = null, listEl = null, items = [], active = 0, timer = null;

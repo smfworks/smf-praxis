@@ -434,6 +434,8 @@ exhausting the browser's per-host connection pool.
   management**: see where each provider's key resolves (env / keychain / file),
   store or remove keys (kept in the OS keychain when available), and migrate
   plaintext keys to the keychain. Key values are accepted only from localhost.
+- **Setup wizard** — on first run (or via the palette / first-run prompt) a guided
+  overlay connects a provider, model, and key — no terminal needed.
 
 ## Voice (configurable)
 

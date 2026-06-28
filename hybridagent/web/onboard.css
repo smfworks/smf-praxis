@@ -1,0 +1,38 @@
+/* Praxis setup wizard overlay + the first-run CTA button. */
+.ob-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .66); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 70; padding: 1.25rem;
+}
+.ob-overlay.show { display: flex; }
+.ob-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(520px, 96vw); max-height: 90vh; overflow: auto;
+  padding: 1.2rem 1.3rem; display: flex; flex-direction: column; gap: .35rem;
+}
+.ob-head b { font-size: 1.1rem; }
+.ob-head .ob-sub { font-size: .82rem; color: var(--muted); margin-top: .25rem; }
+.ob-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: .7rem; }
+.ob-sel, .ob-input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .5rem .6rem; font: inherit; font-size: .85rem; width: 100%;
+}
+.ob-note { font-size: .74rem; color: var(--faint); }
+.ob-key { display: flex; flex-direction: column; gap: .4rem; }
+.ob-radio { font-size: .82rem; color: var(--text); display: flex; align-items: center; gap: .45rem; cursor: pointer; }
+.ob-radio code { background: var(--bg2); padding: .05rem .35rem; border-radius: .3rem; font-size: .9em; }
+.ob-rec { font-size: .68rem; color: var(--muted); border: 1px solid var(--border); border-radius: 1rem; padding: 0 .4rem; }
+.ob-pw { margin-top: .2rem; }
+.ob-actions { display: flex; gap: .5rem; margin-top: 1rem; }
+.ob-btn {
+  border-radius: .55rem; padding: .5rem .9rem; font: inherit; font-size: .85rem; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg2); color: var(--text);
+}
+.ob-btn.primary { border-color: var(--accent); color: var(--accent); }
+.ob-btn.ghost { background: transparent; color: var(--muted); }
+.ob-btn:hover { border-color: var(--accent); }
+
+.cta-btn {
+  background: transparent; border: 1px solid var(--accent); color: var(--accent);
+  border-radius: .4rem; padding: .15rem .55rem; font: inherit; font-size: .76rem; font-weight: 600; cursor: pointer;
+}
+.cta-btn:hover { background: var(--bg2); }
