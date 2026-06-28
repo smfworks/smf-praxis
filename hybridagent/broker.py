@@ -38,6 +38,35 @@ AUTONOMOUS = {RiskClass.READ, RiskClass.DRAFT}
 CONSEQUENTIAL = {RiskClass.SEND, RiskClass.DESTRUCTIVE}
 
 
+class ComplianceMode(str, Enum):
+    """Operator-selectable governance posture (the lockdown is on by default).
+
+    * ``enforced``   — consequential (send/destructive) actions are held for human
+      approval; egress firewall and injection detection active. The default.
+    * ``autonomous`` — consequential actions run without approval, but the egress
+      firewall, injection detection, and kill-switch all stay active.
+    * ``permissive`` — consequential actions run without approval and the egress
+      firewall + injection detection are off; only the kill-switch remains. For
+      trusted or sandboxed environments (e.g. an isolated coding workspace).
+    """
+
+    ENFORCED = "enforced"
+    AUTONOMOUS = "autonomous"
+    PERMISSIVE = "permissive"
+
+
+COMPLIANCE_MODES = (
+    ComplianceMode.ENFORCED, ComplianceMode.AUTONOMOUS, ComplianceMode.PERMISSIVE)
+
+
+def coerce_compliance_mode(value: object) -> ComplianceMode:
+    """Map a string or member to a ComplianceMode, falling back to the safe default."""
+    try:
+        return ComplianceMode(value)
+    except (ValueError, TypeError):
+        return ComplianceMode.ENFORCED
+
+
 class Verdict(str, Enum):
     ALLOW = "allow"
     NEEDS_APPROVAL = "needs_approval"
@@ -189,6 +218,8 @@ class GovernanceBroker:
         self._session_approvals: set[str] = set()
         self.store = store
         self.log = get_logger("praxis.broker")
+        self.mode = (coerce_compliance_mode(store.get_compliance_mode())
+                     if store is not None else ComplianceMode.ENFORCED)
         if store is not None:
             self._hydrate(store)
 
@@ -212,6 +243,15 @@ class GovernanceBroker:
                 policy_rule=row.get("policy_rule", ""),
                 approval_id=row.get("approval_id", ""),
                 args_hash=row.get("args_hash", ""), ts=row["ts"]))
+
+    def set_mode(self, mode: "ComplianceMode | str") -> ComplianceMode:
+        """Set the governance posture (compliance mode), persisting it so the
+        choice survives a daemon restart. The kill-switch is independent and
+        always overrides regardless of mode."""
+        self.mode = coerce_compliance_mode(mode)
+        if self.store is not None:
+            self.store.set_compliance_mode(self.mode.value)
+        return self.mode
 
     # ---------------------------------------------------------- authorization
     def authorize(self, actor: str, tool: str, risk: RiskClass, args: dict,
@@ -237,13 +277,23 @@ class GovernanceBroker:
                                       args_hash=args_hash)
         # Egress firewall: refuse to relay untrusted, injection-flagged content
         # out through a consequential action (exfiltration / injection propagation).
-        if self.policy.egress_check:
+        # Active in enforced + autonomous modes; permissive turns it off.
+        if self.policy.egress_check and self.mode is not ComplianceMode.PERMISSIVE:
             blocked = self._egress_blocked(args)
             if blocked:
                 return self._log_decision(actor, tool, risk, Verdict.DENY, blocked,
                                           decision_id=decision_id, cycle_id=cycle_id,
                                           policy_rule="egress_blocked",
                                           args_hash=args_hash)
+        # Compliance off (autonomous/permissive): consequential actions run without
+        # human approval. The kill-switch already had its say above, and each such
+        # action is audit-logged distinctly so unsupervised runs stay visible.
+        if self.mode is not ComplianceMode.ENFORCED:
+            return self._log_decision(
+                actor, tool, risk, Verdict.ALLOW,
+                f"auto-allowed (compliance {self.mode.value})",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="compliance_off_allow", args_hash=args_hash)
         # Idempotency: an identical action (same tool + args) already pending and
         # unexpired reuses that approval instead of queuing a duplicate, so a
         # re-proposed action (e.g. a verifier-revised turn) can't mint a second
@@ -371,6 +421,8 @@ class GovernanceBroker:
         return None
 
     def is_injection(self, text: str) -> bool:
+        if self.mode is ComplianceMode.PERMISSIVE:
+            return False
         if not (self.policy.injection_check and text):
             return False
         return any(pat.search(text) for pat in _INJECTION_PATTERNS)

@@ -69,3 +69,34 @@
 .sf-erow .flag { font-size: .64rem; color: var(--bad); background: rgba(255, 90, 95, .12); border: 1px solid var(--bad); border-radius: 1rem; padding: 0 .4rem; }
 .sf-erow .flag.auto { color: var(--ok); background: rgba(60, 207, 109, .1); border-color: var(--ok); }
 .sf-erow .ts { color: var(--faint); margin-left: auto; white-space: nowrap; }
+
+/* Compliance mode — operator-selectable governance posture. */
+.sf-cmp {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: .55rem; padding: .45rem .55rem;
+}
+.sf-cmp.warn { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn) inset; }
+.sf-cmp.bad { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad) inset; }
+.sf-cmp-label { font-size: .8rem; color: var(--text); }
+.sf-cmp-val { font-size: .76rem; font-weight: 600; color: var(--ok); text-transform: capitalize; }
+.sf-cmp.warn .sf-cmp-val { color: var(--warn); }
+.sf-cmp.bad .sf-cmp-val { color: var(--bad); }
+
+.sf-cmp-modes { display: flex; flex-direction: column; gap: .4rem; }
+.sf-cmp-opt {
+  text-align: left; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: .55rem; padding: .5rem .6rem; cursor: pointer; font: inherit;
+}
+.sf-cmp-opt:hover { border-color: var(--accent); }
+.sf-cmp-opt.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.sf-cmp-opt .nm { font-size: .82rem; font-weight: 600; display: flex; align-items: center; gap: .4rem; }
+.sf-cmp-opt .ds { font-size: .72rem; color: var(--muted); margin-top: .2rem; }
+.sf-cmp-opt .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--border); flex: none; }
+.sf-cmp-opt[data-mode="enforced"] .dot { background: var(--ok); }
+.sf-cmp-opt[data-mode="autonomous"] .dot { background: var(--warn); }
+.sf-cmp-opt[data-mode="permissive"] .dot { background: var(--bad); }
+.sf-cmp-warn {
+  font-size: .74rem; color: var(--warn); background: rgba(245, 191, 66, .1);
+  border: 1px solid var(--warn); border-radius: .55rem; padding: .45rem .6rem; margin-top: .5rem;
+}
+.sf-cmp-warn.bad { color: var(--bad); background: rgba(255, 90, 95, .1); border-color: var(--bad); }

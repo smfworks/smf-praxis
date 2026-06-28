@@ -242,6 +242,11 @@ CREATE TABLE IF NOT EXISTS killswitch (
     engaged    INTEGER NOT NULL DEFAULT 0,
     updated_ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS compliance (
+    name       TEXT PRIMARY KEY,
+    mode       TEXT NOT NULL DEFAULT 'enforced',
+    updated_ts REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS run_routing (
     run_id            TEXT PRIMARY KEY,
     model             TEXT NOT NULL DEFAULT '',
@@ -1230,6 +1235,23 @@ class Store:
                 "VALUES (?,?,?)", (name, 1 if engaged else 0, time.time()))
             self._conn.commit()
         return bool(engaged)
+
+    # ------------------------------------------------------------- compliance
+    def get_compliance_mode(self, name: str = "default") -> str:
+        """The persisted governance compliance mode (defaults to 'enforced')."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT mode FROM compliance WHERE name=?", (name,)).fetchone()
+        return str(row["mode"]) if row is not None else "enforced"
+
+    def set_compliance_mode(self, mode: str, name: str = "default") -> str:
+        """Persist the compliance mode so the operator's choice survives restarts."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO compliance(name,mode,updated_ts) "
+                "VALUES (?,?,?)", (name, mode, time.time()))
+            self._conn.commit()
+        return mode
 
     # ------------------------------------------------------------- work board
     def add_card(self, card_id: str, title: str, goal: str,

@@ -29,7 +29,9 @@ perceive → plan → govern → act/draft → reflect → consolidate
 - **plan** — decompose the goal into tool-bound steps.
 - **govern** — the broker classifies each step: read/draft run autonomously;
   send/destructive are **held for approval**; tools are allowlisted; a
-  kill-switch disables consequential actions.
+  kill-switch disables consequential actions. The approval gate is a selectable
+  **compliance mode** (enforced / autonomous / permissive) — on by default,
+  relaxable from the dashboard or CLI for unattended/sandboxed use.
 - **act/draft** — execute autonomous steps; queue consequential ones.
 - **reflect / consolidate** — distill outcomes into durable facts + reusable
   skills with provenance, then clear working memory (summarize-not-hoard).
@@ -159,6 +161,7 @@ praxis --help
 | `praxis approvals` | list held consequential actions (persisted across runs) |
 | `praxis approve <id> --approved-by <name> --notes "<why>"` | approve + execute a held action by id, recording operator/justification |
 | `praxis compliance` | render an audit attestation over cycles, approvals, and consequential actions |
+| `praxis governance [enforced\|autonomous\|permissive]` | view/set the governance compliance mode (default enforced; relax for unattended/sandboxed use) |
 | `praxis task-create "<goal>"` | create a persistent resumable task |
 | `praxis tasks` | list persistent tasks and statuses |
 | `praxis task-run <id>` | run one task attempt (records cycle/result) |
@@ -356,8 +359,13 @@ exhausting the browser's per-host connection pool.
   under the broker, and a card needing a consequential action lands in **Held**.
 - **Approvals & Safety Center** — the human-in-the-loop control plane: a live
   approval queue (approve/deny), a redacted **audit-trail** viewer with policy
-  flags, and a **kill-switch** that **persists across restarts** and **blocks new
-  runs outright** (not just consequential tools) until released.
+  flags, a **kill-switch** that **persists across restarts** and **blocks new
+  runs outright** (not just consequential tools) until released, and a
+  **compliance-mode** selector — **enforced** (default: hold send/destructive for
+  approval), **autonomous** (run them without approval; egress firewall, injection
+  detection, and kill-switch stay on), or **permissive** (guards off, kill-switch
+  only; for trusted/sandboxed environments). Persisted across restarts and also
+  settable with `praxis governance <mode>`.
 - **Inference Control Center** — current model/provider, the role-routing
   vocabulary and **learned-router** state, an **enforceable spend budget** that
   *halts* runs at the cap (billed from real token usage), and a **Recent routing**

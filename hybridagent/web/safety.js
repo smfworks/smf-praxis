@@ -31,6 +31,17 @@
     if (v.indexOf("approval") >= 0 || v.indexOf("need") >= 0) return "warn";
     return "muted";
   }
+  function complianceClass() {
+    var m = compliance.mode || "enforced";
+    if (m === "permissive") return " bad";
+    if (m === "autonomous") return " warn";
+    return "";
+  }
+  function setCompliance(mode) {
+    api("/api/compliance", { mode: mode }).then(function (res) {
+      if (!(res && res.error)) load();
+    }).catch(function () {});
+  }
   var RULE_LABEL = {
     egress_blocked: "egress", kill_switch_denied: "kill-switch",
     allowlist_denied: "blocked", autonomous_allow: "auto",
@@ -38,9 +49,11 @@
   };
 
   var mount = null, overlay = null, killEngaged = false, pending = [], audit = [];
+  var compliance = { mode: "enforced", modes: [] };
 
   async function load() {
     try { var ks = await api("/api/killswitch"); killEngaged = !!ks.engaged; } catch (_) {}
+    try { compliance = await api("/api/compliance"); } catch (_) {}
     try { pending = await api("/api/approvals"); } catch (_) { pending = []; }
     renderPanel();
     if (overlay && overlay.classList.contains("show")) renderCenter();
@@ -60,6 +73,11 @@
       api("/api/killswitch", { engaged: !killEngaged }).then(load);
     };
     mount.appendChild(ks);
+
+    var cmp = el("div", "sf-cmp" + complianceClass());
+    cmp.innerHTML = '<span class="sf-cmp-label">Compliance</span>' +
+      '<span class="sf-cmp-val">' + esc(compliance.mode || "enforced") + '</span>';
+    mount.appendChild(cmp);
 
     mount.appendChild(el("div", "sf-pending",
       (pending.length || 0) + " awaiting approval"));
@@ -104,6 +122,28 @@
     ksbar.appendChild(ksbtn);
     box.appendChild(el("div", "sf-section", "Kill-switch"));
     box.appendChild(ksbar);
+
+    // Compliance mode selector
+    box.appendChild(el("div", "sf-section", "Compliance mode"));
+    var modes = el("div", "sf-cmp-modes");
+    (compliance.modes || []).forEach(function (m) {
+      var opt = el("button", "sf-cmp-opt" + (m.active ? " active" : ""));
+      opt.type = "button";
+      opt.setAttribute("data-mode", m.id);
+      opt.innerHTML = '<span class="nm"><span class="dot"></span>' + esc(m.label) +
+        (m.active ? " \u2713" : "") + '</span><span class="ds">' + esc(m.description) + "</span>";
+      opt.onclick = function () { setCompliance(m.id); };
+      modes.appendChild(opt);
+    });
+    box.appendChild(modes);
+    var cmode = compliance.mode || "enforced";
+    if (cmode !== "enforced") {
+      var warn = el("div", "sf-cmp-warn" + (cmode === "permissive" ? " bad" : ""));
+      warn.textContent = cmode === "permissive"
+        ? "Permissive: consequential actions run unsupervised and the egress/injection guards are OFF \u2014 only the kill-switch remains. Use in trusted or sandboxed environments only."
+        : "Autonomous: consequential actions run without approval. The egress firewall, injection detection, and kill-switch all remain active.";
+      box.appendChild(warn);
+    }
 
     // Approval queue
     box.appendChild(el("div", "sf-section", "Approval queue (" + pending.length + ")"));

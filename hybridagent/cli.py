@@ -179,6 +179,41 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_governance(args: argparse.Namespace) -> int:
+    """View or set the governance compliance mode via the running daemon."""
+    import urllib.request
+
+    from .daemon import daemon_status
+    status = daemon_status()
+    if not status.get("running"):
+        print("daemon not running (start it with: praxis daemon start)")
+        return 1
+    port = status.get("port")
+    action = (args.action or "status").lower()
+    url = f"http://127.0.0.1:{port}/api/compliance"
+    try:
+        if action == "status":
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+        else:
+            req = urllib.request.Request(
+                url, data=json.dumps({"mode": action}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+    except Exception as exc:
+        print(f"could not reach daemon: {exc}")
+        return 1
+    if data.get("error"):
+        print(f"error: {data['error']}")
+        return 1
+    print(f"compliance mode: {data.get('mode')}")
+    for m in data.get("modes", []):
+        mark = "*" if m.get("active") else " "
+        print(f"  {mark} {m['id']:<11} {m.get('description', '')}")
+    return 0
+
+
 def cmd_remember(args: argparse.Namespace) -> int:
     agent = PraxisAgent.persistent()
     agent.learn(args.fact, kind=args.kind, provenance="cli")
@@ -1026,6 +1061,14 @@ def build_parser() -> argparse.ArgumentParser:
     pdm.add_argument("--lines", type=int, default=100, help="log lines to fetch")
     pdm.set_defaults(func=cmd_daemon)
 
+    pgov = sub.add_parser(
+        "governance", help="view or set the governance compliance mode")
+    pgov.add_argument(
+        "action", nargs="?",
+        choices=["status", "enforced", "autonomous", "permissive"],
+        help="show status, or set the mode (enforced/autonomous/permissive)")
+    pgov.set_defaults(func=cmd_governance)
+
     return parser
 
 
@@ -1033,7 +1076,7 @@ def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
     if command in ("onboard", "demo", "eval", "tui", "m365", "mcp", "daemon",
                    "approvals", "approve", "ingest", "recall", "describe", "route", "ask",
-                   "learn", "skills", "skill", "compliance",
+                   "learn", "skills", "skill", "compliance", "governance",
                    "skill-record", "skill-evaluate",
                    "subagent-run", "subagents",
                    "task-create", "tasks", "task-run", "task-cancel",

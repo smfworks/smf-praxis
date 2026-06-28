@@ -1591,6 +1591,12 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.killswitch_set(
                     bool(payload.get("engaged", False))))
                 return
+            if self.path == "/api/compliance":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.compliance_set(
+                    str(payload.get("mode", ""))))
+                return
             if self.path == "/api/budget":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1757,6 +1763,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/killswitch":
                 body = json.dumps(self.daemon.killswitch_status(),
+                                  default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/compliance":
+                body = json.dumps(self.daemon.compliance_status(),
                                   default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2509,6 +2520,46 @@ class Daemon:
         self._log("warning" if engaged else "info",
                   f"kill-switch {'engaged' if engaged else 'released'} via dashboard")
         return {"engaged": bool(self.agent.broker.kill.tripped)}
+
+    def compliance_status(self) -> dict:
+        """Current governance posture + the selectable modes for the dashboard."""
+        from .broker import COMPLIANCE_MODES
+        self._ensure_agent()
+        assert self.agent is not None
+        current = self.agent.broker.mode.value
+        labels = {
+            "enforced": ("Enforced",
+                         "Send & destructive actions are held for your approval. "
+                         "All guards on. (default)"),
+            "autonomous": ("Autonomous",
+                           "Send & destructive run without approval. Egress "
+                           "firewall, injection detection & kill-switch stay on."),
+            "permissive": ("Permissive",
+                           "All guards off except the kill-switch. For trusted or "
+                           "sandboxed environments (e.g. isolated coding)."),
+        }
+        return {
+            "mode": current,
+            "modes": [
+                {"id": m.value, "label": labels[m.value][0],
+                 "description": labels[m.value][1], "active": m.value == current}
+                for m in COMPLIANCE_MODES
+            ],
+        }
+
+    def compliance_set(self, mode: str) -> dict:
+        """Set the governance compliance mode (persisted). 'enforced' is the
+        locked-down default; 'autonomous'/'permissive' relax the approval gate.
+        The kill-switch is independent and always overrides regardless of mode."""
+        from .broker import COMPLIANCE_MODES
+        self._ensure_agent()
+        assert self.agent is not None
+        if mode not in {m.value for m in COMPLIANCE_MODES}:
+            return {"error": f"unknown compliance mode '{mode}'"}
+        applied = self.agent.broker.set_mode(mode)
+        self._log("warning" if applied.value != "enforced" else "info",
+                  f"compliance mode set to '{applied.value}' via dashboard")
+        return self.compliance_status()
 
     def audit_log(self, limit: int = 100) -> dict:
         """Recent governed decisions for the audit viewer (secrets pre-redacted)."""
