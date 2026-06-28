@@ -430,6 +430,10 @@ exhausting the browser's per-host connection pool.
   durable) with provenance and per-tier counts.
 - **Command Palette** — `Ctrl/Cmd+K` global search across memory, runs, board
   cards, and the audit trail.
+- **Settings** (header ⚙) — version, config path, keychain status, and **API-key
+  management**: see where each provider's key resolves (env / keychain / file),
+  store or remove keys (kept in the OS keychain when available), and migrate
+  plaintext keys to the keychain. Key values are accepted only from localhost.
 
 ## Voice (configurable)
 

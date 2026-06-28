@@ -1,0 +1,51 @@
+/* Praxis Settings overlay — general info + API-key management. */
+.st-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.st-overlay.show { display: flex; }
+.st-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(680px, 96vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.st-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+.st-head b { font-size: 1.05rem; }
+.st-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.st-close:hover { color: var(--text); border-color: var(--accent); }
+.st-section { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 1rem 0 .45rem; }
+
+.st-grid { display: grid; grid-template-columns: auto 1fr; gap: .3rem .8rem; font-size: .82rem; }
+.st-grid .st-k { color: var(--muted); }
+.st-grid .st-v { color: var(--text); word-break: break-all; }
+.st-grid .mono { font-family: ui-monospace, Consolas, monospace; font-size: .76rem; }
+
+.st-keys { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .4rem; }
+.st-keys .empty { color: var(--faint); font-size: .82rem; }
+.st-krow {
+  display: flex; align-items: center; gap: .6rem; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: .55rem; padding: .4rem .6rem;
+}
+.st-prov { font-size: .84rem; color: var(--text); min-width: 8rem; }
+.st-loc { font-size: .74rem; color: var(--muted); flex: 1; }
+.st-rm {
+  background: var(--bg); border: 1px solid var(--border); color: var(--bad);
+  border-radius: .45rem; padding: .25rem .6rem; font: inherit; font-size: .72rem; cursor: pointer;
+}
+.st-rm:hover { border-color: var(--bad); }
+
+.st-form { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+.st-sel, .st-input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .55rem; font: inherit; font-size: .8rem;
+}
+.st-input { flex: 1; min-width: 12rem; }
+.st-btn {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .7rem; font: inherit; font-size: .78rem; cursor: pointer; margin-bottom: .4rem;
+}
+.st-btn:hover { border-color: var(--accent); }
+.st-btn.primary { border-color: var(--accent); color: var(--accent); }
+.st-note { font-size: .72rem; color: var(--faint); margin-top: .6rem; line-height: 1.4; }

@@ -415,6 +415,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/inference.css" />
 <link rel="stylesheet" href="/web/memory.css" />
 <link rel="stylesheet" href="/web/palette.css" />
+<link rel="stylesheet" href="/web/settings.css" />
 <script>
 /* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
  * opening their own /events stream saturated the browser's 6-connection-per-host
@@ -593,6 +594,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/inference.js" defer></script>
 <script src="/web/memory.js" defer></script>
 <script src="/web/palette.js" defer></script>
+<script src="/web/settings.js" defer></script>
 </head>
 <body>
 <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -601,6 +603,7 @@ document.addEventListener("keydown", function (e) {
   <span class="pill modelpill"><span class="dot"></span><span id="modelBadge">—</span></span>
   <span class="spacer"></span>
   <button id="cmdk" class="badge" type="button" title="Command palette (Ctrl/Cmd+K)">⌘K</button>
+  <button id="settingsBtn" class="badge" type="button" title="Settings">⚙</button>
   <span id="connPill" class="pill conn conn-connecting" title="Live update stream"><span class="dot"></span><span id="connText">connecting…</span></span>
   <span id="status" class="badge">checking…</span>
 </header>
@@ -1598,6 +1601,30 @@ class _StatusHandler(BaseHTTPRequestHandler):
                     str(payload.get("mode", "")),
                     ttl_seconds=payload.get("ttl_seconds")))
                 return
+            if self.path == "/api/secrets":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                action = str(payload.get("action", ""))
+                if action == "set":
+                    # Secrets are only accepted from localhost — defense in depth
+                    # for a 0.0.0.0-bound container (the dashboard has no auth yet).
+                    if not self._is_loopback():
+                        self._json_response(
+                            {"error": "setting keys is only allowed from localhost"},
+                            status=403)
+                        return
+                    self._json_response(self.daemon.secrets_set(
+                        str(payload.get("provider", "")),
+                        str(payload.get("key", ""))))
+                elif action == "delete":
+                    self._json_response(self.daemon.secrets_delete(
+                        str(payload.get("provider", ""))))
+                elif action == "migrate":
+                    self._json_response(self.daemon.secrets_migrate())
+                else:
+                    self._json_response({"error": f"unknown action '{action}'"},
+                                        status=400)
+                return
             if self.path == "/api/budget":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1772,6 +1799,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
                                   default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/secrets":
+                body = json.dumps(self.daemon.secrets_status(),
+                                  default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
             elif self.path == "/api/metrics":
                 body = json.dumps(self.daemon.metrics(), default=str).encode()
                 self.send_response(200)
@@ -1812,6 +1844,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
             self.send_response(500)
         self.end_headers()
         self.wfile.write(body)
+
+    def _is_loopback(self) -> bool:
+        host = self.client_address[0] if self.client_address else ""
+        return (host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+                or host.startswith("127."))
 
     def _serve_static(self, rel: str) -> None:
         """Serve a static asset from the package ``web/`` bundle (modular shell)."""
@@ -2898,6 +2935,52 @@ class Daemon:
             })
         return out
 
+    def secrets_status(self) -> dict:
+        """Where each configured provider's API key resolves (never the values)."""
+        from . import __version__
+        catalog = {p["id"]: p for p in self.providers_catalog()}
+        configured = cfg.load_config().get("providers", {})
+        providers = [
+            {"id": pid, "label": catalog.get(pid, {}).get("label", pid),
+             "location": cfg.key_location(pid)}
+            for pid in sorted(configured)
+        ]
+        key_providers = [{"id": p["id"], "label": p["label"]}
+                         for p in self.providers_catalog() if p.get("needs_key")]
+        return {
+            "version": __version__,
+            "config_path": str(cfg.config_path()),
+            "keychain_available": cfg.keychain_available(),
+            "providers": providers,
+            "key_providers": key_providers,
+        }
+
+    def secrets_set(self, provider: str, key: str) -> dict:
+        provider = (provider or "").strip()
+        key = (key or "").strip()
+        if not provider or not key:
+            return {"error": "provider and key are required"}
+        backend = cfg.save_api_key(provider, key)
+        self._log("info", f"stored API key for '{provider}' in {backend} via dashboard")
+        out = self.secrets_status()
+        out["backend"] = backend
+        return out
+
+    def secrets_delete(self, provider: str) -> dict:
+        provider = (provider or "").strip()
+        if not provider:
+            return {"error": "provider is required"}
+        cfg.delete_api_key(provider)
+        self._log("info", f"removed API key for '{provider}' via dashboard")
+        return self.secrets_status()
+
+    def secrets_migrate(self) -> dict:
+        if not cfg.keychain_available():
+            return {"error": "no keychain backend available (install the keyring extra)"}
+        moved = cfg.migrate_secrets_to_keychain()
+        out = self.secrets_status()
+        out["migrated"] = moved
+        return out
     def switch_model(self, provider_id: str, model: str,
                      base_url: str | None = None) -> dict:
         """Set the default model from the dashboard picker.

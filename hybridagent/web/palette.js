@@ -39,7 +39,8 @@
     { label: "Open Memory Studio", hint: "tiers \u00b7 provenance", run: function () { clickSel("#memory-mount .mem-open"); } },
     { label: "Open latest Run Graph", hint: "trace DAG", run: function () { clickSel("#runlist .rg-run"); } },
     { label: "New chat", hint: "start fresh", run: function () { if (window.newChat) window.newChat(); close(); } },
-    { label: "Engage / release kill-switch", hint: "halt consequential actions", run: function () { clickSel("#safety-mount .sf-ks-btn"); } }
+    { label: "Engage / release kill-switch", hint: "halt consequential actions", run: function () { clickSel("#safety-mount .sf-ks-btn"); } },
+    { label: "Open Settings", hint: "keys \u00b7 config \u00b7 version", run: function () { if (window.PraxisSettings) window.PraxisSettings.open(); close(); } }
   ];
 
   var overlay = null, input = null, listEl = null, items = [], active = 0, timer = null;
