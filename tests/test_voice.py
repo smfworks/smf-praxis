@@ -170,3 +170,41 @@ def test_openai_upstream_relays_input_transcript():
     sent = [json.loads(s) for s in up.conn.sent]
     assert {"type": "transcript", "text": "hi there"} in sent
 
+
+def test_realtime_loopback_run_governs_full_turn(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy
+    from hybridagent.llm import LLMClient
+    from hybridagent.tools import ToolRegistry
+
+    class _Agent:
+        llm = LLMClient(mode="mock")
+        registry = ToolRegistry()
+        broker = GovernanceBroker(GovernancePolicy())
+        memory = None
+
+    conn = _FakeBrowser([
+        _text_frame({"type": "text", "text": "hello praxis"}),
+        _text_frame({"type": "commit"}),
+        _text_frame({"type": "stop"}),
+    ])
+    voice.RealtimeBridge(_Agent(), conn).run()
+    types = [json.loads(s)["type"] for s in conn.sent]
+    # A governed turn streams ready -> ... -> final -> audio (TTS) -> done.
+    assert types[0] == "ready"
+    assert "final" in types and "audio" in types and types[-1] == "done"
+
+
+def test_realtime_loopback_interrupt_drops_buffer():
+    bridge = voice.RealtimeBridge(agent=None, conn=None)
+    conn = _FakeBrowser([
+        _text_frame({"type": "text", "text": "stale buffered words"}),
+        _text_frame({"type": "interrupt"}),
+        _text_frame({"type": "stop"}),
+    ])
+    bridge.conn = conn
+    bridge.run()
+    types = [json.loads(s)["type"] for s in conn.sent]
+    # Barge-in is acknowledged and the dropped turn never produces a response.
+    assert "interrupted" in types and "final" not in types
+

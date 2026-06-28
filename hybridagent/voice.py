@@ -322,6 +322,12 @@ class RealtimeBridge:
                     audio_mime = ev.get("mime", audio_mime)
             elif etype == "stop":
                 break
+            elif etype == "interrupt":
+                # Barge-in: the user starts talking over Praxis. Drop the buffered
+                # turn and acknowledge so the client can stop playback.
+                pending = []
+                audio = []
+                self._send({"type": "interrupted"})
             elif etype == "commit":
                 text = " ".join(p for p in pending if p).strip()
                 pending = []
