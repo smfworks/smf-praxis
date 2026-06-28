@@ -389,9 +389,17 @@ def cmd_pack(args: argparse.Namespace) -> int:
             return 1
         print(json.dumps(shown.to_manifest(), indent=2))
         return 0
+    if action == "templates":
+        from . import vertical_templates as vt
+        print("built-in vertical templates (use: praxis pack create <name> --vertical <t>):")
+        for key in vt.list_templates():
+            t = vt.get_template(key) or {}
+            mode = t.get("complianceMode", "enforced")
+            print(f"  {key:<12} {mode:<10} {t.get('description', '')[:50]}")
+        return 0
     if action == "create":
         if not args.name:
-            print("usage: praxis pack create <name>")
+            print("usage: praxis pack create <name> [--vertical <template>]")
             return 1
         try:
             d = pack.create_pack(args.name, vertical=(args.vertical or ""))
@@ -1312,8 +1320,9 @@ def build_parser() -> argparse.ArgumentParser:
         "pack", help="vertical packs: bundle prompt + policy + tools for a domain")
     ppk.add_argument(
         "action", nargs="?",
-        choices=["list", "show", "create", "install", "activate", "deactivate"],
-        help="list (default), show, create, install, activate, deactivate")
+        choices=["list", "show", "create", "install", "activate", "deactivate",
+                 "templates"],
+        help="list (default), show, create, install, activate, deactivate, templates")
     ppk.add_argument("name", nargs="?", help="pack name (or a directory path for install)")
     ppk.add_argument("--vertical", default=None, help="vertical label (for create)")
     ppk.set_defaults(func=cmd_pack)

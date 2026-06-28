@@ -114,3 +114,56 @@ def test_apply_active_to_broker_noop_without_active(tmp_path, monkeypatch):
     b = GovernanceBroker(GovernancePolicy(allowed_tools={"a"}))
     assert pack.apply_active_to_broker(b) is None
     assert b.policy.pack_tools is None
+
+
+# --- p08: per-vertical templates ---------------------------------------------
+def test_templates_cover_core_verticals():
+    from hybridagent import vertical_templates as vt
+    names = set(vt.list_templates())
+    assert {"general", "legal", "medical", "forensic",
+            "education", "business", "developer"} <= names
+
+
+def test_get_template_is_case_insensitive_and_alias_aware():
+    from hybridagent import vertical_templates as vt
+    assert vt.get_template("Legal")["vertical"] == "Legal"
+    assert vt.get_template("lawyer")["vertical"] == "Legal"      # alias
+    assert vt.get_template("dental")["vertical"] == "Medical/Dental"
+    assert vt.get_template("coding")["vertical"] == "Developer"
+    assert vt.get_template("zzz-unknown") is None
+    assert vt.get_template("") is None
+
+
+def test_create_from_legal_template_seeds_policy(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    pack.create_pack("matter1", vertical="legal")
+    p = pack.load_pack("matter1")
+    assert p is not None
+    assert p.compliance_mode == "enforced"
+    assert "legal" in p.system_prompt.lower()
+    assert set(p.risk_policy["dualApprovalRisks"]) == {"send", "destructive"}
+    assert p.risk_policy["egressCheck"] is True
+    # the seeded risk policy flows through to a GovernancePolicy
+    policy = GovernancePolicy(allowed_tools={"x"})
+    pack.apply_to_policy(p, policy)
+    assert policy.dual_approval_risks == {RiskClass.SEND, RiskClass.DESTRUCTIVE}
+
+
+def test_create_unknown_vertical_is_generic(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    pack.create_pack("plain", vertical="nonesuch")
+    p = pack.load_pack("plain")
+    assert p is not None
+    assert p.compliance_mode is None
+    assert p.risk_policy == {}
+
+
+def test_explicit_args_override_template(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    pack.create_pack("custom", vertical="legal", system_prompt="MY-OWN-PERSONA",
+                     description="mine")
+    p = pack.load_pack("custom")
+    assert p.system_prompt == "MY-OWN-PERSONA"
+    assert p.description == "mine"
+    assert p.compliance_mode == "enforced"  # still seeded from the template
+

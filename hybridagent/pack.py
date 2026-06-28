@@ -139,15 +139,28 @@ def load_pack(name_or_path: str) -> "VerticalPack | None":
 # --- lifecycle ---------------------------------------------------------------
 def create_pack(name: str, system_prompt: str = "", vertical: str = "",
                 description: str = "") -> Path:
-    """Scaffold a new pack under the user packs dir. Returns its directory."""
+    """Scaffold a new pack under the user packs dir. Returns its directory.
+
+    When ``vertical`` (or ``name``) matches a built-in template, the new pack is
+    seeded with that template's persona, compliance mode, and risk policy; explicit
+    arguments still win.
+    """
     if not valid_name(name):
         raise ValueError(f"invalid pack name '{name}' (use lowercase a-z 0-9 _ -)")
+    from . import vertical_templates as vt
+    tmpl = vt.get_template(vertical) or vt.get_template(name) or {}
     d = packs_dir() / name
     d.mkdir(parents=True, exist_ok=True)
     pk = VerticalPack(
-        name=name, vertical=vertical or name.title(), description=description,
-        system_prompt=system_prompt
-        or f"You are Praxis configured for the {vertical or name} vertical.")
+        name=name,
+        vertical=vertical or tmpl.get("vertical", "") or name.title(),
+        description=description or tmpl.get("description", ""),
+        system_prompt=(
+            system_prompt or tmpl.get("systemPrompt", "")
+            or f"You are Praxis configured for the {vertical or name} vertical."),
+        compliance_mode=tmpl.get("complianceMode"),
+        risk_policy=dict(tmpl.get("riskPolicy", {}) or {}),
+    )
     (d / MANIFEST).write_text(json.dumps(pk.to_manifest(), indent=2), encoding="utf-8")
     return d
 

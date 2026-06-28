@@ -301,12 +301,21 @@ posture is applied to the broker on every agent build.
 
 ```bash
 praxis pack list                       # show installed packs (* = active)
-praxis pack create legal --vertical Legal   # scaffold ~/.praxis/packs/legal
+praxis pack templates                  # list built-in vertical templates
+praxis pack create legal --vertical legal   # scaffold from the Legal template
 praxis pack install ./my-pack          # copy + activate an external pack
 praxis pack activate legal             # apply persona + compliance + risk policy
 praxis pack show                       # print the active pack's manifest
 praxis pack deactivate                 # back to defaults
 ```
+
+Built-in templates (`legal`, `medical`, `forensic`, `education`, `business`,
+`developer`, `general`) seed a new pack with a domain persona, compliance mode, and
+a tuned risk policy — regulated verticals default to **enforced** with dual approval
+for send/destructive and egress + injection guards; productivity verticals default
+to **autonomous** reads + drafts. Lookups are case-insensitive and alias-aware
+(`lawyer`→legal, `dental`→medical, `coding`→developer). Explicit `--vertical` labels,
+`system_prompt`, or manifest edits always override the template.
 
 A minimal `pack.json`:
 
@@ -321,8 +330,8 @@ A minimal `pack.json`:
 }
 ```
 
-Per-vertical prompt/risk templates, eval packs, theming, and ready-made legal +
-medical packs build on this core (roadmap p08–p11).
+Eval packs, white-label theming, and ready-made legal + medical packs build on
+this core (roadmap p09–p11).
 
 ## Persistent tasks
 
