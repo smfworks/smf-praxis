@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from . import config as cfg
 from .logging_util import get_logger
+from .pricing import price_usd
 from .providers import CATALOG, chat, chat_messages, chat_messages_stream, chat_messages_tools
 from .router import NORMAL, ModelRouter, classify_difficulty, classify_sensitivity
 
@@ -59,6 +60,22 @@ def _env_int(name: str, default: int) -> int:
 
 
 @dataclass
+class _RunUsage:
+    """Token + cost tally accumulated across one governed run's LLM calls."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+    calls: int = 0
+    model: str = ""
+
+    def as_dict(self) -> dict:
+        return {"prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "cost_usd": round(self.cost_usd, 6),
+                "calls": self.calls, "model": self.model}
+
+
+@dataclass
 class LLMClient:
     model: str = "praxis-local"
     mode: str = field(default_factory=lambda: os.environ.get("PRAXIS_LLM", "auto"))
@@ -66,11 +83,31 @@ class LLMClient:
     context_char_budget: int = field(
         default_factory=lambda: _env_int("PRAXIS_CTX_BUDGET", 24000))
     keep_recent_turns: int = 8
+    _usage: _RunUsage = field(default_factory=_RunUsage, init=False, repr=False)
 
     def _effective_mode(self) -> str:
         if self.mode in ("mock", "real"):
             return self.mode
         return "real" if cfg.is_configured() else "mock"  # auto
+
+    # ------------------------------------------------------------- accounting
+    def reset_usage(self) -> None:
+        """Zero the per-run token/cost tally (call before a governed run)."""
+        self._usage = _RunUsage()
+
+    def usage_snapshot(self) -> dict:
+        """Tokens + USD cost tallied since the last :meth:`reset_usage`."""
+        return self._usage.as_dict()
+
+    def _account(self, model_ref: str, usage: dict) -> None:
+        """Fold one real provider call's token usage + cost into the tally."""
+        p = int(usage.get("prompt_tokens", 0) or 0)
+        c = int(usage.get("completion_tokens", 0) or 0)
+        self._usage.prompt_tokens += p
+        self._usage.completion_tokens += c
+        self._usage.cost_usd += price_usd(model_ref, p, c)
+        self._usage.calls += 1
+        self._usage.model = model_ref
 
     # ------------------------------------------------------------------ public
     def complete(self, prompt: str, system: str | None = None,
@@ -240,10 +277,12 @@ class LLMClient:
                 f"Missing API key for '{provider_id}'. Set {provider.key_env} or "
                 f"re-run 'praxis onboard' and paste the key."
             )
-        return chat(
+        usage: dict = {}
+        text = chat(
             provider=provider, model=model, prompt=prompt, system=system,
-            api_key=api_key, base_url=entry.get("baseUrl"),
-        )
+            api_key=api_key, base_url=entry.get("baseUrl"), usage_sink=usage)
+        self._account(model_ref, usage)
+        return text
 
     # ----------------------------------------------------------- chat (multi-turn)
     def _route_messages(self, messages: list[dict], system: str | None,
@@ -284,10 +323,12 @@ class LLMClient:
                 f"Missing API key for '{provider_id}'. Set {provider.key_env} or "
                 f"re-run 'praxis onboard' and paste the key."
             )
-        return chat_messages(
+        usage: dict = {}
+        text = chat_messages(
             provider=provider, model=model, messages=messages, system=system,
-            api_key=api_key, base_url=entry.get("baseUrl"),
-        )
+            api_key=api_key, base_url=entry.get("baseUrl"), usage_sink=usage)
+        self._account(model_ref, usage)
+        return text
 
     # ------------------------------------------------------- chat (streaming)
     def _stream_messages(self, messages: list[dict], system: str | None,
@@ -383,10 +424,12 @@ class LLMClient:
                 f"Missing API key for '{provider_id}'. Set {provider.key_env} or "
                 f"re-run 'praxis onboard' and paste the key."
             )
-        return chat_messages_tools(
+        result = chat_messages_tools(
             provider=provider, model=model, messages=messages, tools=tools,
             system=system, api_key=api_key, base_url=entry.get("baseUrl"),
         )
+        self._account(model_ref, result.get("usage") or {})
+        return result
 
     # Backwards-compatible seam (documented in FRAMEWORK.md).
     def _complete_real(self, prompt: str, system: str | None) -> str:

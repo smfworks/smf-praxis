@@ -172,17 +172,30 @@ def discover_ollama_models(base_url: str, timeout: float = 3.0) -> list[str]:
         return []
 
 
+def _usage_of(data: dict) -> dict:
+    """Normalise an OpenAI- or Anthropic-style usage block to prompt/completion
+    token counts. Absent usage -> zeros."""
+    u = (data or {}).get("usage") or {}
+    prompt = u.get("prompt_tokens", u.get("input_tokens", 0)) or 0
+    completion = u.get("completion_tokens", u.get("output_tokens", 0)) or 0
+    return {"prompt_tokens": int(prompt), "completion_tokens": int(completion)}
+
+
 def chat(provider: Provider, model: str, prompt: str, system: str | None,
          api_key: str | None, base_url: str | None = None,
          timeout: float = 60.0, temperature: float = 0.0,
-         max_tokens: int = 1024) -> str:
-    """Send a single completion via the provider's wire protocol."""
+         max_tokens: int = 1024, usage_sink: dict | None = None) -> str:
+    """Send a single completion via the provider's wire protocol.
+
+    When ``usage_sink`` is provided it is populated with the response's token
+    usage (``prompt_tokens`` / ``completion_tokens``) for cost accounting.
+    """
     url_root = (base_url or provider.base_url).rstrip("/")
     if provider.compatibility == "anthropic":
         return _chat_anthropic(url_root, model, prompt, system, api_key,
-                               timeout, temperature, max_tokens)
+                               timeout, temperature, max_tokens, usage_sink)
     return _chat_openai(url_root, model, prompt, system, api_key,
-                        timeout, temperature, max_tokens)
+                        timeout, temperature, max_tokens, usage_sink)
 
 
 def _post(url: str, headers: dict, payload: dict, timeout: float,
@@ -219,7 +232,8 @@ def _post(url: str, headers: dict, payload: dict, timeout: float,
 
 def _chat_openai(root: str, model: str, prompt: str, system: str | None,
                  api_key: str | None, timeout: float,
-                 temperature: float = 0.0, max_tokens: int = 1024) -> str:
+                 temperature: float = 0.0, max_tokens: int = 1024,
+                 usage_sink: dict | None = None) -> str:
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -229,14 +243,18 @@ def _chat_openai(root: str, model: str, prompt: str, system: str | None,
                  {"model": model, "messages": messages,
                   "temperature": temperature, "max_tokens": max_tokens}, timeout)
     try:
-        return data["choices"][0]["message"]["content"]
+        text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
+    if usage_sink is not None:
+        usage_sink.update(_usage_of(data))
+    return text
 
 
 def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
                     api_key: str | None, timeout: float,
-                    temperature: float = 0.0, max_tokens: int = 1024) -> str:
+                    temperature: float = 0.0, max_tokens: int = 1024,
+                    usage_sink: dict | None = None) -> str:
     headers = {
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
@@ -252,25 +270,30 @@ def _chat_anthropic(root: str, model: str, prompt: str, system: str | None,
     blocks = data.get("content")
     if not isinstance(blocks, list):
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    if usage_sink is not None:
+        usage_sink.update(_usage_of(data))
     return "".join(block.get("text", "") for block in blocks)
 
 
 def chat_messages(provider: Provider, model: str, messages: list[dict],
                   system: str | None = None, api_key: str | None = None,
                   base_url: str | None = None, timeout: float = 60.0,
-                  temperature: float = 0.3, max_tokens: int = 1024) -> str:
+                  temperature: float = 0.3, max_tokens: int = 1024,
+                  usage_sink: dict | None = None) -> str:
     """Multi-turn chat completion.
 
     ``messages`` is an ordered list of ``{"role": "user"|"assistant"|"system",
     "content": str}`` turns; ``system`` is an optional leading system prompt
     merged ahead of the conversation. Routes to the provider's wire protocol.
+    When ``usage_sink`` is provided it is populated with the response's token
+    usage for cost accounting.
     """
     root = (base_url or provider.base_url).rstrip("/")
     if provider.compatibility == "anthropic":
         return _chat_messages_anthropic(root, model, messages, system, api_key,
-                                        timeout, temperature, max_tokens)
+                                        timeout, temperature, max_tokens, usage_sink)
     return _chat_messages_openai(root, model, messages, system, api_key,
-                                 timeout, temperature, max_tokens)
+                                 timeout, temperature, max_tokens, usage_sink)
 
 
 def _normalize_turns(messages: list[dict]) -> list[dict]:
@@ -286,7 +309,8 @@ def _normalize_turns(messages: list[dict]) -> list[dict]:
 
 def _chat_messages_openai(root: str, model: str, messages: list[dict],
                           system: str | None, api_key: str | None, timeout: float,
-                          temperature: float, max_tokens: int) -> str:
+                          temperature: float, max_tokens: int,
+                          usage_sink: dict | None = None) -> str:
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -298,15 +322,18 @@ def _chat_messages_openai(root: str, model: str, messages: list[dict],
                  {"model": model, "messages": wire,
                   "temperature": temperature, "max_tokens": max_tokens}, timeout)
     try:
-        return data["choices"][0]["message"]["content"]
+        text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
+    if usage_sink is not None:
+        usage_sink.update(_usage_of(data))
+    return text
 
 
 def _chat_messages_anthropic(root: str, model: str, messages: list[dict],
                              system: str | None, api_key: str | None,
                              timeout: float, temperature: float,
-                             max_tokens: int) -> str:
+                             max_tokens: int, usage_sink: dict | None = None) -> str:
     headers = {"Content-Type": "application/json",
                "anthropic-version": "2023-06-01"}
     if api_key:
@@ -330,6 +357,8 @@ def _chat_messages_anthropic(root: str, model: str, messages: list[dict],
     blocks = data.get("content")
     if not isinstance(blocks, list):
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}")
+    if usage_sink is not None:
+        usage_sink.update(_usage_of(data))
     return "".join(block.get("text", "") for block in blocks)
 
 
@@ -530,7 +559,8 @@ def _chat_messages_tools_openai(root: str, model: str, messages: list[dict],
             args = {}
         calls.append({"id": tc.get("id") or f"call_{len(calls)}",
                       "name": fn.get("name", ""), "args": args})
-    return {"text": msg.get("content") or "", "tool_calls": calls}
+    return {"text": msg.get("content") or "", "tool_calls": calls,
+            "usage": _usage_of(data)}
 
 
 def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
@@ -596,7 +626,7 @@ def _chat_messages_tools_anthropic(root: str, model: str, messages: list[dict],
         if isinstance(b, dict) and b.get("type") == "tool_use":
             calls.append({"id": b.get("id") or f"call_{len(calls)}",
                           "name": b.get("name", ""), "args": b.get("input") or {}})
-    return {"text": text, "tool_calls": calls}
+    return {"text": text, "tool_calls": calls, "usage": _usage_of(data)}
 
 
 def embed(provider: Provider, model: str, texts: list[str],

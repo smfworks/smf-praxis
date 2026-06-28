@@ -39,16 +39,17 @@ def test_budget_cap_blocks_then_unblocks(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
     from hybridagent.daemon import Daemon
     d = Daemon(llm=LLMClient(mode="mock"))
-    d.budget_set(0.001)                       # tiny cap
+    d._ensure_agent()
+    d.budget_set(0.001)                        # tiny cap
 
-    first = d.agent_run("follow up with the customer")
-    assert first["status"] != "blocked"       # first run executes...
-    assert first["run_id"]
-    assert d.budget_status()["over"] is True   # ...and pushes spend over the cap
+    # Mock/local runs are free now, so simulate prior real provider spend that
+    # pushes the budget over its cap.
+    d.store.add_spend(0.01)
+    assert d.budget_status()["over"] is True
 
-    second = d.agent_run("research and summarize the latest sales numbers")
-    assert second["status"] == "blocked" and second.get("blocked") is True
-    assert second["run_id"] == ""              # never executed
+    blocked = d.agent_run("research and summarize the latest sales numbers")
+    assert blocked["status"] == "blocked" and blocked.get("blocked") is True
+    assert blocked["run_id"] == ""             # never executed
 
     d.budget_set(100.0)                        # raising the cap unblocks
     third = d.agent_run("research and summarize the latest sales numbers")

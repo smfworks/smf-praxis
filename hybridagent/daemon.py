@@ -2096,17 +2096,24 @@ class Daemon:
                     pass
             self.emit_event("run", {"run_id": run_id, "kind": kind, "data": data})
 
+        if hasattr(self.agent.llm, "reset_usage"):
+            self.agent.llm.reset_usage()
         result = AgentService(self.agent).run(
             goal, max_replans=max_replans, on_event=on_event)
+        usage: dict = {"prompt_tokens": 0, "completion_tokens": 0,
+                       "cost_usd": 0.0, "calls": 0, "model": ""}
+        if hasattr(self.agent.llm, "usage_snapshot"):
+            usage = self.agent.llm.usage_snapshot()
         if store is not None:
             try:
                 store.finish_run(run_id, str(result.get("status", "")))
-                # Estimate spend (placeholder until real provider token accounting);
-                # one step ~= $0.01. With a real provider, swap for actual cost.
-                store.add_spend(round(0.01 * max(1, len(result.get("steps", []))), 4))
+                # Accrue real provider cost (tokens x per-model price). Local and
+                # mock models are free, so an offline run adds a run but $0 spend.
+                store.add_spend(round(float(usage.get("cost_usd", 0.0)), 6))
             except Exception:
                 pass
         result["run_id"] = run_id
+        result["usage"] = usage
         return result
 
     def list_runs_trace(self, limit: int = 50) -> dict:
