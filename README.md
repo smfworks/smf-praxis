@@ -295,9 +295,9 @@ autonomous vs. dual-approval, egress/injection checks, approval TTL), and a **to
 allowlist** that further narrows what the agent may call — independently of the
 global allowlist, so it survives runtime tool registration.
 
-Packs live in `~/.praxis/packs/<name>/pack.json`; a bundled **general** pack ships
-with Praxis. Activate one and the persona is prepended to chat and its governance
-posture is applied to the broker on every agent build.
+Packs live in `~/.praxis/packs/<name>/pack.json`; bundled **general** and
+**homeschool** packs ship with Praxis. Activate one and the persona is prepended to
+chat and its governance posture is applied to the broker on every agent build.
 
 ```bash
 praxis pack list                       # show installed packs (* = active)
@@ -309,13 +309,30 @@ praxis pack show                       # print the active pack's manifest
 praxis pack deactivate                 # back to defaults
 ```
 
-Built-in templates (`legal`, `medical`, `forensic`, `education`, `business`,
-`developer`, `general`) seed a new pack with a domain persona, compliance mode, and
-a tuned risk policy — regulated verticals default to **enforced** with dual approval
-for send/destructive and egress + injection guards; productivity verticals default
-to **autonomous** reads + drafts. Lookups are case-insensitive and alias-aware
-(`lawyer`→legal, `dental`→medical, `coding`→developer). Explicit `--vertical` labels,
-`system_prompt`, or manifest edits always override the template.
+Built-in templates (`legal`, `medical`, `forensic`, `education`, `homeschool`,
+`business`, `developer`, `general`) seed a new pack with a domain persona, compliance
+mode, and a tuned risk policy — regulated verticals default to **enforced** with dual
+approval for send/destructive and egress + injection guards; productivity verticals
+(including `homeschool`) default to **autonomous** reads + drafts. Lookups are
+case-insensitive and alias-aware (`lawyer`→legal, `dental`→medical, `coding`→developer,
+`homeschooling`/`k12`→homeschool). Explicit `--vertical` labels, `system_prompt`, or
+manifest edits always override the template.
+
+### Adding a new domain
+
+To target a vertical that isn't bundled, add a built-in template and (optionally) ship
+a ready-to-activate pack — both human-readable and reproducible by an agent:
+
+1. **Template** — add an entry to `VERTICAL_TEMPLATES` in
+   `hybridagent/vertical_templates.py` with `vertical`, `description`, `systemPrompt`,
+   `complianceMode`, and `riskPolicy` (reuse `_REGULATED_RISK` for regulated fields,
+   `_PRODUCTIVITY_RISK` for office work). Add common phrasings to `_ALIASES`.
+2. **Bundled pack** (optional) — create `hybridagent/packs/<name>/pack.json` mirroring
+   the template so users can `praxis pack activate <name>` with no scaffolding. The
+   wheel ships `packs/*/pack.json` automatically.
+3. **Tests** — extend `tests/test_pack.py` (templates list, alias resolution, posture).
+4. Or skip the code path entirely: `praxis pack create mine --vertical homeschool` then
+   edit the generated `pack.json` by hand.
 
 A minimal `pack.json`:
 
