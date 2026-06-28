@@ -491,6 +491,40 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 });
+
+/* A11y: Escape closes any open panel overlay (they share the `*-overlay.show`
+ * pattern and a close() that only toggles `show`); a MutationObserver tags each
+ * overlay as a modal dialog for screen readers as it is created. */
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape") return;
+  var open = document.querySelectorAll(
+    ".wb-overlay.show,.if-overlay.show,.mem-overlay.show,.mx-overlay.show,.rg-overlay.show,.sf-overlay.show");
+  for (var i = 0; i < open.length; i++) open[i].classList.remove("show");
+});
+(function () {
+  function tag(n) {
+    if (n && n.nodeType === 1 && /(^|\s)[a-z]+-overlay(\s|$)/.test(n.className || "")) {
+      n.setAttribute("role", "dialog");
+      n.setAttribute("aria-modal", "true");
+    }
+  }
+  function start() {
+    if (!document.body) return;
+    try {
+      var ov = document.body.querySelectorAll("[class$='-overlay'],[class*='-overlay ']");
+      for (var k = 0; k < ov.length; k++) tag(ov[k]);
+      var obs = new MutationObserver(function (muts) {
+        for (var i = 0; i < muts.length; i++) {
+          var added = muts[i].addedNodes || [];
+          for (var j = 0; j < added.length; j++) tag(added[j]);
+        }
+      });
+      obs.observe(document.body, { childList: true });
+    } catch (_) {}
+  }
+  if (document.body) start();
+  else document.addEventListener("DOMContentLoaded", start);
+})();
 </script>
 <script src="/web/run-graph.js" defer></script>
 <script src="/web/board.js" defer></script>
