@@ -22,7 +22,8 @@ p07 applies the persona (system prompt), compliance mode, risk-policy overrides,
 and the tool allowlist; p10 ingests the manifest's ``knowledge`` files into a
 ``pack:<name>`` RAG namespace on activation and grounds chat answers in them; p11
 installs the manifest's ``skills`` (inline or SKILL.md refs) into the shared skill
-library. Theme / model are carried in the manifest for later roadmap items.
+library; p12 lets a pack pin a default ``model`` (config defaults still win) and
+expose ``theme`` tokens to the dashboard /status.
 """
 from __future__ import annotations
 
@@ -341,3 +342,21 @@ def compose_system(base: str) -> str:
     except Exception:
         pass
     return base
+
+
+def resolve_model() -> str | None:
+    """The active pack's pinned model, if any (config defaults still win)."""
+    try:
+        pk = active()
+        return pk.model if pk else None
+    except Exception:
+        return None
+
+
+def active_theme() -> dict:
+    """The active pack's dashboard theme tokens ({} if none)."""
+    try:
+        pk = active()
+        return dict(pk.theme) if pk else {}
+    except Exception:
+        return {}

@@ -235,6 +235,33 @@ def test_bundled_homeschool_pack_has_skill():
                for s in pack.list_packs()["homeschool"].skills)
 
 
+# --- p12: pack model + theme --------------------------------------------------
+def test_pack_pins_model_as_fallback(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    from hybridagent import config as c
+    assert pack.resolve_model() is None
+    pack.create_pack("p", system_prompt="x")
+    d = pack.packs_dir() / "p"
+    (d / "pack.json").write_text(json.dumps(
+        {"name": "p", "model": "openai/gpt-4o"}), encoding="utf-8")
+    pack.activate("p")
+    assert pack.resolve_model() == "openai/gpt-4o"
+    assert c.get_default_model() == "openai/gpt-4o"  # fallback when no explicit default
+    pack.deactivate()
+    assert pack.resolve_model() is None
+
+
+def test_active_theme_surfaces_tokens(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    assert pack.active_theme() == {}
+    d = pack.packs_dir() / "t"
+    d.mkdir(parents=True)
+    (d / "pack.json").write_text(json.dumps(
+        {"name": "t", "theme": {"accent": "#0a7"}}), encoding="utf-8")
+    pack.activate("t")
+    assert pack.active_theme()["accent"] == "#0a7"
+
+
 def test_install_skills_inline_and_retrievable(tmp_path, monkeypatch):
     _home(tmp_path, monkeypatch)
     monkeypatch.setenv("PRAXIS_EMBED", "mock")
