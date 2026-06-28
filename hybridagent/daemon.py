@@ -986,33 +986,159 @@ function playAudioB64(b64, mime){
     const a = new Audio(url); a.onended = () => URL.revokeObjectURL(url); a.play().catch(()=>{});
   } catch(_){}
 }
-function realtimeTurn(conv, input, typing){
-  return new Promise((resolve) => {
-    let steps = null, finalText = '', finished = false; const cards = {};
-    function ensureSteps(){ if(steps) return; if(typing){ typing.remove(); typing = null; } const row = document.createElement('div'); row.className = 'msg agent'; row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="steps"></div></div>'; messagesEl.appendChild(row); steps = row.querySelector('.steps'); }
-    function addStep(html, cls){ ensureSteps(); const s = document.createElement('div'); s.className = 'step ' + (cls||''); s.innerHTML = html; steps.appendChild(s); scrollDown(); return s; }
-    function setCard(tool, html, cls){ const c = cards[tool]; if(c){ c.className = 'step ' + cls; c.innerHTML = html; } else { cards[tool] = addStep(html, cls); } }
-    function finish(){ if(finished) return; finished = true; if(typing){ typing.remove(); typing = null; } const out = finalText || '(no response)'; appendAgent(out, 'realtime'); conv.messages.push({role:'assistant', content: out, model: 'realtime', ts: Date.now()}); conv.updated = Date.now(); persistConversations(); renderHistList(); try { ws.close(); } catch(_){} resolve(); }
+/* Persistent realtime session: one WebSocket for the whole conversation, with
+   live PCM16 mic streaming (push-to-talk). The governed event protocol is shared
+   with the loopback and OpenAI bridges, so the UI is identical either way. */
+let _rtWs = null, _rtReady = false, _rtTurn = null, _rtPendingTyping = null;
+let _rtAwait = null, _rtAwaitResolve = null, _rtAwaitTimer = null;
+let _rtAudioCtx = null, _rtNode = null, _rtSource = null, _rtSink = null, _rtStream = null, _rtStreaming = false;
+
+function rtSocketReady(){ return !!(_rtWs && _rtWs.readyState === 1 && _rtReady); }
+
+function rtEnsureSocket(){
+  return new Promise((resolve, reject) => {
+    if(_rtWs && (_rtWs.readyState === 0 || _rtWs.readyState === 1)){
+      if(_rtReady) return resolve();
+      const t = setInterval(() => { if(_rtReady){ clearInterval(t); resolve(); } }, 40);
+      setTimeout(() => { clearInterval(t); _rtReady ? resolve() : reject(new Error('realtime not ready')); }, 8000);
+      return;
+    }
     let ws;
     try { ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/api/voice/realtime'); }
-    catch(e){ finalText = 'Realtime error: ' + e; finish(); return; }
-    ws.onopen = () => { if(input && input.audio){ ws.send(JSON.stringify({type:'audio', data: input.audio, mime: input.mime||'audio/webm'})); } else { ws.send(JSON.stringify({type:'text', text: (input&&input.text)||''})); } ws.send(JSON.stringify({type:'commit'})); };
-    ws.onerror = () => { finalText = finalText || 'Realtime connection failed.'; finish(); };
-    ws.onclose = () => finish();
-    ws.onmessage = (e) => {
-      let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
-      if(ev.type === 'transcript'){ appendUser(ev.text || ''); }
-      else if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
-      else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
-      else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
-      else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
-      else if(ev.type === 'final'){ finalText = ev.text || ''; }
-      else if(ev.type === 'audio'){ playAudioB64(ev.data, ev.mime); }
-      else if(ev.type === 'error'){ finalText = (finalText?finalText+'\n\n':'') + '⚠️ ' + (ev.error || 'error'); }
-      else if(ev.type === 'done'){ finish(); }
-    };
+    catch(e){ return reject(e); }
+    _rtWs = ws; _rtReady = false;
+    ws.onmessage = (e) => { let ev; try { ev = JSON.parse(e.data); } catch(_){ return; } rtOnEvent(ev, resolve); };
+    ws.onerror = () => { if(_rtTurn) rtTurnError('Realtime connection failed.'); };
+    ws.onclose = () => { _rtReady = false; _rtWs = null; if(_rtTurn) rtFinishTurn(); else rtResolveAwait(); };
+    setTimeout(() => { if(!_rtReady && _rtWs === ws) reject(new Error('realtime handshake timeout')); }, 8000);
   });
 }
+
+function rtArmTurn(){
+  _rtAwait = new Promise(res => { _rtAwaitResolve = res; });
+  clearTimeout(_rtAwaitTimer);
+  _rtAwaitTimer = setTimeout(() => { if(_rtTurn) rtFinishTurn(); else rtResolveAwait(); }, 30000);
+}
+function rtResolveAwait(){ clearTimeout(_rtAwaitTimer); if(_rtAwaitResolve){ const r = _rtAwaitResolve; _rtAwaitResolve = null; r(); } }
+
+function rtEnsureTurn(){
+  if(_rtTurn) return;
+  _rtTurn = { steps: null, finalText: '', cards: {}, userShown: false, typing: _rtPendingTyping };
+  _rtPendingTyping = null;
+}
+function rtAddStep(html, cls){
+  const T = _rtTurn;
+  if(!T.steps){ if(T.typing){ T.typing.remove(); T.typing = null; } const row = document.createElement('div'); row.className = 'msg agent'; row.innerHTML = '<div class="avatar">P</div><div class="bubble-wrap"><div class="steps"></div></div>'; messagesEl.appendChild(row); T.steps = row.querySelector('.steps'); }
+  const s = document.createElement('div'); s.className = 'step ' + (cls||''); s.innerHTML = html; T.steps.appendChild(s); scrollDown(); return s;
+}
+function rtSetCard(tool, html, cls){ const c = _rtTurn.cards[tool]; if(c){ c.className = 'step ' + cls; c.innerHTML = html; } else { _rtTurn.cards[tool] = rtAddStep(html, cls); } }
+function rtSetUserTranscript(text){
+  if(!text || _rtTurn.userShown) return;
+  _rtTurn.userShown = true; appendUser(text);
+  const conv = ensureConversation(); conv.messages.push({role:'user', content:text, ts: Date.now()});
+  conv.updated = Date.now(); persistConversations(); renderHistList();
+}
+function rtTurnError(msg){ rtEnsureTurn(); _rtTurn.finalText = (_rtTurn.finalText?_rtTurn.finalText+'\n\n':'') + '⚠️ ' + msg; rtFinishTurn(); }
+function rtFinishTurn(){
+  const T = _rtTurn; if(!T){ rtResolveAwait(); return; } _rtTurn = null;
+  if(T.typing){ T.typing.remove(); T.typing = null; }
+  const out = T.finalText || '(no response)';
+  appendAgent(out, 'realtime');
+  const conv = ensureConversation(); conv.messages.push({role:'assistant', content: out, model:'realtime', ts: Date.now()});
+  conv.updated = Date.now(); persistConversations(); renderHistList();
+  setBusy(false); rtResolveAwait();
+}
+
+function rtOnEvent(ev, readyResolve){
+  if(ev.type === 'ready'){ _rtReady = true; if(readyResolve) readyResolve(); return; }
+  rtEnsureTurn();
+  const T = _rtTurn;
+  if(ev.type === 'transcript'){ rtSetUserTranscript(ev.text || ''); }
+  else if(ev.type === 'delta'){ T.finalText += (ev.text || ''); }
+  else if(ev.type === 'tool_call'){ T.cards[ev.tool] = rtAddStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
+  else if(ev.type === 'tool_result'){ rtSetCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
+  else if(ev.type === 'approval'){ rtSetCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
+  else if(ev.type === 'denied'){ rtSetCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
+  else if(ev.type === 'final'){ T.finalText = ev.text || T.finalText; }
+  else if(ev.type === 'audio'){ playAudioB64(ev.data, ev.mime); }
+  else if(ev.type === 'error'){ T.finalText = (T.finalText?T.finalText+'\n\n':'') + '⚠️ ' + (ev.error || 'error'); }
+  else if(ev.type === 'done'){ rtFinishTurn(); }
+}
+
+async function rtSendText(text, typing){
+  _rtPendingTyping = typing || appendTyping(); setBusy(true);
+  try { await rtEnsureSocket(); }
+  catch(e){ if(_rtPendingTyping){ _rtPendingTyping.remove(); _rtPendingTyping = null; } appendAgent('Realtime error: '+e); setBusy(false); return; }
+  rtArmTurn();
+  _rtWs.send(JSON.stringify({type:'text', text: text}));
+  _rtWs.send(JSON.stringify({type:'commit'}));
+  await _rtAwait;
+}
+
+/* ---- PCM16 capture: downsample to mono 24kHz, little-endian, base64 ---- */
+function rtDownsample(buffer, srcRate, dstRate){
+  if(dstRate >= srcRate) return buffer;
+  const ratio = srcRate/dstRate, newLen = Math.round(buffer.length/ratio), result = new Float32Array(newLen);
+  let oR = 0, oB = 0;
+  while(oR < newLen){ const next = Math.round((oR+1)*ratio); let acc = 0, cnt = 0; for(let i=oB;i<next && i<buffer.length;i++){ acc += buffer[i]; cnt++; } result[oR] = cnt ? acc/cnt : 0; oR++; oB = next; }
+  return result;
+}
+function rtPcm16Base64(float32, srcRate){
+  const ds = rtDownsample(float32, srcRate, 24000);
+  const buf = new ArrayBuffer(ds.length*2), view = new DataView(buf);
+  for(let i=0;i<ds.length;i++){ let s = Math.max(-1, Math.min(1, ds[i])); view.setInt16(i*2, s<0 ? s*0x8000 : s*0x7FFF, true); }
+  const bytes = new Uint8Array(buf); let bin = ''; for(let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function rtSendPcm(float32, srcRate){
+  if(!rtSocketReady() || !float32 || !float32.length) return;
+  const data = rtPcm16Base64(float32, srcRate);
+  if(data) _rtWs.send(JSON.stringify({type:'audio', data: data, mime:'audio/pcm;rate=24000'}));
+}
+
+async function rtBeginMic(){
+  if(_rtStreaming) return;
+  await rtEnsureSocket();
+  _rtStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  _rtAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if(_rtAudioCtx.state === 'suspended'){ try { await _rtAudioCtx.resume(); } catch(_){} }
+  _rtSource = _rtAudioCtx.createMediaStreamSource(_rtStream);
+  _rtNode = _rtAudioCtx.createScriptProcessor(4096, 1, 1);
+  _rtSink = _rtAudioCtx.createGain(); _rtSink.gain.value = 0;   // silent sink, no feedback
+  _rtNode.onaudioprocess = (e) => { rtSendPcm(e.inputBuffer.getChannelData(0), _rtAudioCtx.sampleRate); };
+  _rtSource.connect(_rtNode); _rtNode.connect(_rtSink); _rtSink.connect(_rtAudioCtx.destination);
+  _rtStreaming = true;
+  const mic = document.getElementById('mic'); if(mic) mic.classList.add('recording');
+}
+function rtStopAudioGraph(){
+  _rtStreaming = false;
+  try { if(_rtNode){ _rtNode.onaudioprocess = null; _rtNode.disconnect(); } } catch(_){}
+  try { if(_rtSource) _rtSource.disconnect(); } catch(_){}
+  try { if(_rtSink) _rtSink.disconnect(); } catch(_){}
+  try { if(_rtStream) _rtStream.getTracks().forEach(t => t.stop()); } catch(_){}
+  try { if(_rtAudioCtx) _rtAudioCtx.close(); } catch(_){}
+  _rtNode = _rtSource = _rtSink = _rtStream = _rtAudioCtx = null;
+  const mic = document.getElementById('mic'); if(mic) mic.classList.remove('recording');
+}
+async function rtEndMic(){
+  if(!_rtStreaming) return;
+  rtStopAudioGraph();
+  if(rtSocketReady()){ setBusy(true); _rtPendingTyping = appendTyping(); rtArmTurn(); _rtWs.send(JSON.stringify({type:'commit'})); }
+}
+function rtTeardown(){
+  rtStopAudioGraph();
+  if(_rtWs){ try { _rtWs.send(JSON.stringify({type:'stop'})); } catch(_){} try { _rtWs.close(); } catch(_){} }
+  _rtWs = null; _rtReady = false; _rtTurn = null; rtResolveAwait();
+}
+window.addEventListener('beforeunload', rtTeardown);
+/* Test hook: stream synthetic PCM through the real encode->send path (no mic). */
+window.__praxisVoice = {
+  ensureSocket: rtEnsureSocket,
+  sendPcm: (arr, rate) => rtSendPcm(Float32Array.from(arr), rate || 24000),
+  commit: () => { if(rtSocketReady()){ setBusy(true); _rtPendingTyping = appendTyping(); rtArmTurn(); _rtWs.send(JSON.stringify({type:'commit'})); return _rtAwait; } },
+  sendText: rtSendText,
+  status: () => ({ open: !!(_rtWs && _rtWs.readyState===1), ready: _rtReady, streaming: _rtStreaming })
+};
 
 async function sendMessage(ev){
   ev.preventDefault();
@@ -1026,7 +1152,7 @@ async function sendMessage(ev){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
-      await realtimeTurn(conv, {text}, typing);
+      await rtSendText(text, typing);
     } else if(mode === 'chat'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
@@ -1152,13 +1278,20 @@ async function loadVoice(){
 async function setVoiceMode(mode){
   const v = await api('/api/voice', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode})});
   if(v.error){ showToast('Voice: '+v.error); return; }
-  voiceMode = v.mode || 'off'; showToast('Voice → '+voiceMode); loadVoice();
+  voiceMode = v.mode || 'off';
+  if(voiceMode !== 'realtime') rtTeardown();
+  showToast('Voice → '+voiceMode); loadVoice();
 }
 function updateMicVisibility(){
   const mic = document.getElementById('mic'); if(!mic) return;
   mic.hidden = (voiceMode === 'off') || !(navigator.mediaDevices && window.MediaRecorder);
 }
 async function toggleMic(){
+  if(voiceMode === 'realtime'){
+    try { if(_rtStreaming){ await rtEndMic(); } else { await rtBeginMic(); } }
+    catch(e){ rtStopAudioGraph(); showToast('Mic error: '+e); }
+    return;
+  }
   if(_recording){ stopMic(); return; }
   if(!(navigator.mediaDevices && window.MediaRecorder)){ showToast('Mic not supported here'); return; }
   try {
@@ -1169,7 +1302,7 @@ async function toggleMic(){
       stream.getTracks().forEach(t => t.stop());
       document.getElementById('mic').classList.remove('recording');
       const blob = new Blob(_chunks, {type: _recorder.mimeType || 'audio/webm'});
-      if(voiceMode === 'realtime'){ await micRealtime(blob); } else { await transcribeBlob(blob); }
+      await transcribeBlob(blob);
     };
     _recorder.start(); _recording = true;
     document.getElementById('mic').classList.add('recording');
@@ -1185,22 +1318,6 @@ async function transcribeBlob(blob){
     if(res.text){ ta.value = (ta.value ? ta.value + ' ' : '') + res.text; autoGrow(ta); ta.focus(); }
     if((res.detail||'').includes('offline')) showToast('STT offline preview — set agents.voice.stt for real transcription');
   } catch(e){ showToast('Transcribe failed: '+e); }
-}
-async function micRealtime(blob){
-  showToast('Transcribing…');
-  let text = '';
-  try {
-    const resp = await fetch('/api/transcribe', {method:'POST', headers:{'Content-Type': blob.type || 'audio/webm'}, body: blob});
-    const res = await resp.json().catch(()=>({}));
-    text = res.text || '';
-  } catch(e){ showToast('Transcribe failed: '+e); return; }
-  if(!text){ showToast('No speech detected'); return; }
-  appendUser(text);
-  const conv = ensureConversation();
-  conv.messages.push({role:'user', content:text, ts: Date.now()});
-  conv.updated = Date.now(); persistConversations(); renderHistList();
-  const typing = appendTyping(); setBusy(true);
-  try { await realtimeTurn(conv, {text}, typing); } finally { setBusy(false); }
 }
 async function speak(text){
   if(voiceMode === 'off' || !text) return;

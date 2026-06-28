@@ -385,12 +385,12 @@ the broker are unchanged either way.
   call). Degrades to an honest offline preview (metadata STT + a silent WAV) when
   no STT/TTS provider is configured.
 - **realtime** — a **live governed session over a (hand-rolled, dependency-free)
-  WebSocket** at `/api/voice/realtime`. Each turn runs the same governed agent
+  WebSocket** at `/api/voice/realtime`. The browser **streams microphone audio as
+  PCM16** over a persistent session; each commit runs the same governed agent
   loop, so consequential tools are still **held for approval**, and the reply is
-  spoken back. Enable it with a configured `agents.voice.realtime` model or
-  `PRAXIS_VOICE_REALTIME=1` (offline governed loopback). The loopback is the
-  upstream today; an OpenAI Realtime audio-streaming bridge can replace the
-  per-turn responder behind the same protocol with no client change.
+  spoken back. Enable it with a configured `agents.voice.realtime` model (the
+  OpenAI Realtime upstream) or `PRAXIS_VOICE_REALTIME=1` (offline governed
+  loopback) — the browser protocol is identical for both.
 
 When `agents.voice.realtime` is configured with a provider/model and key, the
 daemon connects to the **OpenAI Realtime API** over a hand-rolled WebSocket
@@ -398,8 +398,8 @@ client and bridges it: user turns go up, transcript/text/audio come down, and
 **every model function call is routed through the broker** (read/draft execute,
 send/destructive are held) before the governed result is returned to the model.
 PCM16 audio is wrapped to WAV so the browser plays it with the same path as
-turn-based. Continuous microphone PCM streaming is the remaining production
-finish; text-in with spoken audio-out works today.
+turn-based. The microphone is captured as mono 24 kHz PCM16 (the OpenAI Realtime
+input format) and streamed live; push-to-talk commits each turn.
 
 ```json
 "agents": {

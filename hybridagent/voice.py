@@ -9,11 +9,14 @@ so the governed agent loop and the broker are unchanged regardless of mode.
 * **turn**     — implemented now: speech-to-text via the multimodal transcribe
   seam, text-to-speech via an OpenAI-compatible ``/audio/speech`` call, with an
   offline silent-WAV fallback so it degrades honestly without keys.
-* **realtime** — registered but reports *unavailable* until a WebSocket/WebRTC
-  bridge is wired, so the selector can advertise it without it being pickable.
+* **realtime** — a live governed session over a hand-rolled WebSocket. The
+  browser streams microphone audio as PCM16 to a bridge: the OpenAI Realtime API
+  when a realtime model + key are configured, otherwise an offline governed
+  loopback. Both speak the same browser-facing event protocol.
 
 Everything degrades safely: with nothing configured, ``turn`` still runs in an
-offline "preview" mode and ``realtime`` stays disabled.
+offline "preview" mode and ``realtime`` is available once a realtime model is set
+or ``PRAXIS_VOICE_REALTIME=1`` enables the loopback.
 """
 from __future__ import annotations
 
@@ -341,6 +344,12 @@ class RealtimeBridge:
             return ""
         if not raw:
             return ""
+        base = (mime or "").split(";")[0].strip().lower()
+        if base in ("audio/pcm", "audio/l16", "audio/x-pcm"):
+            # The browser streams raw little-endian PCM16; wrap it in a WAV
+            # container so the STT seam (and any real provider) can decode it.
+            raw = _pcm16_to_wav(raw, _rate_from_mime(mime))
+            mime = "audio/wav"
         return transcribe_audio(raw, mime).text
 
     def _respond(self) -> None:
@@ -378,6 +387,18 @@ def _pcm16_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
         w.setframerate(rate)
         w.writeframes(pcm)
     return buf.getvalue()
+
+
+def _rate_from_mime(mime: str, default: int = 24000) -> int:
+    """Parse a sample rate from a mime like 'audio/pcm;rate=24000'."""
+    for part in (mime or "").split(";")[1:]:
+        part = part.strip()
+        if part.startswith("rate="):
+            try:
+                return int(part[5:])
+            except ValueError:
+                return default
+    return default
 
 
 class OpenAIRealtimeUpstream:
@@ -440,7 +461,10 @@ class OpenAIRealtimeUpstream:
             return
         self._up_send({"type": "session.update", "session": {
             "instructions": self.system, "tools": self._oai_tools(),
-            "modalities": ["text", "audio"], "output_audio_format": "pcm16"}})
+            "modalities": ["text", "audio"],
+            "input_audio_format": "pcm16", "output_audio_format": "pcm16",
+            "input_audio_transcription": {"model": "whisper-1"},
+            "turn_detection": None}})  # push-to-talk: client commits explicitly
         self._down({"type": "ready", "mode": "openai"})
         up_thread = threading.Thread(target=self._pump_upstream, daemon=True)
         up_thread.start()
@@ -457,6 +481,7 @@ class OpenAIRealtimeUpstream:
 
     def _pump_browser(self) -> None:
         from .wsutil import OP_CLOSE, OP_PING
+        pending_audio = False  # only commit the input buffer when audio was sent
         while True:
             frame = self.conn.recv()
             if frame is None:
@@ -480,7 +505,14 @@ class OpenAIRealtimeUpstream:
             elif etype == "audio":
                 self._up_send({"type": "input_audio_buffer.append",
                                "audio": ev.get("data", "")})
+                pending_audio = True
             elif etype == "commit":
+                # Server VAD is off (push-to-talk), so finalize the audio buffer
+                # ourselves before requesting a response. Committing an empty
+                # buffer is an upstream error, so only do it when audio was sent.
+                if pending_audio:
+                    self._up_send({"type": "input_audio_buffer.commit"})
+                    pending_audio = False
                 self._up_send({"type": "response.create"})
             elif etype == "stop":
                 break
@@ -530,6 +562,8 @@ class OpenAIRealtimeUpstream:
             audio.clear()
         elif etype == "response.function_call_arguments.done":
             self._handle_function_call(ev)
+        elif etype == "conversation.item.input_audio_transcription.completed":
+            self._down({"type": "transcript", "text": ev.get("transcript", "")})
         elif etype == "response.done":
             self._down({"type": "done"})
         elif etype == "error":
