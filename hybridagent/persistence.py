@@ -200,6 +200,26 @@ CREATE TABLE IF NOT EXISTS eval_baseline (
     report_json TEXT NOT NULL,
     ts          REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS runs (
+    run_id      TEXT PRIMARY KEY,
+    goal        TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL DEFAULT 'plan',
+    status      TEXT NOT NULL DEFAULT 'running',
+    started_ts  REAL NOT NULL,
+    ended_ts    REAL,
+    event_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS run_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id    TEXT NOT NULL,
+    seq       INTEGER NOT NULL,
+    ts        REAL NOT NULL,
+    kind      TEXT NOT NULL,
+    node_id   TEXT NOT NULL DEFAULT '',
+    label     TEXT NOT NULL DEFAULT '',
+    data_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
 """
 
 
@@ -903,3 +923,79 @@ class Store:
             return json.loads(row["report_json"])
         except ValueError:
             return None
+
+    # ------------------------------------------------------------- run traces
+    def start_run(self, run_id: str, goal: str = "", kind: str = "plan") -> None:
+        """Open a durable, replayable run trace (idempotent on ``run_id``)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO runs(run_id,goal,kind,status,started_ts,event_count) "
+                "VALUES (?,?,?,?,?,0) ON CONFLICT(run_id) DO NOTHING",
+                (run_id, goal, kind, "running", time.time()),
+            )
+            self._conn.commit()
+
+    def add_run_event(self, run_id: str, kind: str, data: dict | None = None,
+                      node_id: str = "", label: str = "") -> int:
+        """Append one event to a run trace; returns its per-run sequence number.
+
+        The trace is durable and replayable — unlike an ephemeral in-memory
+        activity feed, ``list_run_events`` can reconstruct the run after the fact.
+        """
+        payload = json.dumps(data or {}, default=str)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(seq),0)+1 AS n FROM run_events WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            seq = int(row["n"])
+            self._conn.execute(
+                "INSERT INTO run_events(run_id,seq,ts,kind,node_id,label,data_json) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (run_id, seq, time.time(), kind, node_id, label, payload),
+            )
+            self._conn.execute(
+                "UPDATE runs SET event_count=event_count+1 WHERE run_id=?", (run_id,),
+            )
+            self._conn.commit()
+        return seq
+
+    def finish_run(self, run_id: str, status: str = "completed") -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE runs SET status=?, ended_ts=? WHERE run_id=?",
+                (status, time.time(), run_id),
+            )
+            self._conn.commit()
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT run_id,goal,kind,status,started_ts,ended_ts,event_count "
+                "FROM runs ORDER BY started_ts DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_run(self, run_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT run_id,goal,kind,status,started_ts,ended_ts,event_count "
+                "FROM runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_run_events(self, run_id: str, limit: int = 2000) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq,ts,kind,node_id,label,data_json FROM run_events "
+                "WHERE run_id=? ORDER BY seq ASC LIMIT ?", (run_id, limit),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["data"] = json.loads(d.pop("data_json") or "{}")
+            except ValueError:
+                d["data"] = {}
+            out.append(d)
+        return out

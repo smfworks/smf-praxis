@@ -9,6 +9,7 @@ capabilities and tools (with risk classes) for discovery.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from .plan_execute import PlanExecutor
@@ -23,8 +24,14 @@ class AgentService:
     def __init__(self, agent: Any) -> None:
         self.agent = agent
 
-    def run(self, goal: str, *, max_replans: int = 1) -> dict:
-        """Plan and execute ``goal`` under governance; return a JSON-able result."""
+    def run(self, goal: str, *, max_replans: int = 1,
+            on_event: "Callable[[str, dict], None] | None" = None) -> dict:
+        """Plan and execute ``goal`` under governance; return a JSON-able result.
+
+        ``on_event(kind, data)`` is invoked for each plan/step event as it happens,
+        letting a caller (e.g. the daemon) persist a durable run trace and push
+        live updates to the dashboard.
+        """
         goal = (goal or "").strip()
         if not goal:
             return {"goal": "", "status": "failed", "summary": "no goal provided",
@@ -34,6 +41,7 @@ class AgentService:
         report = PlanExecutor(
             self.agent.registry, self.agent.broker,
             store=getattr(self.agent, "store", None),
+            on_event=on_event,
             max_replans=max_replans).execute(goal)
         return {
             "goal": report.goal,

@@ -100,7 +100,8 @@ class PlanExecutor:
     def __init__(self, registry: ToolRegistry, broker: GovernanceBroker, *,
                  planner: Planner | None = None, replan: ReplanFn | None = None,
                  max_replans: int = 1, actor: str = "planner",
-                 store: Any = None) -> None:
+                 store: Any = None,
+                 on_event: "Callable[[str, dict], None] | None" = None) -> None:
         self.registry = registry
         self.broker = broker
         self.planner = planner or Planner(registry)
@@ -108,6 +109,7 @@ class PlanExecutor:
         self.max_replans = max(0, max_replans)
         self.actor = actor
         self.store = store
+        self.on_event = on_event
 
     def execute(self, goal: str,
                 steps: "list[PlanStep] | None" = None) -> ExecutionReport:
@@ -116,7 +118,11 @@ class PlanExecutor:
         report = ExecutionReport(goal=goal, steps=list(steps))
         cycle_id = f"plan-{uuid.uuid4().hex[:10]}"
         self._emit(report, "plan",
-                   {"goal": goal, "steps": [[s.id, s.tool] for s in report.steps]},
+                   {"goal": goal,
+                    "steps": [[s.id, s.tool] for s in report.steps],
+                    "nodes": [{"id": s.id, "tool": s.tool, "intent": s.intent,
+                               "depends_on": list(s.depends_on)}
+                              for s in report.steps]},
                    cycle_id)
 
         done: set[str] = set()
@@ -279,4 +285,9 @@ class PlanExecutor:
             try:
                 self.store.add_compliance_event(cycle_id, f"plan_{etype}", data)
             except Exception:
+                pass
+        if self.on_event is not None:
+            try:
+                self.on_event(etype, data)
+            except Exception:  # UI/trace plumbing must never break execution
                 pass

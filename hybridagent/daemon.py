@@ -22,6 +22,7 @@ import signal
 import socket
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -380,6 +381,8 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 #toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(2rem); background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: .6rem 1rem; border-radius: .7rem; box-shadow: var(--shadow); font-size: .85rem; opacity: 0; transition: all .25s ease; pointer-events: none; z-index: 50; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
+<link rel="stylesheet" href="/web/run-graph.css" />
+<script src="/web/run-graph.js" defer></script>
 </head>
 <body>
 <header>
@@ -451,6 +454,10 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
     <div class="panel pad">
       <h2>Queue</h2>
       <div id="tasks"><div class="empty">No tasks yet.</div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Run Graph</h2>
+      <div id="runlist"><div class="empty">No runs yet.</div></div>
     </div>
     <div class="panel pad">
       <h2>Approvals</h2>
@@ -1323,6 +1330,18 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 body = json.dumps(self.daemon.agent_card(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/traces":
+                body = json.dumps(self.daemon.list_runs_trace(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path.startswith("/api/traces/"):
+                rid = self.path[len("/api/traces/"):].split("?", 1)[0]
+                body = json.dumps(self.daemon.get_run_trace(rid), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path.startswith("/web/"):
+                self._serve_static(self.path[len("/web/"):])
+                return
             elif self.path == "/events":
                 self._serve_sse()
                 return
@@ -1338,6 +1357,27 @@ class _StatusHandler(BaseHTTPRequestHandler):
             self.send_response(500)
         self.end_headers()
         self.wfile.write(body)
+
+    def _serve_static(self, rel: str) -> None:
+        """Serve a static asset from the package ``web/`` bundle (modular shell)."""
+        rel = rel.split("?", 1)[0]
+        base = Path(__file__).resolve().parent / "web"
+        target = (base / rel).resolve()
+        if base not in target.parents or not target.is_file():
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"not found")
+            return
+        ctype = {".js": "text/javascript", ".css": "text/css",
+                 ".html": "text/html", ".svg": "image/svg+xml",
+                 ".json": "application/json"}.get(
+                     target.suffix, "application/octet-stream")
+        data = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _serve_sse(self) -> None:
         self.send_response(200)
@@ -1855,11 +1895,53 @@ class Daemon:
         return task.task_id
 
     def agent_run(self, goal: str, max_replans: int = 1) -> dict:
-        """A2A: plan + execute a goal under governance, returning a JSON result."""
+        """A2A: plan + execute a goal under governance, returning a JSON result.
+
+        Records a durable, replayable run trace and pushes live ``run`` events to
+        the dashboard SSE bus so the Run Graph can render the governed loop live.
+        """
         self._ensure_agent()
         assert self.agent is not None
         from .agent_service import AgentService
-        return AgentService(self.agent).run(goal, max_replans=max_replans)
+        run_id = f"run-{uuid.uuid4().hex[:10]}"
+        store = self.store
+        if store is not None:
+            try:
+                store.start_run(run_id, goal, kind="plan")
+            except Exception:
+                pass
+
+        def on_event(kind: str, data: dict) -> None:
+            if store is not None:
+                try:
+                    store.add_run_event(run_id, kind, data,
+                                        node_id=str(data.get("id", "")))
+                except Exception:
+                    pass
+            self.emit_event("run", {"run_id": run_id, "kind": kind, "data": data})
+
+        result = AgentService(self.agent).run(
+            goal, max_replans=max_replans, on_event=on_event)
+        if store is not None:
+            try:
+                store.finish_run(run_id, str(result.get("status", "")))
+            except Exception:
+                pass
+        result["run_id"] = run_id
+        return result
+
+    def list_runs_trace(self, limit: int = 50) -> dict:
+        """Recent run traces for the dashboard Run Graph (durable + replayable)."""
+        if self.store is None:
+            return {"runs": []}
+        return {"runs": self.store.list_runs(limit=limit)}
+
+    def get_run_trace(self, run_id: str) -> dict:
+        """Full event timeline for one run, for DAG rendering and replay."""
+        if self.store is None:
+            return {"run": None, "events": []}
+        return {"run": self.store.get_run(run_id),
+                "events": self.store.list_run_events(run_id)}
 
     def agent_card(self) -> dict:
         """A2A: advertise this agent's capabilities and tools for discovery."""
