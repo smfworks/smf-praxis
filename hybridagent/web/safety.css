@@ -1,0 +1,71 @@
+/* Praxis Safety Center — live approval queue (approve/deny), kill-switch, and a
+   redacted audit-trail viewer with egress/taint flags. Modular shell asset. */
+
+#safety-mount { display: flex; flex-direction: column; gap: .55rem; }
+.sf-ks {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: .55rem; padding: .45rem .55rem;
+}
+.sf-ks.on { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad) inset; }
+.sf-ks-label { font-size: .8rem; color: var(--text); }
+.sf-ks.on .sf-ks-label { color: var(--bad); font-weight: 600; }
+.sf-ks-btn {
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .45rem; padding: .3rem .55rem; cursor: pointer; font: inherit; font-size: .76rem;
+}
+.sf-ks.on .sf-ks-btn { color: var(--bad); border-color: var(--bad); }
+.sf-ks-btn:hover { border-color: var(--bad); color: var(--bad); }
+.sf-pending { font-size: .76rem; color: var(--muted); }
+.sf-open {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; font: inherit; font-size: .8rem;
+}
+.sf-open:hover { border-color: var(--accent); }
+
+.sf-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.sf-overlay.show { display: flex; }
+.sf-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(900px, 96vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.sf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .8rem; }
+.sf-head b { font-size: 1.05rem; }
+.sf-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.sf-close:hover { color: var(--text); border-color: var(--accent); }
+.sf-section { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: .9rem 0 .45rem; }
+
+.sf-ksbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: var(--bg); border: 1px solid var(--border); border-radius: .6rem; padding: .55rem .7rem;
+}
+.sf-ksbar.on { border-color: var(--bad); }
+.sf-ksbar .desc { font-size: .78rem; color: var(--muted); }
+.sf-ksbar.on .desc { color: var(--bad); }
+
+.sf-appr { display: flex; flex-direction: column; gap: .45rem; }
+.sf-arow {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: .55rem; padding: .5rem .6rem;
+}
+.sf-arow .tool { font-size: .84rem; color: var(--text); }
+.sf-arow .prev { font-size: .72rem; color: var(--faint); margin: .2rem 0 .45rem; word-break: break-word; }
+.sf-arow .acts { display: flex; gap: .4rem; }
+.sf-arow .acts button { border-radius: .45rem; padding: .25rem .7rem; font-size: .74rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg); }
+.sf-arow .ok { color: var(--ok); border-color: var(--ok); }
+.sf-arow .no { color: var(--bad); border-color: var(--bad); }
+
+.sf-audit { display: flex; flex-direction: column; gap: .15rem; }
+.sf-erow { display: flex; align-items: baseline; gap: .5rem; font-size: .74rem; padding: .28rem .35rem; border-bottom: 1px solid var(--border); }
+.sf-erow .v { min-width: 4rem; font-family: ui-monospace, Consolas, monospace; }
+.sf-erow .v.ok { color: var(--ok); }
+.sf-erow .v.bad { color: var(--bad); }
+.sf-erow .v.warn { color: var(--warn); }
+.sf-erow .tool { color: var(--text); min-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-erow .flag { font-size: .64rem; color: var(--bad); background: rgba(255, 90, 95, .12); border: 1px solid var(--bad); border-radius: 1rem; padding: 0 .4rem; }
+.sf-erow .flag.auto { color: var(--ok); background: rgba(60, 207, 109, .1); border-color: var(--ok); }
+.sf-erow .ts { color: var(--faint); margin-left: auto; white-space: nowrap; }

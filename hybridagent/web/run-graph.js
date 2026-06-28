@@ -261,6 +261,8 @@
     loadRuns();
     connect();
     setInterval(loadRuns, 6000);
+    // Let other modules (e.g. the Work Board) open a run's DAG.
+    window.PraxisRunGraph = { openRun: openRun, refresh: loadRuns };
   }
 
   if (document.readyState === "loading") {

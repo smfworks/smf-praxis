@@ -382,7 +382,11 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 <link rel="stylesheet" href="/web/run-graph.css" />
+<link rel="stylesheet" href="/web/board.css" />
+<link rel="stylesheet" href="/web/safety.css" />
 <script src="/web/run-graph.js" defer></script>
+<script src="/web/board.js" defer></script>
+<script src="/web/safety.js" defer></script>
 </head>
 <body>
 <header>
@@ -458,6 +462,14 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
     <div class="panel pad">
       <h2>Run Graph</h2>
       <div id="runlist"><div class="empty">No runs yet.</div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Work Board</h2>
+      <div id="board-mount"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Safety Center</h2>
+      <div id="safety-mount"><div class="empty">Loading…</div></div>
     </div>
     <div class="panel pad">
       <h2>Approvals</h2>
@@ -1228,6 +1240,42 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 approved = self.daemon.approve(approval_id)
                 self._json_response({"approved": bool(approved), "approval_id": approval_id})
                 return
+            if self.path == "/api/deny":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                aid = payload.get("approval_id", "")
+                self._json_response({"denied": self.daemon.deny_approval(aid),
+                                     "approval_id": aid})
+                return
+            if self.path == "/api/killswitch":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.killswitch_set(
+                    bool(payload.get("engaged", False))))
+                return
+            if self.path == "/api/board/create":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.board_create(
+                    payload.get("title", ""), payload.get("goal", "")))
+                return
+            if self.path == "/api/board/move":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.board_move(
+                    payload.get("card_id", ""), payload.get("lane", "")))
+                return
+            if self.path == "/api/board/run":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.board_run(payload.get("card_id", "")))
+                return
+            if self.path == "/api/board/delete":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.board_delete(
+                    payload.get("card_id", "")))
+                return
             if self.path == "/api/chat/agent":
                 self._handle_chat_agent()
                 return
@@ -1337,6 +1385,19 @@ class _StatusHandler(BaseHTTPRequestHandler):
             elif self.path.startswith("/api/traces/"):
                 rid = self.path[len("/api/traces/"):].split("?", 1)[0]
                 body = json.dumps(self.daemon.get_run_trace(rid), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/board":
+                body = json.dumps(self.daemon.board_list(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/audit":
+                body = json.dumps(self.daemon.audit_log(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/killswitch":
+                body = json.dumps(self.daemon.killswitch_status(),
+                                  default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path.startswith("/web/"):
@@ -1942,6 +2003,90 @@ class Daemon:
             return {"run": None, "events": []}
         return {"run": self.store.get_run(run_id),
                 "events": self.store.list_run_events(run_id)}
+
+    # ------------------------------------------------------------- work board
+    _BOARD_LANES = ("backlog", "planned", "running", "held", "done", "failed")
+
+    def board_list(self) -> dict:
+        """Cards + lane vocabulary for the governed Work Board."""
+        if self.store is None:
+            return {"cards": [], "lanes": list(self._BOARD_LANES)}
+        return {"cards": self.store.list_cards(), "lanes": list(self._BOARD_LANES)}
+
+    def board_create(self, title: str, goal: str = "") -> dict:
+        self._ensure_agent()
+        assert self.store is not None
+        title = (title or goal or "").strip()
+        goal = (goal or title).strip()
+        if not goal:
+            return {"error": "title/goal required"}
+        card_id = f"card-{uuid.uuid4().hex[:10]}"
+        self.store.add_card(card_id, title, goal, lane="backlog")
+        return {"card": self.store.get_card(card_id)}
+
+    def board_move(self, card_id: str, lane: str) -> dict:
+        if self.store is None:
+            return {"error": "no store"}
+        if lane not in self._BOARD_LANES:
+            return {"error": f"invalid lane '{lane}'"}
+        if self.store.get_card(card_id) is None:
+            return {"error": "card not found"}
+        self.store.move_card(card_id, lane)
+        return {"card": self.store.get_card(card_id)}
+
+    def board_run(self, card_id: str) -> dict:
+        """Execute a card's goal under governance and reflect the verdict back onto
+        the card's lane (done / held / failed) — the kanban *is* the workflow."""
+        self._ensure_agent()
+        assert self.store is not None
+        card = self.store.get_card(card_id)
+        if card is None:
+            return {"error": "card not found"}
+        self.store.move_card(card_id, "running")
+        result = self.agent_run(card["goal"])
+        lane = {"completed": "done", "partial": "done", "needs_approval": "held",
+                "failed": "failed"}.get(str(result.get("status", "")), "done")
+        self.store.set_card_run(card_id, str(result.get("run_id", "")),
+                                str(result.get("status", "")), lane)
+        return {"card": self.store.get_card(card_id), "result": result}
+
+    def board_delete(self, card_id: str) -> dict:
+        if self.store is None:
+            return {"error": "no store"}
+        self.store.delete_card(card_id)
+        return {"deleted": card_id}
+
+    # ----------------------------------------------------------- safety center
+    def deny_approval(self, approval_id: str) -> bool:
+        """Reject a held consequential action (it is never executed)."""
+        self._ensure_agent()
+        assert self.agent is not None
+        self.agent.broker.reject(approval_id)
+        return True
+
+    def killswitch_status(self) -> dict:
+        self._ensure_agent()
+        assert self.agent is not None
+        return {"engaged": bool(self.agent.broker.kill.tripped)}
+
+    def killswitch_set(self, engaged: bool) -> dict:
+        """Engage/release the broker kill-switch; engaged denies all consequential
+        actions until released."""
+        self._ensure_agent()
+        assert self.agent is not None
+        if engaged:
+            self.agent.broker.kill.trip()
+        else:
+            self.agent.broker.kill.reset()
+        self._log("warning" if engaged else "info",
+                  f"kill-switch {'engaged' if engaged else 'released'} via dashboard")
+        return {"engaged": bool(self.agent.broker.kill.tripped)}
+
+    def audit_log(self, limit: int = 100) -> dict:
+        """Recent governed decisions for the audit viewer (secrets pre-redacted)."""
+        if self.store is None:
+            return {"entries": []}
+        return {"entries": self.store.list_audit(limit=limit)}
 
     def agent_card(self) -> dict:
         """A2A: advertise this agent's capabilities and tools for discovery."""

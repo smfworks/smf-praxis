@@ -1,0 +1,73 @@
+/* Praxis Work Board — governed kanban whose lanes are the loop states and whose
+   "Run" actually executes the card's goal under the broker. Modular shell asset. */
+
+#board-mount { display: flex; flex-direction: column; gap: .55rem; }
+.wb-add { display: flex; gap: .4rem; }
+.wb-input {
+  flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); border-radius: .5rem; padding: .4rem .55rem; font: inherit; font-size: .82rem;
+}
+.wb-input:focus { outline: none; border-color: var(--accent); }
+.wb-addbtn {
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+  border: none; border-radius: .5rem; padding: .4rem .7rem; cursor: pointer; font: inherit; font-size: .82rem;
+}
+.wb-summary { display: flex; flex-wrap: wrap; gap: .3rem; }
+.wb-chip {
+  font-size: .68rem; color: var(--muted); background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 1rem; padding: .12rem .5rem;
+}
+.wb-chip.wb-running { color: var(--accent); }
+.wb-chip.wb-held { color: var(--warn); }
+.wb-chip.wb-done { color: var(--ok); }
+.wb-chip.wb-failed { color: var(--bad); }
+.wb-open {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; font: inherit; font-size: .8rem;
+}
+.wb-open:hover { border-color: var(--accent); }
+
+.wb-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.wb-overlay.show { display: flex; }
+.wb-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(1180px, 97vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.wb-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .8rem; }
+.wb-head b { font-size: 1.05rem; }
+.wb-sub { color: var(--faint); font-size: .74rem; margin-left: .5rem; }
+.wb-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.wb-close:hover { color: var(--text); border-color: var(--accent); }
+
+.wb-lanes { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: .6rem; }
+.wb-lane { background: var(--bg); border: 1px solid var(--border); border-radius: .7rem; padding: .5rem; min-height: 8rem; }
+.wb-lane.wb-over { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(91, 141, 239, .25) inset; }
+.wb-lane-head { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: .5rem; }
+.wb-lane-body { display: flex; flex-direction: column; gap: .45rem; }
+
+.wb-card {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: .55rem;
+  padding: .5rem .55rem; cursor: grab;
+}
+.wb-card:active { cursor: grabbing; }
+.wb-card-title { font-size: .82rem; color: var(--text); margin-bottom: .35rem; word-break: break-word; }
+.wb-card-meta { display: flex; align-items: center; gap: .35rem; font-size: .68rem; color: var(--faint); margin-bottom: .4rem; }
+.wb-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
+.wb-dot.ok { background: var(--ok); }
+.wb-dot.bad { background: var(--bad); }
+.wb-dot.warn { background: var(--warn); }
+.wb-dot.info { background: var(--accent); }
+.wb-card-actions { display: flex; gap: .3rem; flex-wrap: wrap; }
+.wb-card-actions button {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .4rem; padding: .2rem .45rem; font-size: .7rem; cursor: pointer;
+}
+.wb-card-actions .wb-run:hover { color: var(--ok); border-color: var(--ok); }
+.wb-card-actions .wb-graph:hover { color: var(--accent); border-color: var(--accent); }
+.wb-card-actions .wb-del:hover { color: var(--bad); border-color: var(--bad); }

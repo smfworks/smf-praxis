@@ -20,7 +20,7 @@
 
 .rg-overlay {
   position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
-  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.5rem;
+  display: none; align-items: center; justify-content: center; z-index: 70; padding: 1.5rem;
 }
 .rg-overlay.show { display: flex; }
 .rg-box {

@@ -220,6 +220,16 @@ CREATE TABLE IF NOT EXISTS run_events (
     data_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
+CREATE TABLE IF NOT EXISTS board_cards (
+    card_id    TEXT PRIMARY KEY,
+    title      TEXT NOT NULL DEFAULT '',
+    goal       TEXT NOT NULL DEFAULT '',
+    lane       TEXT NOT NULL DEFAULT 'backlog',
+    run_id     TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL DEFAULT '',
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL
+);
 """
 
 
@@ -999,3 +1009,65 @@ class Store:
                 d["data"] = {}
             out.append(d)
         return out
+
+    # ------------------------------------------------------------- audit list
+    def list_audit(self, limit: int = 100) -> list[dict]:
+        """Recent governed decisions, newest first — powers the audit viewer."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id,ts,actor,tool,risk,verdict,detail,policy_rule,"
+                "approval_id,cycle_id FROM audit_entries ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------- work board
+    def add_card(self, card_id: str, title: str, goal: str,
+                 lane: str = "backlog") -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO board_cards(card_id,title,goal,lane,run_id,status,"
+                "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?)",
+                (card_id, title, goal, lane, "", "", now, now),
+            )
+            self._conn.commit()
+
+    def list_cards(self, limit: int = 200) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT card_id,title,goal,lane,run_id,status,created_ts,updated_ts "
+                "FROM board_cards ORDER BY created_ts ASC LIMIT ?", (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_card(self, card_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT card_id,title,goal,lane,run_id,status,created_ts,updated_ts "
+                "FROM board_cards WHERE card_id=?", (card_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def move_card(self, card_id: str, lane: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE board_cards SET lane=?, updated_ts=? WHERE card_id=?",
+                (lane, time.time(), card_id),
+            )
+            self._conn.commit()
+
+    def set_card_run(self, card_id: str, run_id: str, status: str,
+                     lane: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE board_cards SET run_id=?, status=?, lane=?, updated_ts=? "
+                "WHERE card_id=?", (run_id, status, lane, time.time(), card_id),
+            )
+            self._conn.commit()
+
+    def delete_card(self, card_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM board_cards WHERE card_id=?", (card_id,))
+            self._conn.commit()
