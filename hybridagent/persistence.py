@@ -1142,12 +1142,18 @@ class Store:
             self._conn.commit()
         return self.get_budget(name)
 
-    def add_spend(self, amount: float, name: str = "default") -> dict:
+    def add_spend(self, amount: float, name: str = "default", *,
+                  count_run: bool = True) -> dict:
         self.get_budget(name)
         with self._lock:
-            self._conn.execute(
-                "UPDATE budget SET spent_usd=spent_usd+?, runs=runs+1 WHERE name=?",
-                (max(0.0, float(amount)), name))
+            if count_run:
+                self._conn.execute(
+                    "UPDATE budget SET spent_usd=spent_usd+?, runs=runs+1 "
+                    "WHERE name=?", (max(0.0, float(amount)), name))
+            else:
+                self._conn.execute(
+                    "UPDATE budget SET spent_usd=spent_usd+? WHERE name=?",
+                    (max(0.0, float(amount)), name))
             self._conn.commit()
         return self.get_budget(name)
 

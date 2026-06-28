@@ -2412,6 +2412,23 @@ class Daemon:
         assert self.agent is not None
         return self.agent.ask(question, k=k, refresh_wiki=False)
 
+    def _bill_chat(self) -> None:
+        """Accrue an interactive chat's real token cost to the spend budget.
+
+        Like agent_run, but chat is user-driven, so it only *accrues* spend — it
+        does not increment the autonomous-run counter or block on the cap.
+        """
+        if self.store is None or self.agent is None:
+            return
+        if not hasattr(self.agent.llm, "usage_snapshot"):
+            return
+        try:
+            cost = float(self.agent.llm.usage_snapshot().get("cost_usd", 0.0))
+            if cost > 0:
+                self.store.add_spend(round(cost, 6), count_run=False)
+        except Exception:
+            pass
+
     def chat(self, messages: list[dict], system: str | None = None) -> dict:
         """Hold a multi-turn conversation with the configured model.
 
@@ -2421,8 +2438,11 @@ class Daemon:
         """
         self._ensure_agent()
         assert self.agent is not None
+        if hasattr(self.agent.llm, "reset_usage"):
+            self.agent.llm.reset_usage()
         text = self.agent.llm.chat(messages, system=system or _CHAT_SYSTEM,
                                    role="general")
+        self._bill_chat()
         return {"text": text, "model": cfg.get_default_model() or "mock (offline)"}
 
     def chat_stream(self, messages: list[dict],
@@ -2435,8 +2455,11 @@ class Daemon:
         """
         self._ensure_agent()
         assert self.agent is not None
+        if hasattr(self.agent.llm, "reset_usage"):
+            self.agent.llm.reset_usage()
         yield from self.agent.llm.chat_stream(
             messages, system=system or _CHAT_SYSTEM, role="general")
+        self._bill_chat()
 
     def chat_agent(self, messages: list[dict],
                    system: str | None = None) -> Iterator[dict]:

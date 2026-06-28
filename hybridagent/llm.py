@@ -394,10 +394,11 @@ class LLMClient:
                 f"Missing API key for '{provider_id}'. Set {provider.key_env} or "
                 f"re-run 'praxis onboard' and paste the key."
             )
+        usage: dict = {}
         yield from chat_messages_stream(
             provider=provider, model=model, messages=messages, system=system,
-            api_key=api_key, base_url=entry.get("baseUrl"),
-        )
+            api_key=api_key, base_url=entry.get("baseUrl"), usage_sink=usage)
+        self._account(model_ref, usage)
 
     # ------------------------------------------------------- chat (tool-calling)
     def _tools_messages(self, messages: list[dict], tools: list[dict],

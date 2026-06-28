@@ -365,23 +365,28 @@ def _chat_messages_anthropic(root: str, model: str, messages: list[dict],
 def chat_messages_stream(provider: Provider, model: str, messages: list[dict],
                          system: str | None = None, api_key: str | None = None,
                          base_url: str | None = None, timeout: float = 60.0,
-                         temperature: float = 0.3,
-                         max_tokens: int = 1024) -> Iterator[str]:
+                         temperature: float = 0.3, max_tokens: int = 1024,
+                         usage_sink: dict | None = None) -> Iterator[str]:
     """Yield assistant text deltas from a streaming chat completion.
 
     Mirrors :func:`chat_messages` but requests ``stream: true`` and yields
     incremental text pieces as they arrive. Connection/HTTP failures raise
     ``RuntimeError`` *before the first token*, so a caller can fall back to
     another candidate model; a failure mid-stream propagates (the caller has
-    already emitted partial output and must not silently switch models).
+    already emitted partial output and must not silently switch models). When
+    ``usage_sink`` is provided it is populated with the response's token usage
+    once the stream reports it (OpenAI ``stream_options.include_usage``; Anthropic
+    message events).
     """
     root = (base_url or provider.base_url).rstrip("/")
     if provider.compatibility == "anthropic":
         yield from _chat_messages_stream_anthropic(
-            root, model, messages, system, api_key, timeout, temperature, max_tokens)
+            root, model, messages, system, api_key, timeout, temperature,
+            max_tokens, usage_sink)
     else:
         yield from _chat_messages_stream_openai(
-            root, model, messages, system, api_key, timeout, temperature, max_tokens)
+            root, model, messages, system, api_key, timeout, temperature,
+            max_tokens, usage_sink)
 
 
 def _open_stream(url: str, headers: dict, payload: dict,
@@ -422,7 +427,8 @@ def _iter_sse_data(lines: Iterator[str]) -> Iterator[str]:
 def _chat_messages_stream_openai(root: str, model: str, messages: list[dict],
                                  system: str | None, api_key: str | None,
                                  timeout: float, temperature: float,
-                                 max_tokens: int) -> Iterator[str]:
+                                 max_tokens: int,
+                                 usage_sink: dict | None = None) -> Iterator[str]:
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -430,14 +436,21 @@ def _chat_messages_stream_openai(root: str, model: str, messages: list[dict],
     if system:
         wire.append({"role": "system", "content": system})
     wire.extend(_normalize_turns(messages))
-    payload = {"model": model, "messages": wire, "temperature": temperature,
-               "max_tokens": max_tokens, "stream": True}
+    payload: dict = {"model": model, "messages": wire, "temperature": temperature,
+                     "max_tokens": max_tokens, "stream": True}
+    if usage_sink is not None:
+        payload["stream_options"] = {"include_usage": True}
     stream = _open_stream(f"{root}/chat/completions", headers, payload, timeout)
     for data in _iter_sse_data(stream):
         try:
             obj = json.loads(data)
+        except ValueError:
+            continue
+        if usage_sink is not None and isinstance(obj, dict) and obj.get("usage"):
+            usage_sink.update(_usage_of(obj))
+        try:
             piece = obj["choices"][0].get("delta", {}).get("content")
-        except (KeyError, IndexError, ValueError, TypeError):
+        except (KeyError, IndexError, TypeError):
             continue
         if piece:
             yield piece
@@ -446,7 +459,8 @@ def _chat_messages_stream_openai(root: str, model: str, messages: list[dict],
 def _chat_messages_stream_anthropic(root: str, model: str, messages: list[dict],
                                     system: str | None, api_key: str | None,
                                     timeout: float, temperature: float,
-                                    max_tokens: int) -> Iterator[str]:
+                                    max_tokens: int,
+                                    usage_sink: dict | None = None) -> Iterator[str]:
     headers = {"Content-Type": "application/json",
                "anthropic-version": "2023-06-01"}
     if api_key:
@@ -471,6 +485,15 @@ def _chat_messages_stream_anthropic(root: str, model: str, messages: list[dict],
             obj = json.loads(data)
         except ValueError:
             continue
+        if usage_sink is not None and isinstance(obj, dict):
+            if obj.get("type") == "message_start":
+                u = ((obj.get("message") or {}).get("usage")) or {}
+                if u.get("input_tokens") is not None:
+                    usage_sink["prompt_tokens"] = int(u.get("input_tokens") or 0)
+            elif obj.get("type") == "message_delta":
+                u = obj.get("usage") or {}
+                if u.get("output_tokens") is not None:
+                    usage_sink["completion_tokens"] = int(u.get("output_tokens") or 0)
         if isinstance(obj, dict) and obj.get("type") == "content_block_delta":
             piece = (obj.get("delta") or {}).get("text")
             if piece:
