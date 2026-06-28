@@ -15,6 +15,7 @@ from hybridagent.broker import RiskClass
 from hybridagent.daemon import (
     Daemon,
     DaemonState,
+    _DASHBOARD_HTML,
     _find_port,
     _parse_multipart_stream,
     _read_state,
@@ -30,6 +31,17 @@ from hybridagent.tools import Tool, ToolRegistry
 @pytest.fixture
 def tmp_store(tmp_path):
     return Store.open(tmp_path / "praxis.db")
+
+
+def test_dashboard_a11y_polish_markers():
+    html = _DASHBOARD_HTML
+    # Toast announces to screen readers; reduced-motion stills decorative anims.
+    assert 'id="toast" role="status" aria-live="polite"' in html
+    rm = html.split("prefers-reduced-motion: reduce")[1].split("}")[0]
+    for sel in (".skel span", ".msg", ".mic-btn.recording", ".pill.conn-reconnecting .dot"):
+        assert sel in rm
+    # First-run CTA + focus-trap remain wired.
+    assert 'id="firstRunCta"' in html and "Focus-trap" in html
 
 
 @pytest.fixture

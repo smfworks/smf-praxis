@@ -383,7 +383,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 .skel span:nth-child(2) { width: 78%; }
 .skel span:nth-child(3) { width: 56%; }
 @keyframes pxshim { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
-@media (prefers-reduced-motion: reduce) { .skel span { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .skel span, .msg, .step, .typing .d, .mic-btn.recording, .pill.conn-reconnecting .dot { animation: none; } }
 /* First-run call-to-action when running the offline mock model. */
 .cta { margin-top: .5rem; padding: .5rem .6rem; font-size: .76rem; line-height: 1.4; color: var(--text); background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: .5rem; }
 .cta code { background: var(--bg); padding: .05rem .3rem; border-radius: .3rem; font-size: .9em; }
@@ -708,7 +708,7 @@ document.addEventListener("keydown", function (e) {
     </div>
   </aside>
 </main>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 let mode = 'chat';
