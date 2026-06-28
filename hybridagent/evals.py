@@ -738,9 +738,33 @@ BUILTIN_EVALS: list[EvalCase] = [
 
 
 def run_evals(category: str | None = None,
-              cases: list[EvalCase] | None = None) -> EvalReport:
-    """Run the eval suite (optionally filtered by category) and aggregate."""
+              cases: list[EvalCase] | None = None,
+              timeout: float | None = None) -> EvalReport:
+    """Run the eval suite (optionally filtered by category) and aggregate.
+
+    ``timeout`` bounds each case in seconds; a case that exceeds it is recorded as a
+    failure rather than hanging the whole suite — defense in depth so a slow or
+    wedged case can never stall the run.
+    """
     selected = cases if cases is not None else BUILTIN_EVALS
     if category:
         selected = [c for c in selected if c.category == category]
-    return EvalReport([c.evaluate() for c in selected])
+    return EvalReport([_evaluate_bounded(c, timeout) for c in selected])
+
+
+def _evaluate_bounded(case: EvalCase, timeout: float | None) -> EvalResult:
+    if not timeout or timeout <= 0:
+        return case.evaluate()
+    import threading
+    box: dict[str, EvalResult] = {}
+
+    def _go() -> None:
+        box["r"] = case.evaluate()
+
+    t = threading.Thread(target=_go, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return EvalResult(case.id, case.category, False,
+                          f"timed out after {timeout:.0f}s")
+    return box.get("r") or EvalResult(case.id, case.category, False, "no result")

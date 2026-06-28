@@ -520,6 +520,7 @@ def cmd_health(_args: argparse.Namespace) -> int:
 
 def cmd_eval(args: argparse.Namespace) -> int:
     import json
+    import os
 
     from .evals import run_evals
 
@@ -540,7 +541,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
             print(f"#{r['id']:<4} {when}  {r['passes']}/{r['total']}")
         return 0
 
-    report = run_evals(category=args.category)
+    if not getattr(args, "real", False):
+        # The eval suite is deterministic + offline by design; force the mock
+        # backends so a configured-but-unreachable provider can't make it hang.
+        os.environ["PRAXIS_LLM"] = "mock"
+        os.environ["PRAXIS_EMBED"] = "mock"
+        os.environ["PRAXIS_MM"] = "mock"
+    report = run_evals(category=args.category,
+                       timeout=getattr(args, "timeout", 20.0))
     data = report.to_dict()
 
     if getattr(args, "json", None) is not None:
@@ -948,6 +956,12 @@ def build_parser() -> argparse.ArgumentParser:
                      help="compare to the baseline; exit 2 on any regression")
     pev.add_argument("--history", type=int, nargs="?", const=10, default=0,
                      metavar="N", help="show the last N saved runs and exit")
+    pev.add_argument("--real", action="store_true",
+                     help="evaluate against the configured provider instead of the "
+                          "deterministic offline mock (may be slow / need a network)")
+    pev.add_argument("--timeout", type=float, default=20.0, metavar="SECS",
+                     help="per-case timeout (0 disables); a case that exceeds it is "
+                          "failed rather than hanging the suite")
     pev.set_defaults(func=cmd_eval)
 
     pmp = sub.add_parser("memory-purge",
@@ -1017,7 +1031,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _maybe_first_run_onboard(command: str) -> None:
     """Offer onboarding on first use when nothing is configured (TTY only)."""
-    if command in ("onboard", "demo", "tui", "m365", "mcp", "daemon",
+    if command in ("onboard", "demo", "eval", "tui", "m365", "mcp", "daemon",
                    "approvals", "approve", "ingest", "recall", "describe", "route", "ask",
                    "learn", "skills", "skill", "compliance",
                    "skill-record", "skill-evaluate",
