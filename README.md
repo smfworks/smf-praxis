@@ -363,6 +363,21 @@ A minimal `pack.json`:
 the CLI, knowledge/skills/model/theme wiring, eval packs, and a step-by-step
 recipe for humans and AI agents to extend Praxis to a new domain.
 
+## Notifications
+
+Praxis doesn't stall, but it can also tell *you* when something needs eyes. Set
+`agents.notify` in praxis.json and a task that **completes**, **fails**, or
+**blocks** on a held approval pings an operator sink — a webhook and/or a local
+command. Off by default; offline/CI stay silent.
+
+```json
+{ "agents": { "notify": {
+  "events": ["done", "blocked", "failed"],
+  "url": "https://hooks.example.com/praxis",
+  "command": "notify-send"
+} } }
+```
+
 ## Persistent tasks
 
 Long-running work can be placed into a durable task queue. Tasks track status,

@@ -312,3 +312,14 @@ def set_voice_mode(mode: str) -> Path:
     cfg = load_config()
     cfg.setdefault("agents", {}).setdefault("voice", {})["mode"] = mode
     return save_config(cfg)
+
+
+def get_notify_config() -> dict:
+    """Operator-selected notification settings (agents.notify in praxis.json)."""
+    return load_config().get("agents", {}).get("notify", {}) or {}
+
+
+def set_notify_config(notify: dict) -> Path:
+    cfg = load_config()
+    cfg.setdefault("agents", {})["notify"] = notify
+    return save_config(cfg)
