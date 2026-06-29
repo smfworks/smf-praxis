@@ -45,6 +45,8 @@ suite and both install scripts on all three platforms.
 
 ### One command (install + configure)
 
+> 🚀 **New here? [`docs/QUICKSTART.md`](docs/QUICKSTART.md)** — nothing to a governed task in 5 minutes.
+
 The bootstrap script finds Python, creates a `.venv`, installs Praxis, and runs
 the onboarding wizard — from scratch or inside a clone.
 
