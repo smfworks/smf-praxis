@@ -147,6 +147,7 @@ class TaskManager:
                 "task_id": task_id, "status": status,
                 "pending_approvals": len(report.pending_approvals),
             }, ref_id=task_id)
+            self._notify(status, task_id, report.summary())
         except Exception as exc:
             failed_terminal = attempts >= task.max_attempts
             status = "failed" if failed_terminal else "retry"
@@ -162,7 +163,20 @@ class TaskManager:
                 "task_id": task_id, "attempt": attempts,
                 "status": status, "error": str(exc),
             }, ref_id=task_id)
+            if failed_terminal:
+                self._notify(status, task_id, str(exc))
         return self._require(task_id)
+
+    @staticmethod
+    def _notify(status: str, task_id: str, detail: str) -> None:
+        """Best-effort operator ping when a task crosses a notable status."""
+        try:
+            from .notify import notify_task, status_event
+            event = status_event(status)
+            if event:
+                notify_task(event, task_id, detail)
+        except Exception:
+            pass
 
     @staticmethod
     def _format_plan(plan) -> str:
