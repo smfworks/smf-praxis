@@ -108,6 +108,10 @@ and config. It binds `0.0.0.0` inside the container, mapped to host loopback onl
 environment; with none set it runs offline on the mock LLM. A devcontainer
 (`.devcontainer/`) is included for VS Code.
 
+**Local vs shared/network:** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers single-user
+local, Docker, and team/LAN access — host binding, data dir, ports, and the reverse-proxy
++ auth caveats you need before exposing the dashboard.
+
 ### Updating
 
 ```bash
