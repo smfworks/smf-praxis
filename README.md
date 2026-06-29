@@ -1,5 +1,7 @@
 # Praxis — Autonomous AI Colleague
 
+> ⚠️ **Attention!** — *Please note, Praxis is in early preview and testing. Edges may be a little rough. We welcome your feedback and suggestions.*
+
 A single autonomous agent that is **proactive yet safe**: it senses work, plans,
 runs reads and drafts on its own, and holds consequential actions for approval —
 backed by persistent multi-tier memory, editorial judgment, self-improvement, and
