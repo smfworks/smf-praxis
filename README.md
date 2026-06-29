@@ -459,7 +459,7 @@ in parallel while every decision, approval, and compliance event still flows
 through the same governance spine.
 
 ```bash
-praxis fanout "research AdventHealth" "draft the follow-up" "audit the contract"
+praxis fanout "research HospitalX" "draft the follow-up" "audit the contract"
 ```
 
 ## Grounded, non-hallucinating answers
