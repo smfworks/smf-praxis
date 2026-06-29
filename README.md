@@ -7,6 +7,8 @@ a **governance broker**.
 
 > **Principle:** autonomy for preparation, approval for consequence.
 
+![Praxis](docs/hero.jpg)
+
 ![The Praxis Command Deck — a chat-first colleague with a live run graph, work board, governance approvals, inference and spend control, and observability panels.](docs/command-deck.png)
 
 > The **Command Deck**: chat-first on the left; on the right a live **run graph**,
