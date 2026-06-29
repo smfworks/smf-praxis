@@ -1,4 +1,4 @@
-"""HTTP client for the OpenClaw M365 Access Broker (stdlib only).
+"""HTTP client for the M365 Access Broker (stdlib only).
 
 The broker is a separate local control plane (Node service on 127.0.0.1:8787)
 that gates every Microsoft Graph call. Praxis talks to it over its loopback

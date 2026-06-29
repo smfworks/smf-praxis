@@ -1,6 +1,6 @@
 # Connecting Praxis to Microsoft 365
 
-Praxis acts on your calendar, mail, and files **only through the OpenClaw M365
+Praxis acts on your calendar, mail, and files **only through the M365 Access
 Access Broker** — a separate local control plane that gates every Microsoft
 Graph call (auth, least-privilege scopes, tool allowlist, approval gates,
 injection firewall, redacted hash-chained audit log).

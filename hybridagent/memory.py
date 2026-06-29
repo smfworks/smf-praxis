@@ -1,12 +1,12 @@
-"""Hermes-style multi-tier memory with provenance and summarize-not-hoard.
+"""Multi-tier memory with provenance and summarize-not-hoard.
 
-Three layers (per the Hermes integration guide):
+Three layers:
     working   - current task state, in-process only, cleared each cycle
     episodic  - summaries of interactions/outcomes with provenance
     durable   - stable facts / preferences / decisions / learned skills
 
 Consolidation distills working+episodic into durable memory and discards raw
-working state, eliminating OpenClaw's "memory hoarding" failure mode. Full
+working state, eliminating the "memory hoarding" failure mode. Full
 private bodies are never stored durably — only concise summaries + provenance.
 """
 from __future__ import annotations

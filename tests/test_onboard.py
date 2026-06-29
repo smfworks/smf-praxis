@@ -8,7 +8,7 @@ def _isolate_home(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
 
 
-def test_noninteractive_onboard_writes_openclaw_shape(tmp_path, monkeypatch):
+def test_noninteractive_onboard_writes_config_shape(tmp_path, monkeypatch):
     _isolate_home(tmp_path, monkeypatch)
     summary = onboard.run_noninteractive("openrouter", "openai/gpt-4o-mini")
     assert summary["model"] == "openrouter/openai/gpt-4o-mini"

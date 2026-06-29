@@ -1,4 +1,4 @@
-"""Interactive provider/model onboarding wizard (mirrors `openclaw onboard`).
+"""Interactive provider/model onboarding wizard.
 
 Flow: existing-config detection (Keep/Modify/Reset) -> pick provider -> pick
 model -> choose key storage (env reference by default, or paste now) -> write

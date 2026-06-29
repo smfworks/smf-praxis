@@ -7,7 +7,7 @@ Modes (env ``PRAXIS_LLM``):
     real            - always use the configured provider (errors if unconfigured)
 
 Run ``praxis onboard`` to pick a provider (Ollama / OpenRouter / GitHub / OpenAI
-/ Anthropic / custom) and model; config is stored OpenClaw-style under
+/ Anthropic / custom) and model; config is stored under
 ``~/.praxis/``.
 """
 from __future__ import annotations

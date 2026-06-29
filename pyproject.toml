@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "praxis-agent"
 dynamic = ["version"]
-description = "Hybrid OpenClaw + Hermes autonomous AI colleague (proactive + governed)"
+description = "Praxis — proactive, governed autonomous AI colleague"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

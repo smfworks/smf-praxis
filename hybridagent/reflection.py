@@ -1,4 +1,4 @@
-"""Reflection — Hermes-style self-improvement + consolidation.
+"""Self-improvement + consolidation.
 
 After a cycle, distills working/episodic memory into durable facts and reusable
 skills with provenance, then clears working memory (summarize-not-hoard). This
