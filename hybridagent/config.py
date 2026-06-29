@@ -1,4 +1,4 @@
-"""Config + credential storage, mirroring OpenClaw's layout.
+"""Config + credential storage.
 
 Files (under ``~/.praxis/`` by default; override with ``PRAXIS_HOME``):
     praxis.json            -> { "agents": { "defaults": { "model": "provider/model" } },
@@ -221,7 +221,7 @@ def key_location(provider_id: str) -> str:
 def write_provider(provider_id: str, base_url: str, compatibility: str,
                    model_ref: str, key_env: str | None,
                    use_env_ref: bool = True) -> Path:
-    """Persist provider + default model in OpenClaw-style config shape."""
+    """Persist provider + default model in the standard config shape."""
     cfg = load_config()
     cfg.setdefault("agents", {}).setdefault("defaults", {})["model"] = model_ref
     providers = cfg.setdefault("providers", {})

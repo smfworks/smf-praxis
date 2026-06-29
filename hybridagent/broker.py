@@ -1,7 +1,7 @@
 """Governance broker — the control plane both source guides converge on.
 
-Eliminates OpenClaw's "permissionless local autonomy" and "prompt-injection"
-weaknesses, and supplies the broker Hermes assumes:
+Eliminates permissionless local autonomy and prompt-injection
+weaknesses, and supplies the broker the action loop assumes:
 
 * tool allowlist + least privilege
 * risk classification: read/draft are autonomous; send/destructive need approval

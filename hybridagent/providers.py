@@ -1,6 +1,6 @@
 """Provider catalog + OpenAI/Anthropic/Ollama-compatible calls (stdlib only).
 
-Mirrors OpenClaw's provider model: a default model is stored as a
+Mirrors a standard provider model: a default model is stored as a
 ``provider/model-id`` reference and each provider has a base URL, a wire
 "compatibility" (openai|anthropic), and an API-key environment variable.
 
@@ -37,7 +37,7 @@ class Provider:
     notes: str = ""
 
 
-# Provider IDs mirror OpenClaw conventions; OpenRouter + GitHub Models added
+# Provider IDs follow common conventions; OpenRouter + GitHub Models added
 # because Michael asked for them (both OpenAI-compatible).
 CATALOG: dict[str, Provider] = {
     "ollama": Provider(

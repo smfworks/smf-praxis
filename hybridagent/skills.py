@@ -1,6 +1,6 @@
 """Skills library — persistent, retrievable, reusable procedures.
 
-A Hermes-grade skills layer: each skill is a named, triggerable procedure stored
+A durable skills layer: each skill is a named, triggerable procedure stored
 as a ``SKILL.md`` file (YAML-ish frontmatter + markdown body) under
 ``~/.praxis/skills/<slug>/``, and indexed in the vector store (namespace
 ``skills``) so the *relevant* skills can be retrieved for a goal and folded into

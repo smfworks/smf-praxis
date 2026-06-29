@@ -1,13 +1,13 @@
-"""PraxisAgent — the hybrid autonomous colleague.
+"""PraxisAgent — the autonomous colleague.
 
-Fuses OpenClaw's proactive action loop with Hermes' memory/judgment behind a
+A proactive action loop with persistent memory/judgment behind a
 governance broker:
 
-    perceive  (OpenClaw proactivity, injection-screened)
+    perceive  (proactive, injection-screened)
       -> plan (decompose into tool-bound steps)
       -> govern (broker: autonomous vs. approval-required)
       -> act/draft (execute reads/drafts; hold sends for approval)
-      -> reflect (Hermes self-improvement)
+      -> reflect (self-improvement)
       -> consolidate (summarize-not-hoard into durable memory + skills)
 """
 from __future__ import annotations
@@ -330,7 +330,7 @@ class PraxisAgent:
     # ---------------------------------------------------- proactive trigger
     def heartbeat(self, watch_goal: str = "scan for urgent follow-ups",
                   refresh_wiki: bool = True) -> CycleReport:
-        """OpenClaw-style always-on tick: proactively refresh KB sources due
+        """Always-on tick: proactively refresh KB sources due
         for revalidation, then run a watch goal. Setting refresh_wiki=False
         skips the refresh (useful in tests)."""
         if refresh_wiki and self.store is not None:

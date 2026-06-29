@@ -1,8 +1,8 @@
-"""Praxis — a hybrid autonomous AI colleague.
+"""Praxis — an autonomous AI colleague.
 
-Combines OpenClaw's proactive, local-first action ecosystem with Hermes'
-persistent multi-tier memory, editorial judgment, and self-improvement — fused
-behind a governance broker so the result is proactive AND safe.
+Proactive, local-first action plus persistent multi-tier memory, editorial
+judgment, and self-improvement — fused behind a governance broker so the result
+is proactive AND safe.
 
 Loop:  perceive -> plan -> govern -> act/draft -> reflect -> consolidate
 """

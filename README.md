@@ -1,9 +1,9 @@
-# Praxis — Hybrid Autonomous AI Colleague
+# Praxis — Autonomous AI Colleague
 
-A single autonomous agent that fuses **OpenClaw's** proactive, local-first
-action ecosystem with **Hermes'** persistent multi-tier memory, editorial
-judgment, and self-improvement — behind a **governance broker** so it is
-proactive *and* safe.
+A single autonomous agent that is **proactive yet safe**: it senses work, plans,
+runs reads and drafts on its own, and holds consequential actions for approval —
+backed by persistent multi-tier memory, editorial judgment, self-improvement, and
+a **governance broker**.
 
 > **Principle:** autonomy for preparation, approval for consequence.
 
@@ -14,9 +14,7 @@ proactive *and* safe.
 > consequential actions for approval, **inference + spend** control, and full
 > **observability** — all updating over a single live event stream.
 
-See **[FRAMEWORK.md](FRAMEWORK.md)** for the full strengths/weaknesses analysis
-of OpenClaw and Hermes and the design rationale, and
-**[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability map.
+See **[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability map.
 
 ## The loop
 
@@ -150,12 +148,12 @@ praxis onboard
 ```
 
 The wizard walks you through:
-1. **Existing-config detection** — Keep / Modify / Reset (like `openclaw onboard`).
+1. **Existing-config detection** — Keep / Modify / Reset.
 2. **Pick a provider** — Ollama · OpenAI · Anthropic · Google Gemini · xAI (Grok) · Mistral · Groq · DeepSeek · Perplexity · Together AI · Fireworks AI · OpenRouter · GitHub Models · Vercel AI Gateway · Custom (OpenAI-compatible).
 3. **Pick a model** — suggestions per provider (Ollama models are auto-discovered from the local host), or enter one manually.
 4. **Key storage** — environment-variable reference (recommended; nothing secret on disk) or paste-now (stored in `~/.praxis/auth-profiles.json`, gitignored).
 
-Config is written OpenClaw-style to `~/.praxis/praxis.json` (override the dir
+Config is written to `~/.praxis/praxis.json` (override the dir
 with `PRAXIS_HOME`):
 
 ```json
@@ -418,7 +416,7 @@ used facts.
 
 ## Skills library (`/learn`)
 
-Praxis builds a curated, reusable skills library — Hermes-style. `praxis learn`
+Praxis builds a curated, reusable skills library. `praxis learn`
 (or `/learn` in the TUI) distills a goal into a named, triggerable **skill**
 (`SKILL.md` with frontmatter + steps) and indexes it for semantic retrieval.
 Because saving a skill changes future behavior, it's a **governed** act: Praxis
@@ -637,7 +635,7 @@ from another process.
 
 ## Microsoft 365 (via the broker)
 
-Praxis acts on your calendar/mail/files **only through the OpenClaw M365 Access
+Praxis acts on your calendar/mail/files **only through the M365 Access
 Broker** — a separate local control plane that enforces auth, least-privilege
 scopes, an allowlist, approval gates, an injection firewall, and a hash-chained
 audit log. It works against **any tenant you control, including your personal

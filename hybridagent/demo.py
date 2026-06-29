@@ -15,7 +15,7 @@ from .tools import RiskClass, Tool
 def main() -> None:
     agent = PraxisAgent()
 
-    # Seed a durable preference (Hermes memory with provenance).
+    # Seed a durable preference (memory with provenance).
     agent.learn(
         "Michael prefers drafts for customer follow-ups, not direct sends.",
         kind="preference", provenance="setup",

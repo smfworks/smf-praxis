@@ -1,8 +1,8 @@
-"""Perception — OpenClaw-style proactive sensing.
+"""Perception — proactive sensing.
 
 Gathers context signals (calendar, mail, files, prior memory) before planning,
 and screens each signal for prompt-injection so retrieved content stays *data*,
-never instruction. This is the "always-on, proactive" strength of OpenClaw,
+never instruction. This is the always-on, proactive sensing layer,
 made safe by the broker's injection boundary.
 """
 from __future__ import annotations

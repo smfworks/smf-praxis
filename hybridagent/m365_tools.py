@@ -1,4 +1,4 @@
-"""Wire Praxis to the OpenClaw M365 Access Broker.
+"""Wire Praxis to the M365 Access Broker.
 
 Maps the broker's catalog to Praxis tools + risk classes so the existing
 governance loop applies end-to-end:
