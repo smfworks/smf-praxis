@@ -190,6 +190,13 @@ class CronScheduler:
     def due(self, now: float | None = None) -> list[dict]:
         return self.store.due_cron_jobs(now)
 
+    def claim(self, now: float | None = None) -> list[dict]:
+        """Atomically claim due jobs (clears their next_run_ts) so a rapid second
+        tick can't double-run them. Caller MUST reschedule each claimed job."""
+        if hasattr(self.store, "claim_due_cron_jobs"):
+            return self.store.claim_due_cron_jobs(now)
+        return self.store.due_cron_jobs(now)
+
     def reschedule(self, job_id: str, status: str, output: str = "") -> None:
         job = self.store.get_cron_job(job_id)
         if job is None:
