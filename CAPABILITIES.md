@@ -147,24 +147,46 @@ The capability layer on top of the spine.
   via an agent card (`agent_service.py`).
 - **Governed browser / computer‑use** — navigate/read (autonomous) vs click/type
   (consequential) (`browser.py`, optional `browser` extra).
-- **Web, files, and Microsoft 365** — fetch_url, search_web, read/write file,
-  list_dir, calendar/mail (`real_tools.py`, `m365_tools.py`, `wiki_safe.py`).
+- **Web, files, and Microsoft 365** — fetch_url, search_web, query_knowledge,
+  read/write file, list_dir, calendar/mail (`real_tools.py`, `m365_tools.py`,
+  `wiki_safe.py`). **Web search works out of the box** with a keyless DuckDuckGo
+  default; Tavily/Brave/SerpAPI are optional upgrades.
+
+## Out of the box
+
+A fresh install is usable immediately — no hidden configuration:
+
+- **First-run bootstrap** (`bootstrap.py`) enables memory + skill recall and
+  seeds a starter knowledge namespace, so grounded `ask` returns cited content
+  on the very first query.
+- **Readiness checklist** — `praxis doctor` and the dashboard banner
+  (`/api/readiness`, `readiness.py`) report model / memory / web research /
+  knowledge base / embedder / skills at a glance, replacing silent failures.
+- **Knowledge panel** — register RAG repositories (folder, file, or URL) in
+  named namespaces, see indexed-chunk counts, re-index, or remove them
+  (`/api/sources`, `web/knowledge.js`). Retrieval spans **every** repository.
+- **Research mode** — a first-class dashboard mode that searches the web, reads
+  results, and answers with citations (`/api/research`).
+- **Keyless web research** and a **keyless local embedder** mean research and
+  hybrid retrieval work with zero API keys.
 
 ## 8. Interfaces & multimodal
 
 - **CLI** — 40+ commands (`praxis ...`): `handle`, `ask`, `plan-run`, `think`,
   `debate`, `fanout`, `router-train`, `recall`, `ingest`, `eval`, `mcp`,
-  `daemon`, and more (`cli.py`).
+  `doctor`, `daemon`, and more (`cli.py`).
 - **Web dashboard + daemon** — long‑running worker with a single‑page dashboard
-  (Chat / Ask / Do / Agent modes), SSE streaming, approvals, and a status API
-  (`daemon.py`). The **Command Deck** surfaces the governed loop as panels over
+  (Chat / Ask / Research / Do / Agent modes), SSE streaming, approvals, and a
+  status API (`daemon.py`). The **Command Deck** surfaces the governed loop as
+  panels over
   one shared SSE stream: **Live Run Graph** (durable, replayable run DAG), governed
   **Work Board** (kanban-that-executes), **Approvals & Safety Center** (queue +
   redacted audit + persistent kill-switch + **compliance-mode selector** with
   timed auto-revert), **Inference Control Center**
   (model/router, enforceable budget, per-run routing + cost), **Observability
   Metrics** (governance decision mix + spend trend & per-model cost), **Memory
-  Studio**, and a `Ctrl/Cmd+K` **command palette** (`hybridagent/web/`). Panel
+  Studio**, a **Knowledge** panel (manage RAG repositories / the LLM wiki), and a
+  `Ctrl/Cmd+K` **command palette** (`hybridagent/web/`). Panel
   overlays are keyboard-accessible (Escape-to-close, dialog roles).
 - **Voice** — turn‑based and **realtime** with **live PCM16 microphone streaming**
   (push‑to‑talk) over a persistent, hand‑rolled, dependency‑free WebSocket; each
