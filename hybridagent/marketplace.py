@@ -54,6 +54,15 @@ def _manifest_path(name: str) -> Path:
     return registry_dir() / f"{name}.json"
 
 
+def _version_tuple(v: str) -> tuple:
+    """Parse a dotted version into a comparable int tuple; non-numeric parts -> 0."""
+    out = []
+    for part in str(v or "0").split("."):
+        digits = "".join(c for c in part if c.isdigit())
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
 def _source_path(name: str) -> Path:
     return registry_dir() / f"{name}.py"
 
@@ -74,6 +83,17 @@ def publish(source_file: str, *, name: str = "", version: str = "0.1.0",
     # a publishable plugin must expose register(registry)
     if "def register(" not in code:
         return {"error": f"'{name}' has no register(registry) function"}
+    # Refuse a version downgrade/re-publish over a newer one (basic integrity:
+    # a published name shouldn't silently regress to an older version).
+    existing = _manifest_path(name)
+    if existing.exists():
+        try:
+            prev = json.loads(existing.read_text()).get("version", "0")
+            if _version_tuple(version) < _version_tuple(prev):
+                return {"error": f"refused to publish '{name}' v{version}: "
+                                 f"older than published v{prev}"}
+        except Exception:  # noqa: BLE001
+            pass
     rd = registry_dir()
     rd.mkdir(parents=True, exist_ok=True)
     _source_path(name).write_text(code, encoding="utf-8")

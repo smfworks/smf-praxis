@@ -58,13 +58,41 @@ def _parse_daily_at(spec: str, now: datetime) -> float | None:
 def _parse_cron5(spec: str, now: datetime) -> float | None:
     """Minimal 5-field cron: minute hour day-of-month month day-of-week.
 
-    Supports '*', exact numbers, and '*/n' steps on minute/hour. Scans forward
-    minute-by-minute up to ~366 days. Returns the next matching epoch second.
+    Supports '*', exact numbers, comma lists, and '*/n' steps. Scans forward
+    minute-by-minute up to ~366 days; returns the next matching epoch second.
+
+    NOTE: when BOTH day-of-month and day-of-week are restricted, this uses AND
+    semantics (both must match), which differs from Vixie cron's OR semantics.
+    AND is the more intuitive reading and a rare combination in practice; a
+    schedule needing OR should be split into two jobs. Out-of-range fields (e.g.
+    minute 60, dow 9) are rejected up front so an unsatisfiable expression fails
+    fast instead of scanning a full year of minutes.
     """
     fields = spec.split()
     if len(fields) != 5:
         return None
     minute, hour, dom, mon, dow = fields
+
+    def _valid(field: str, lo: int, hi: int) -> bool:
+        """Reject a field whose literals fall outside [lo,hi] up front, so an
+        unsatisfiable expression (e.g. minute '60', dow '9') fails fast instead
+        of triggering a futile ~527k-iteration year-long minute scan on every
+        scheduler tick."""
+        if field == "*":
+            return True
+        if field.startswith("*/"):
+            return field[2:].isdigit() and int(field[2:]) > 0
+        for part in field.split(","):
+            if not part.lstrip("-").isdigit():
+                return False
+            if not (lo <= int(part) <= hi):
+                return False
+        return True
+
+    if not (_valid(minute, 0, 59) and _valid(hour, 0, 23)
+            and _valid(dom, 1, 31) and _valid(mon, 1, 12)
+            and _valid(dow, 0, 6)):
+        return None
 
     def _match(field: str, value: int, lo: int, hi: int) -> bool:
         if field == "*":
