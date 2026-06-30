@@ -1,0 +1,64 @@
+/* Praxis Knowledge panel — RAG repositories / LLM wiki source management.
+   Modular shell asset; mirrors the dark theme used by the other panels. */
+
+#knowledge-mount { display: flex; flex-direction: column; gap: .5rem; }
+.kb-summary { display: flex; flex-wrap: wrap; gap: .3rem; }
+.kb-chip { font-size: .68rem; color: var(--muted); background: var(--bg2); border: 1px solid var(--border); border-radius: 1rem; padding: .12rem .5rem; }
+.kb-open {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; font: inherit; font-size: .8rem;
+}
+.kb-open:hover { border-color: var(--accent); }
+
+.kb-overlay {
+  position: fixed; inset: 0; background: rgba(4, 6, 10, .62); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center; z-index: 60; padding: 1.25rem;
+}
+.kb-overlay.show { display: flex; }
+.kb-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 1rem;
+  box-shadow: var(--shadow); width: min(880px, 96vw); max-height: 90vh; overflow: auto; padding: 1rem 1.1rem;
+}
+.kb-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .6rem; }
+.kb-head b { font-size: 1.05rem; }
+.kb-sub { font-size: .72rem; color: var(--faint); }
+.kb-close {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: .5rem; width: 1.9rem; height: 1.9rem; cursor: pointer;
+}
+.kb-close:hover { color: var(--text); border-color: var(--accent); }
+
+.kb-add { display: flex; gap: .4rem; margin-bottom: .4rem; flex-wrap: wrap; }
+.kb-add input {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .45rem; padding: .4rem .5rem; font: inherit; font-size: .8rem;
+}
+.kb-add .kb-uri { flex: 3; min-width: 14rem; }
+.kb-add .kb-ns { flex: 1; min-width: 6rem; }
+.kb-add .kb-title { flex: 2; min-width: 8rem; }
+.kb-add .kb-hrs { width: 6rem; }
+.kb-add .kb-addbtn { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; border-radius: .45rem; padding: .4rem .8rem; cursor: pointer; font-size: .8rem; white-space: nowrap; }
+.kb-add .kb-addbtn:disabled { opacity: .6; cursor: not-allowed; }
+.kb-hint { font-size: .72rem; color: var(--faint); margin-bottom: .8rem; line-height: 1.4; }
+
+.kb-list { display: flex; flex-direction: column; gap: .45rem; }
+.kb-item { border: 1px solid var(--border); border-radius: .6rem; padding: .55rem .65rem; background: var(--bg2); border-left: 3px solid var(--faint); }
+.kb-item.kb-st-refreshed, .kb-item.kb-st-unchanged { border-left-color: var(--ok); }
+.kb-item.kb-st-pending { border-left-color: var(--warn); }
+.kb-item.kb-st-error { border-left-color: var(--bad); }
+.kb-row-top { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.kb-name { font-size: .88rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-actions { display: flex; gap: .3rem; flex: none; }
+.kb-actions button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); border-radius: .4rem; width: 1.7rem; height: 1.7rem; cursor: pointer; font-size: .85rem; line-height: 1; }
+.kb-actions .kb-reindex:hover { color: var(--accent); border-color: var(--accent); }
+.kb-actions .kb-del:hover { color: var(--bad); border-color: var(--bad); }
+.kb-meta { display: flex; flex-wrap: wrap; gap: .5rem; font-size: .68rem; color: var(--faint); margin-top: .35rem; align-items: center; }
+.kb-ns-tag { color: var(--accent); border: 1px solid var(--border); border-radius: 1rem; padding: .02rem .4rem; }
+.kb-type { text-transform: uppercase; letter-spacing: .04em; }
+.kb-ns-size { color: var(--muted); }
+.kb-err { font-size: .72rem; color: var(--bad); margin-top: .3rem; }
+
+.kb-foot { margin-top: .8rem; display: flex; justify-content: flex-end; }
+.kb-refresh-all { background: var(--bg2); border: 1px solid var(--border); color: var(--text); border-radius: .5rem; padding: .4rem .8rem; cursor: pointer; font-size: .8rem; }
+.kb-refresh-all:hover { border-color: var(--accent); }
+[role="dialog"] .kb-item :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

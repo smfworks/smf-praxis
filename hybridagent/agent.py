@@ -371,7 +371,9 @@ class PraxisAgent:
                 self._event("", "ask_wiki_refresh_error", {"error": str(exc)})
         sources: list = []
         if self.rag is not None:
-            sources.extend(self.rag.retrieve(question, k=k))
+            # Search every registered RAG repository (namespace), not just the
+            # default 'kb', so multiple knowledge sources all inform the answer.
+            sources.extend(self.rag.retrieve_all_ns(question, k=k))
         try:
             from . import pack as _pack
             sources.extend(_pack.knowledge_chunks(question, self.store, k=k))

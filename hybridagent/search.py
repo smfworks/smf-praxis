@@ -12,9 +12,11 @@ endpoint for a self-hosted proxy or tests.
 """
 from __future__ import annotations
 
+import html
 import http.client
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -53,6 +55,69 @@ def _http(url: str, headers: dict, data: bytes | None = None,
         url, data=data, headers=headers, method="POST" if data else "GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
+
+
+def _http_text(url: str, headers: dict, timeout: float = 15.0) -> str:
+    """GET ``url`` and return the raw decoded body (for HTML endpoints)."""
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
+# --------------------------------------------------------------- DuckDuckGo
+# Keyless default backend: DuckDuckGo's HTML endpoint needs no API key, so
+# research works out of the box. Parsed with ``re`` (stdlib only).
+_DDG_ENDPOINT = "https://html.duckduckgo.com/html/"
+_DDG_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+_DDG_ANCHOR_RE = re.compile(
+    r'<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL)
+_DDG_SNIPPET_RE = re.compile(
+    r'class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL)
+
+
+def _strip_html(fragment: str) -> str:
+    """Drop tags and unescape entities from an HTML fragment -> plain text."""
+    return html.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
+
+
+def _decode_ddg_url(href: str) -> str:
+    """Recover the real target from DuckDuckGo's ``/l/?uddg=<encoded>`` redirect."""
+    if "uddg=" in href:
+        try:
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+            target = (params.get("uddg") or [""])[0]
+            if target:
+                return target
+        except ValueError:
+            pass
+    if href.startswith("//"):
+        return "https:" + href
+    return href
+
+
+def _run_duckduckgo(query: str, max_results: int) -> list[SearchResult]:
+    """Keyless web search via DuckDuckGo's HTML endpoint. Returns [] on failure."""
+    url = (os.environ.get("PRAXIS_SEARCH_ENDPOINT") or _DDG_ENDPOINT) + "?" + \
+        urllib.parse.urlencode({"q": query})
+    try:
+        body = _http_text(url, {"User-Agent": _DDG_UA})
+        anchors = _DDG_ANCHOR_RE.findall(body)
+        snippets = _DDG_SNIPPET_RE.findall(body)
+        results: list[SearchResult] = []
+        for i, (href, title_html) in enumerate(anchors[:max_results]):
+            snippet = _strip_html(snippets[i]) if i < len(snippets) else ""
+            results.append(SearchResult(
+                _strip_html(title_html), _decode_ddg_url(href), snippet))
+        return results
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        # Mirror _BACKENDS error handling: degrade to empty, never crash.
+        _log.warning("duckduckgo search failed: %s", exc)
+        return []
 
 
 def _parse_tavily(d: dict, n: int) -> list[SearchResult]:
@@ -111,24 +176,39 @@ def configured_provider() -> str | None:
 def web_search(query: str, max_results: int = 5) -> list[SearchResult] | None:
     """Real web search via the configured provider.
 
-    Returns a (possibly empty) result list when a provider *and* key are
-    configured, or ``None`` when nothing is configured — letting the caller fall
-    back to an honest placeholder instead of pretending to search.
+    Precedence:
+
+    1. An explicit provider (``PRAXIS_SEARCH`` / ``agents.search.provider``) with
+       its API key wins — returns a (possibly empty) list.
+    2. Otherwise fall back to the keyless DuckDuckGo HTML endpoint so research
+       works out of the box with zero configuration — returns a (possibly empty)
+       list, *not* ``None``.
+    3. Set ``PRAXIS_SEARCH_DISABLE_DEFAULT=1`` to disable the keyless default and
+       restore the legacy ``None`` contract (honest-placeholder path) when no
+       provider/key is configured.
     """
     query = (query or "").strip()
+    n = max(1, min(int(max_results or 5), 10))
     prov = configured_provider()
-    if prov is None:
-        return None
-    key = os.environ.get(_KEY_ENV[prov]) or ""
-    if not key:
-        return None
+    if prov is not None:
+        key = os.environ.get(_KEY_ENV[prov]) or ""
+        if key:
+            if not query:
+                return []
+            try:
+                return _BACKENDS[prov](query, key, n)
+            except (OSError, http.client.HTTPException, ValueError, KeyError,
+                    TypeError) as exc:
+                # OSError covers URLError/TimeoutError/ConnectionReset; degrade.
+                _log.warning("search provider %s failed: %s", prov, exc)
+                return []
+        # Provider named but no key: fall through to the keyless default below
+        # unless the escape hatch is set.
+
+    if os.environ.get("PRAXIS_SEARCH_DISABLE_DEFAULT") == "1":
+        return None  # legacy contract -> honest placeholder
+
+    # Keyless default: DuckDuckGo HTML endpoint (no API key required).
     if not query:
         return []
-    n = max(1, min(int(max_results or 5), 10))
-    try:
-        return _BACKENDS[prov](query, key, n)
-    except (OSError, http.client.HTTPException, ValueError, KeyError,
-            TypeError) as exc:
-        # OSError covers URLError/TimeoutError/ConnectionReset; degrade, don't crash.
-        _log.warning("search provider %s failed: %s", prov, exc)
-        return []
+    return _run_duckduckgo(query, n)
