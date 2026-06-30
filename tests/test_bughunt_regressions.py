@@ -384,3 +384,21 @@ def test_secret_writers_use_secure_file(tmp_path, monkeypatch):
         from hybridagent.vault import _vault_path
         assert (os.stat(_vault_path()).st_mode & 0o777) == 0o600
         assert (os.stat(_identity_path()).st_mode & 0o777) == 0o600
+
+
+# BUG 11 (daemon): a stalled/oversized Content-Length could wedge a handler
+# thread forever. The status handler must set a socket timeout and clamp reads.
+def test_status_handler_has_socket_timeout():
+    from hybridagent.daemon import _StatusHandler
+    # a bounded socket timeout frees a thread stalled on a lying Content-Length
+    assert isinstance(_StatusHandler.timeout, (int, float))
+    assert _StatusHandler.timeout and _StatusHandler.timeout <= 60
+
+
+def test_status_handler_clamps_body_read():
+    import inspect
+    from hybridagent.daemon import _StatusHandler
+    # the body reader clamps to a max_bytes ceiling rather than trusting the
+    # declared Content-Length unbounded
+    src = inspect.getsource(_StatusHandler._read_body)
+    assert "max_bytes" in src and "min(" in src
