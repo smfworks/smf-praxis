@@ -1558,9 +1558,27 @@ def _parse_multipart_stream(
 
 
 class _StatusHandler(BaseHTTPRequestHandler):
+    # Bound every socket read so a client that sends a large Content-Length but
+    # then stalls (or a slow-loris) can't wedge a ThreadingHTTPServer worker
+    # thread forever — the read raises socket.timeout and the handler's
+    # try/except returns an error response instead of blocking indefinitely.
+    timeout = 30
+
     def __init__(self, daemon: "Daemon", *args, **kwargs) -> None:
         self.daemon = daemon
         super().__init__(*args, **kwargs)
+
+    def _read_body(self, max_bytes: int = 16 * 1024 * 1024) -> bytes:
+        """Read the request body, clamped to ``max_bytes``, so an inflated
+        Content-Length can't drive an unbounded allocation. Reads exactly the
+        declared length (clamped); the socket timeout guards a stalled sender."""
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
+            return b""
+        return self.rfile.read(min(length, max_bytes))
 
     def do_POST(self) -> None:
         try:
