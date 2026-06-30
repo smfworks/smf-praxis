@@ -117,6 +117,15 @@ def _run_docker(command: list[str], workdir: str, timeout: float,
     memory + pids caps, non-root user.
     """
     abs_workdir = os.path.abspath(workdir)
+    # Run as the HOST's uid:gid (not a hardcoded 1000) so the bind-mounted /work
+    # is writable regardless of the host account — hardcoding 1000:1000 broke any
+    # host where the user isn't uid 1000 (root in CI, uid!=1000, rootless Docker,
+    # macOS), making every sandboxed write fail. getuid is POSIX-only; fall back
+    # to the documented 1000 where it's unavailable (e.g. Windows daemon host).
+    try:
+        uidgid = f"{os.getuid()}:{os.getgid()}"  # type: ignore[attr-defined]
+    except AttributeError:
+        uidgid = "1000:1000"
     docker_cmd = [
         "docker", "run", "--rm", "-i",
         "--network", network,
@@ -124,7 +133,7 @@ def _run_docker(command: list[str], workdir: str, timeout: float,
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--read-only", "--tmpfs", "/tmp",
         "-v", f"{abs_workdir}:/work:rw", "-w", "/work",
-        "--user", "1000:1000",
+        "--user", uidgid,
     ]
     for k, v in (env or {}).items():
         docker_cmd += ["-e", f"{k}={v}"]
