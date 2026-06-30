@@ -14,11 +14,13 @@ from .real_tools import (
     call_agent,
     delegate,
     fetch_url,
+    generate_image,
     list_dir,
     query_knowledge,
     read_file,
     search_web,
     send_message,
+    text_to_speech,
     write_file,
 )
 
@@ -239,6 +241,27 @@ _CALL_AGENT_SCHEMA = {
     "additionalProperties": False,
 }
 
+_GEN_IMAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prompt": {"type": "string", "description": "Image description"},
+        "size": {"type": "string",
+                 "description": "WxH, e.g. 1024x1024 (default 1024x1024)"},
+    },
+    "required": ["prompt"],
+    "additionalProperties": False,
+}
+
+_TTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string", "description": "Text to synthesize"},
+        "voice": {"type": "string", "description": "Voice name (default alloy)"},
+    },
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -279,7 +302,20 @@ def default_registry() -> ToolRegistry:
     reg.register(Tool("call_agent", RiskClass.SEND,
                       "Call another A2A agent to handle a goal (held for approval)",
                       call_agent, parameters=_CALL_AGENT_SCHEMA))
+    reg.register(Tool("generate_image", RiskClass.DRAFT,
+                      "Generate an image from a text prompt (local artifact)",
+                      generate_image, parameters=_GEN_IMAGE_SCHEMA))
+    reg.register(Tool("text_to_speech", RiskClass.DRAFT,
+                      "Synthesize speech from text to a local mp3",
+                      text_to_speech, parameters=_TTS_SCHEMA))
     from .browser import browser_tools
     for tool in browser_tools():
         reg.register(tool)
+    # Third-party plugins (enabled only, source-scanned). Failures are isolated
+    # so a bad plugin can't break the core registry.
+    try:
+        from .plugins import load_plugins
+        load_plugins(reg, enabled_only=True)
+    except Exception:  # noqa: BLE001
+        pass
     return reg
