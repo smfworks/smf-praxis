@@ -650,6 +650,46 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if rep["counts"].get("warn", 0) == 0 else 1
 
 
+def cmd_cron(args: argparse.Namespace) -> int:
+    from datetime import datetime
+
+    from .cron import CronScheduler
+    from .persistence import Store
+    sched = CronScheduler(Store.open())
+    action = getattr(args, "cron_action", None) or "list"
+    if action == "add":
+        job = sched.create(args.goal, args.schedule, name=args.name or "",
+                           mode=args.mode, deliver=args.deliver)
+        if "error" in job:
+            print(f"error: {job['error']}")
+            return 1
+        nr = job.get("next_run_ts")
+        when = datetime.fromtimestamp(nr).strftime("%Y-%m-%d %H:%M") if nr else "?"
+        print(f"created {job['job_id']} [{job['mode']}] '{job['schedule']}' "
+              f"-> next {when}; deliver={job['deliver']}")
+        return 0
+    if action == "remove":
+        print("removed" if sched.delete(args.job_id) else "not found")
+        return 0
+    if action in ("pause", "resume"):
+        ok = sched.set_enabled(args.job_id, action == "resume")
+        print(f"{action}d" if ok else "not found")
+        return 0
+    jobs = sched.list()
+    if not jobs:
+        print("no cron jobs (add one: praxis cron add --schedule '0 9 * * *' \"goal\")")
+        return 0
+    for j in jobs:
+        state = "on " if j["enabled"] else "off"
+        nr = j.get("next_run_ts")
+        when = datetime.fromtimestamp(nr).strftime("%m-%d %H:%M") if nr else "-"
+        print(f"{j['job_id']} [{state}] {j['mode']:8} next={when} "
+              f"'{j['schedule']}' runs={j['runs']} :: {j['goal'][:50]}")
+        if j.get("last_status"):
+            print(f"    last: {j['last_status']}  {(j.get('last_output') or '')[:80]}")
+    return 0
+
+
 def cmd_describe(args: argparse.Namespace) -> int:
     from .ingest import extract_text
     from .multimodal import MediaClient
@@ -1100,6 +1140,27 @@ def build_parser() -> argparse.ArgumentParser:
     pdoc = sub.add_parser("doctor",
                           help="first-run readiness checklist (model/memory/search/wiki)")
     pdoc.set_defaults(func=cmd_doctor)
+
+    pcron = sub.add_parser("cron", help="schedule recurring autonomous jobs")
+    cronsub = pcron.add_subparsers(dest="cron_action")
+    pca = cronsub.add_parser("add", help="add a scheduled job")
+    pca.add_argument("goal", help="the goal/prompt to run on schedule")
+    pca.add_argument("--schedule", required=True,
+                     help="e.g. '30m', 'daily@09:00', '0 9 * * *', 'hourly'")
+    pca.add_argument("--name", default="", help="optional human label")
+    pca.add_argument("--mode", default="do",
+                     choices=["do", "ask", "research", "agent"],
+                     help="how to run the goal (default: do = queue a task)")
+    pca.add_argument("--deliver", default="local",
+                     help="where to send results: 'local' or a gateway target")
+    pcr = cronsub.add_parser("remove", help="delete a job")
+    pcr.add_argument("job_id")
+    pcp = cronsub.add_parser("pause", help="pause a job")
+    pcp.add_argument("job_id")
+    pcre = cronsub.add_parser("resume", help="resume a paused job")
+    pcre.add_argument("job_id")
+    cronsub.add_parser("list", help="list cron jobs (default)")
+    pcron.set_defaults(func=cmd_cron)
 
     ptc = sub.add_parser("task-create", help="create a persistent resumable task")
     ptc.add_argument("goal", help="goal text")

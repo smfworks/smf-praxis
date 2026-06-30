@@ -261,6 +261,23 @@ CREATE TABLE IF NOT EXISTS run_routing (
     escalation_reason TEXT NOT NULL DEFAULT '',
     ts                REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cron_jobs (
+    job_id        TEXT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',
+    goal          TEXT NOT NULL,
+    schedule      TEXT NOT NULL,
+    mode          TEXT NOT NULL DEFAULT 'do',
+    deliver       TEXT NOT NULL DEFAULT 'local',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    next_run_ts   REAL,
+    last_run_ts   REAL,
+    last_status   TEXT NOT NULL DEFAULT '',
+    last_output   TEXT NOT NULL DEFAULT '',
+    runs          INTEGER NOT NULL DEFAULT 0,
+    created_ts    REAL NOT NULL,
+    updated_ts    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_cron_enabled ON cron_jobs(enabled);
 """
 
 
@@ -818,6 +835,78 @@ class Store:
         with self._lock:
             cur = self._conn.execute(
                 "DELETE FROM kb_sources WHERE source_id=?", (source_id,))
+            self._conn.commit()
+            return bool(cur.rowcount)
+
+    # ------------------------------------------------------------- cron jobs
+    def add_cron_job(self, job_id: str, goal: str, schedule: str,
+                     name: str = "", mode: str = "do", deliver: str = "local",
+                     next_run_ts: float | None = None) -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO cron_jobs(job_id,name,goal,schedule,mode,deliver,"
+                "enabled,next_run_ts,created_ts,updated_ts) "
+                "VALUES (?,?,?,?,?,?,1,?,?,?)",
+                (job_id, name, goal, schedule, mode, deliver, next_run_ts,
+                 now, now))
+            self._conn.commit()
+
+    def list_cron_jobs(self, enabled: bool | None = None) -> list[dict]:
+        q = "SELECT * FROM cron_jobs"
+        params: tuple = ()
+        if enabled is not None:
+            q += " WHERE enabled=?"
+            params = (1 if enabled else 0,)
+        q += " ORDER BY created_ts ASC"
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_cron_job(self, job_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM cron_jobs WHERE job_id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def due_cron_jobs(self, now: float | None = None) -> list[dict]:
+        now = now if now is not None else time.time()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM cron_jobs WHERE enabled=1 AND next_run_ts IS NOT NULL "
+                "AND next_run_ts <= ? ORDER BY next_run_ts ASC", (now,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_cron_enabled(self, job_id: str, enabled: bool) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE cron_jobs SET enabled=?, updated_ts=? WHERE job_id=?",
+                (1 if enabled else 0, time.time(), job_id))
+            self._conn.commit()
+            return bool(cur.rowcount)
+
+    def update_cron_after_run(self, job_id: str, next_run_ts: float | None,
+                              status: str, output: str = "") -> None:
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE cron_jobs SET last_run_ts=?, next_run_ts=?, "
+                "last_status=?, last_output=?, runs=runs+1, updated_ts=? "
+                "WHERE job_id=?",
+                (now, next_run_ts, status, output[:2000], now, job_id))
+            self._conn.commit()
+
+    def set_cron_next_run(self, job_id: str, next_run_ts: float | None) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE cron_jobs SET next_run_ts=?, updated_ts=? WHERE job_id=?",
+                (next_run_ts, time.time(), job_id))
+            self._conn.commit()
+
+    def delete_cron_job(self, job_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM cron_jobs WHERE job_id=?", (job_id,))
             self._conn.commit()
             return bool(cur.rowcount)
 

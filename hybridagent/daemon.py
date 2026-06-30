@@ -1722,6 +1722,26 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.sources_refresh(
                     payload.get("source_id", "")))
                 return
+            if self.path == "/api/cron":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.cron_create(
+                    payload.get("goal", ""), payload.get("schedule", ""),
+                    name=payload.get("name", ""), mode=payload.get("mode", "do"),
+                    deliver=payload.get("deliver", "local")))
+                return
+            if self.path == "/api/cron/delete":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.cron_delete(
+                    payload.get("job_id", "")))
+                return
+            if self.path == "/api/cron/toggle":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.cron_set_enabled(
+                    payload.get("job_id", ""), bool(payload.get("enabled", True))))
+                return
             if self.path == "/api/board/create":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1870,6 +1890,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/sources":
                 body = json.dumps(self.daemon.sources_list(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/cron":
+                body = json.dumps(self.daemon.cron_list(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/audit":
@@ -2375,6 +2399,7 @@ class Daemon:
         try:
             while self.running and not self._stop_event.is_set():
                 self.tick()
+                self._cron_tick()
                 self._compliance_autorevert()
                 if self._consecutive_errors >= self.max_consecutive_errors:
                     self._log("error", "too many consecutive errors; shutting down")
@@ -2404,6 +2429,99 @@ class Daemon:
             self.agent.broker.effective_mode()
         except Exception:
             pass
+
+    def _cron_tick(self) -> None:
+        """Run any cron jobs that are due, then reschedule them. Each job runs
+        through the same governed loop as a manual run; failures are isolated so
+        one bad job can't break the scheduler or the daemon."""
+        if self.store is None:
+            return
+        try:
+            from .cron import CronScheduler
+            sched = CronScheduler(self.store)
+            due = sched.due()
+        except Exception as exc:
+            self._log("error", f"cron tick error: {exc}")
+            return
+        for job in due:
+            jid = job["job_id"]
+            try:
+                out = self._run_cron_job(job)
+                sched.reschedule(jid, "ok", out)
+                self.emit_event("cron", {"job_id": jid, "status": "ok",
+                                         "name": job.get("name", "")})
+            except Exception as exc:
+                sched.reschedule(jid, "error", str(exc))
+                self._log("error", f"cron job {jid} failed: {exc}")
+                self.emit_event("cron", {"job_id": jid, "status": "error",
+                                         "error": str(exc)})
+
+    def _run_cron_job(self, job: dict) -> str:
+        """Execute one cron job's goal in its configured mode, deliver the result,
+        and return a short text summary (also stored as the job's last_output)."""
+        mode = job.get("mode", "do")
+        goal = job["goal"]
+        self._log("info", f"cron firing {job['job_id']} ({mode}): {goal[:60]}")
+        if mode == "research":
+            res = self.research(goal)
+            text = res.get("text", "")
+        elif mode == "ask":
+            ans = self.ask(goal)
+            text = getattr(ans, "text", str(ans))
+        elif mode == "agent":
+            res = self.agent_run(goal)
+            text = res.get("summary", "") or str(res.get("status", ""))
+        else:  # "do" — queue a durable task (the existing autonomy path)
+            task_id = self.submit(goal)
+            text = f"queued task {task_id}"
+        self._deliver_cron(job, text)
+        return text
+
+    def _deliver_cron(self, job: dict, text: str) -> None:
+        """Deliver a cron result to its target. 'local' just records it (visible
+        in the dashboard/CLI); a gateway target routes through the messaging
+        layer when configured. Unknown/again-local targets are a silent no-op."""
+        target = (job.get("deliver") or "local").strip()
+        if not target or target == "local":
+            return
+        try:
+            from .gateways import deliver as gw_deliver
+            gw_deliver(target, text, store=self.store)
+        except Exception as exc:
+            self._log("warning", f"cron delivery to {target!r} failed: {exc}")
+
+    # --------------------------------------------------------------- cron API
+    def cron_list(self) -> dict:
+        if self.store is None:
+            return {"jobs": []}
+        return {"jobs": self.store.list_cron_jobs()}
+
+    def cron_create(self, goal: str, schedule: str, name: str = "",
+                    mode: str = "do", deliver: str = "local") -> dict:
+        self._ensure_agent()
+        assert self.store is not None
+        from .cron import CronScheduler
+        goal = (goal or "").strip()
+        schedule = (schedule or "").strip()
+        if not goal or not schedule:
+            return {"error": "goal and schedule are required"}
+        job = CronScheduler(self.store).create(
+            goal, schedule, name=name, mode=mode, deliver=deliver)
+        if job and "error" not in job:
+            self._log("info", f"cron job created: {job['job_id']} ({schedule})")
+        return job if job else {"error": "could not create cron job"}
+
+    def cron_delete(self, job_id: str) -> dict:
+        if self.store is None:
+            return {"error": "no store"}
+        return {"deleted": bool(self.store.delete_cron_job((job_id or "").strip()))}
+
+    def cron_set_enabled(self, job_id: str, enabled: bool) -> dict:
+        if self.store is None:
+            return {"error": "no store"}
+        from .cron import CronScheduler
+        ok = CronScheduler(self.store).set_enabled((job_id or "").strip(), enabled)
+        return {"updated": ok, "enabled": enabled}
 
     def _shutdown(self) -> None:
         self.running = False
