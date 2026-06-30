@@ -619,6 +619,17 @@ class Store:
             out.append(d)
         return out
 
+    def list_namespaces(self) -> list[str]:
+        """Distinct vector namespaces that currently hold indexed chunks.
+
+        Lets retrieval span every registered RAG repository instead of only the
+        default 'kb' namespace, so grounded answers draw on all sources.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT ns FROM vectors ORDER BY ns").fetchall()
+        return [r["ns"] for r in rows]
+
     def count_vectors(self, ns: str | None = None) -> int:
         with self._lock:
             if ns is None:
@@ -790,6 +801,25 @@ class Store:
         with self._lock:
             self._conn.execute(f"UPDATE kb_sources SET {cols} WHERE source_id=?", vals)
             self._conn.commit()
+
+    def delete_kb_source(self, source_id: str) -> bool:
+        """Delete a KB/wiki source by id. Returns True if a row was removed.
+
+        Also drops the source's ingested RAG vectors. KBSourceManager.refresh
+        uses the source_id itself as the RAG doc id, so delete_doc(ns, source_id)
+        removes exactly the chunks this source contributed — preventing a removed
+        source from continuing to pollute retrieval.
+        """
+        row = self.get_kb_source(source_id)
+        if row is not None:
+            # delete_doc takes its own lock/commit and bumps the vector version;
+            # call it outside the lock below to avoid re-entrant locking.
+            self.delete_doc(row.get("ns", "kb"), source_id)
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM kb_sources WHERE source_id=?", (source_id,))
+            self._conn.commit()
+            return bool(cur.rowcount)
 
     # ---------------------------------------------------------- skill metrics
     def record_skill_outcome(self, skill_name: str, goal: str, outcome: str,

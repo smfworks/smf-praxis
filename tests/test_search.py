@@ -41,6 +41,8 @@ def test_unconfigured_returns_placeholder(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
     for v in ("PRAXIS_SEARCH", "PRAXIS_SEARCH_URL", "PRAXIS_SEARCH_ENDPOINT"):
         monkeypatch.delenv(v, raising=False)
+    # Disable the keyless DuckDuckGo default to exercise the legacy None contract.
+    monkeypatch.setenv("PRAXIS_SEARCH_DISABLE_DEFAULT", "1")
     assert web_search("anything") is None
     out = search_web("anything")
     assert "no search backend configured" in out
@@ -50,6 +52,8 @@ def test_configured_without_key_returns_none(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
     monkeypatch.setenv("PRAXIS_SEARCH", "tavily")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    # Disable the keyless default so the missing-key path returns None as before.
+    monkeypatch.setenv("PRAXIS_SEARCH_DISABLE_DEFAULT", "1")
     assert web_search("q") is None              # gated: no key -> placeholder path
 
 

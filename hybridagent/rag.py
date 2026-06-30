@@ -202,6 +202,28 @@ class Rag:
                 kind=row["kind"], provenance=row["provenance"]))
         return out
 
+    def retrieve_all_ns(self, query: str, k: int = 5,
+                        hybrid: bool | None = None) -> list[RetrievedChunk]:
+        """Retrieve across every namespace that holds indexed chunks, so a
+        grounded answer can draw on *all* registered RAG repositories rather than
+        only the default one. Results are merged and truncated to the top ``k``
+        by score. Falls back to the default namespace if enumeration fails.
+        """
+        try:
+            namespaces = self.store.list_namespaces()
+        except Exception:
+            namespaces = [self.ns]
+        if not namespaces:
+            namespaces = [self.ns]
+        merged: list[RetrievedChunk] = []
+        for ns in namespaces:
+            try:
+                merged.extend(self.retrieve(query, k=k, ns=ns, hybrid=hybrid))
+            except Exception:
+                continue
+        merged.sort(key=lambda c: c.score, reverse=True)
+        return merged[:k]
+
     def stats(self, ns: str | None = None) -> dict:
         ns = ns or self.ns
         return {"chunks": self.store.count_vectors(ns),

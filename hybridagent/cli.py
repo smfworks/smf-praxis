@@ -616,6 +616,14 @@ def cmd_recall(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Print the first-run readiness checklist (model/memory/search/wiki/...)."""
+    from . import readiness
+    print(readiness.render())
+    rep = readiness.readiness()
+    return 0 if rep["counts"].get("warn", 0) == 0 else 1
+
+
 def cmd_describe(args: argparse.Namespace) -> int:
     from .ingest import extract_text
     from .multimodal import MediaClient
@@ -1062,6 +1070,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     pc = sub.add_parser("compliance", help="render a compliance attestation report")
     pc.set_defaults(func=cmd_compliance)
+
+    pdoc = sub.add_parser("doctor",
+                          help="first-run readiness checklist (model/memory/search/wiki)")
+    pdoc.set_defaults(func=cmd_doctor)
 
     ptc = sub.add_parser("task-create", help="create a persistent resumable task")
     ptc.add_argument("goal", help="goal text")

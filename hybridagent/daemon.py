@@ -414,6 +414,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/metrics.css" />
 <link rel="stylesheet" href="/web/inference.css" />
 <link rel="stylesheet" href="/web/memory.css" />
+<link rel="stylesheet" href="/web/knowledge.css" />
 <link rel="stylesheet" href="/web/palette.css" />
 <link rel="stylesheet" href="/web/settings.css" />
 <link rel="stylesheet" href="/web/onboard.css" />
@@ -594,6 +595,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/metrics.js" defer></script>
 <script src="/web/inference.js" defer></script>
 <script src="/web/memory.js" defer></script>
+<script src="/web/knowledge.js" defer></script>
 <script src="/web/palette.js" defer></script>
 <script src="/web/settings.js" defer></script>
 <script src="/web/onboard.js" defer></script>
@@ -697,6 +699,10 @@ document.addEventListener("keydown", function (e) {
     <div class="panel pad">
       <h2>Memory</h2>
       <div id="memory-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+    </div>
+    <div class="panel pad">
+      <h2>Knowledge</h2>
+      <div id="knowledge-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
     </div>
     <div class="panel pad">
       <h2>Approvals</h2>
@@ -1669,6 +1675,26 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.memory_delete(
                     int(payload.get("id", 0) or 0)))
                 return
+            if self.path == "/api/sources":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.sources_add(
+                    payload.get("uri", ""), ns=payload.get("ns", "kb"),
+                    title=payload.get("title", ""),
+                    refresh_hours=payload.get("refresh_hours")))
+                return
+            if self.path == "/api/sources/delete":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.sources_delete(
+                    payload.get("source_id", "")))
+                return
+            if self.path == "/api/sources/refresh":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.sources_refresh(
+                    payload.get("source_id", "")))
+                return
             if self.path == "/api/board/create":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -1809,6 +1835,14 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/board":
                 body = json.dumps(self.daemon.board_list(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/readiness":
+                body = json.dumps(self.daemon.readiness(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/sources":
+                body = json.dumps(self.daemon.sources_list(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/audit":
@@ -2770,6 +2804,122 @@ class Daemon:
         assert self.agent is not None
         from .agent_service import AgentService
         return AgentService(self.agent).card()
+
+    # --------------------------------------------------------------- readiness
+    def readiness(self) -> dict:
+        """First-run readiness checklist for the dashboard banner (model,
+        memory, web research, knowledge base, embedder, skills)."""
+        from . import readiness as _readiness
+        return _readiness.readiness(self.store)
+
+    # ---------------------------------------------------- knowledge / LLM wiki
+    def sources_list(self) -> dict:
+        """List registered knowledge sources (the RAG repositories / LLM wiki),
+        each annotated with its indexed doc/chunk counts per namespace."""
+        if self.store is None:
+            return {"sources": [], "stats": {"chunks": 0, "docs": 0}}
+        from .rag import Rag
+        from .wiki import KBSourceManager
+        rag = Rag(self.store)
+        # Per-namespace index sizes so the panel can show how much each
+        # repository actually contributes to retrieval.
+        ns_stats: dict[str, dict] = {}
+        out = []
+        for src in KBSourceManager(self.store).list(enabled=None):
+            if src.ns not in ns_stats:
+                try:
+                    ns_stats[src.ns] = rag.stats(ns=src.ns)
+                except Exception:
+                    ns_stats[src.ns] = {"chunks": 0, "docs": 0, "ns": src.ns}
+            out.append({
+                "source_id": src.source_id, "uri": src.uri,
+                "source_type": src.source_type, "ns": src.ns,
+                "title": src.title, "status": src.status,
+                "enabled": src.enabled,
+                "last_ingested_ts": src.last_ingested_ts,
+                "refresh_interval_seconds": src.refresh_interval_seconds,
+                "error": src.error,
+            })
+        # Aggregate index size across every namespace that holds chunks, so the
+        # panel reports true totals rather than only the default 'kb' namespace.
+        total_chunks = 0
+        total_docs = 0
+        try:
+            for ns in self.store.list_namespaces():
+                st = rag.stats(ns=ns)
+                total_chunks += int(st.get("chunks", 0))
+                total_docs += int(st.get("docs", 0))
+        except Exception:
+            agg = rag.stats()
+            total_chunks, total_docs = agg.get("chunks", 0), agg.get("docs", 0)
+        return {"sources": out,
+                "stats": {"chunks": total_chunks, "docs": total_docs},
+                "by_ns": ns_stats}
+
+    def sources_add(self, uri: str, ns: str = "kb", title: str = "",
+                    refresh_hours: float | None = None) -> dict:
+        """Register a knowledge source (folder/file path or http(s) URL) and
+        immediately index it so it is queryable right away."""
+        self._ensure_agent()
+        assert self.store is not None
+        from .rag import Rag
+        from .wiki import KBSourceManager
+        from .wiki_safe import UnsafeSourceError
+        uri = (uri or "").strip()
+        if not uri:
+            return {"error": "uri required"}
+        mgr = KBSourceManager(self.store)
+        interval = KBSourceManager.seconds_from_hours(refresh_hours)
+        try:
+            src = mgr.add(uri, ns=(ns or "kb").strip() or "kb",
+                          title=(title or "").strip(),
+                          refresh_interval_seconds=interval)
+        except UnsafeSourceError as exc:
+            return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": f"could not add source: {exc}"}
+        # Index now so the source is immediately useful (don't wait for the
+        # heartbeat refresh cycle).
+        try:
+            src = mgr.refresh(src.source_id, rag=Rag(self.store))
+        except Exception as exc:
+            self._log("warning", f"source {src.source_id} added but refresh failed: {exc}")
+        self._log("info", f"knowledge source added: {src.source_id} ({src.uri})")
+        return {"source_id": src.source_id, "status": src.status,
+                "uri": src.uri, "ns": src.ns, "error": src.error}
+
+    def sources_delete(self, source_id: str) -> dict:
+        if self.store is None:
+            return {"error": "no store"}
+        source_id = (source_id or "").strip()
+        if not source_id:
+            return {"error": "source_id required"}
+        ok = bool(self.store.delete_kb_source(source_id))
+        if ok:
+            self._log("info", f"knowledge source removed: {source_id}")
+        return {"deleted": ok, "source_id": source_id}
+
+    def sources_refresh(self, source_id: str = "") -> dict:
+        """Re-index one source (by id) or every source that is due."""
+        if self.store is None:
+            return {"error": "no store"}
+        from .rag import Rag
+        from .wiki import KBSourceManager
+        mgr = KBSourceManager(self.store)
+        rag = Rag(self.store)
+        source_id = (source_id or "").strip()
+        try:
+            if source_id:
+                refreshed = [mgr.refresh(source_id, rag=rag)]
+            else:
+                refreshed = mgr.refresh_due(rag=rag)
+        except KeyError:
+            return {"error": f"unknown source '{source_id}'"}
+        except Exception as exc:
+            return {"error": f"refresh failed: {exc}"}
+        return {"refreshed": [
+            {"source_id": s.source_id, "status": s.status, "error": s.error}
+            for s in refreshed]}
 
     def ask(self, question: str, k: int = 5) -> Any:
         """Answer a question grounded in the agent's KB and memory."""

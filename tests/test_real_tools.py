@@ -57,7 +57,8 @@ def test_fetch_url_uses_http_lib_only():
 
 
 def test_search_web_without_backend_reports_config_gap():
-    with patch.dict(os.environ, {}, clear=True):
+    # Disable the keyless DuckDuckGo default so the honest-placeholder path runs.
+    with patch.dict(os.environ, {"PRAXIS_SEARCH_DISABLE_DEFAULT": "1"}, clear=True):
         assert "no search backend configured" in search_web("praxis agent")
 
 
