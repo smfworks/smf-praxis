@@ -77,6 +77,29 @@ def list_dir(path: str = ".", **_kw) -> str:
 
 
 # ------------------------------------------------------------------ web tools
+def delegate(goal: str = "", role: str = "", **_kw) -> str:
+    """Delegate a sub-goal to a scoped, isolated subagent and return its result.
+
+    The subagent is an ordinary governed PraxisAgent with a narrowed tool set
+    (chosen by ``role`` or auto-routed from the goal). It runs under the SAME
+    governance spine — its SEND/DESTRUCTIVE tool calls are still held for
+    approval — and recursion is depth-capped by the orchestrator. Use this to
+    fan a complex task into a focused worker without flooding the main loop.
+    """
+    goal = (goal or "").strip()
+    if not goal:
+        return "[delegate] a goal is required"
+    try:
+        from .orchestrator import Orchestrator
+        from .persistence import Store
+        orch = Orchestrator(Store.open())
+        run = orch.run(goal, role=(role or None))
+    except Exception as exc:
+        return f"[delegate] failed: {exc}"
+    return (f"[delegate] subagent role={run.role} -> {run.status} "
+            f"(run {run.run_id}); inspect with 'praxis subagents'")
+
+
 def send_message(target: str = "", text: str = "", **_kw) -> str:
     """Send a message to a configured messaging gateway (Telegram/Slack/Discord/
     webhook/ntfy). ``target`` is '<channel>' or '<channel>:<destination>'.
