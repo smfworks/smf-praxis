@@ -121,7 +121,7 @@ def fetch_url(url: str, **_kw) -> str:
             url,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (compatible; PraxisAgent/0.13; "
+                    "Mozilla/5.0 (compatible; PraxisAgent/0.14; "
                     "+https://github.com/smfworks/smf-praxis)"
                 )
             },

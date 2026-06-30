@@ -64,7 +64,7 @@ def _http_get(url: str) -> str:
     import urllib.error
     import urllib.request
     req = urllib.request.Request(
-        url, headers={"User-Agent": "PraxisAgent/0.13 (+browser)"})
+        url, headers={"User-Agent": "PraxisAgent/0.14 (+browser)"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return resp.read(2_000_000).decode("utf-8", errors="replace")

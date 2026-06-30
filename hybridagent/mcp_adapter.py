@@ -102,7 +102,7 @@ def _tool_to_mcp(tool: Tool) -> MCPTool:
 
 
 def build_mcp_server(registry: ToolRegistry, name: str = "praxis",
-                     version: str = "0.13.0") -> MCPServer:
+                     version: str = "0.14.0") -> MCPServer:
     """Build an MCP server that advertises and runs every tool in ``registry``."""
     _ensure_mcp()
     server = MCPServer(name=name, version=version)
