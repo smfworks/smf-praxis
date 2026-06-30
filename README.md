@@ -20,6 +20,27 @@ a **governance broker**.
 
 See **[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability map.
 
+### Highlights
+
+- **Governed by construction** — every action (native, MCP, plugin, or A2A) is
+  risk-classified and flows through one broker: read/draft autonomous, send/
+  destructive held. Plus an **egress firewall**, **prompt-injection boundary**,
+  persisted **kill-switch**, and an **OPA/Rego/Cedar-ready policy hook** that can
+  tighten but never weaken the spine.
+- **Safe by default, leadership-grade** — **skill & MCP-tool security scanning**
+  (graded A–F, refuses poisoned content), **signed agent identity + attestations**,
+  **sandboxed execution** (local / Docker / ssh / Modal / Daytona), and an
+  auditable **OWASP Agentic Top-10** coverage matrix.
+- **Autonomous reach** — **scheduled cron jobs**, **outbound messaging gateways**
+  (Telegram/Slack/Discord/webhook/ntfy), **model-callable delegation**, and an
+  **A2A client** to call other agents — all governed.
+- **Grows with you** — distills reusable skills *and* **evolves** them (PR-gated,
+  fitness-scored from real usage), with a **plugin system + marketplace** for
+  third-party extensions.
+- **Dependency-free core**, model-agnostic (incl. **Azure AI Foundry**), and
+  **verified on Linux, macOS, and Windows** in CI (full suite + both installers +
+  Docker, 80% coverage gate) — **40/40** capability/safety evals.
+
 ## The loop
 
 ```
@@ -239,6 +260,16 @@ praxis --help
 | `praxis skill-evaluate` | score skills and quarantine low-quality ones |
 | `praxis subagent-run "<goal>" [--role drafter]` | route a goal to a scoped subagent |
 | `praxis subagents` | list scoped subagents and recent runs |
+| `praxis cron add "<goal>" --schedule <30m\|daily\|daily@HH:MM\|cron>` | schedule a recurring unattended job (governed) |
+| `praxis cron list\|remove\|enable\|disable` | manage scheduled jobs |
+| `praxis message "<target>" "<text>"` | send via a gateway (Telegram/Slack/Discord/webhook/ntfy) — **held for approval** |
+| `praxis evolve [skill] [--apply]` | propose (PR-gated) evolutionary improvements to skills from usage history |
+| `praxis scan skills\|mcp\|deps` | security-scan installed skills, MCP tools, or dependencies |
+| `praxis bench [-k N] [--category C]` | reliability benchmark — pass@1 / pass^k / variance + flaky detection |
+| `praxis plugins list\|enable\|disable` | manage drop-in third-party plugins (scanned, broker-gated) |
+| `praxis market publish\|search\|install\|uninstall` | plugin marketplace over a local/shared registry |
+| `praxis secrets-bundle put\|list\|remove` | manage named, tool-scoped credential bundles (never printed) |
+| `praxis mcp --list-presets\|--enable-preset <name>\|--probe` | manage MCP servers + prebuilt presets (xAI Docs, Peekaboo) |
 | `praxis health` | runtime health snapshot (cycles, tasks, KB, agents) |
 | `praxis eval [--category C] [--json]` | run the offline capability + safety eval suite (CI gate) |
 | `praxis memory-purge [--decay-days N] [--forget-provenance prefix]` | enforce retention/decay/forget policies |

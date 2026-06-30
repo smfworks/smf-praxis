@@ -50,9 +50,33 @@ The control plane every other capability flows through (`broker.py`,
   detector is wrapped in an explicit data boundary before it re‑enters the model.
 - **Egress firewall** — a consequential action whose arguments would relay
   injection‑flagged content back out is **denied** (anti‑exfiltration).
+- **External policy hook (OPA/Rego/Cedar‑ready)** — an operator can plug a custom
+  policy callable into the broker. A hook **deny** is an absolute veto; a hook
+  **allow** can waive *human approval* but never the allowlist, kill‑switch, or
+  egress firewall — and a broken hook **fails safe** (deny). Policy‑as‑code without
+  weakening the safety spine (`broker.py`).
+- **Skill & MCP‑tool security scanning** — installed skills and external MCP tool
+  definitions are statically scanned (shell injection, secret exfiltration,
+  prompt‑injection directives, suspicious URLs, obfuscation) and graded A–F;
+  critical content is refused at `SkillLibrary.add` and poisoned MCP tools are
+  skipped. Includes an offline‑tolerant **OSV dependency check** (`security_scan.py`).
+- **Signed agent identity & attestations** — each agent has a stable cryptographic
+  identity; actions/messages can be attributed and tamper‑checked. HMAC‑SHA256 by
+  default (stdlib), auto‑upgrading to **Ed25519** when `cryptography` is present;
+  identity file is restricted to the current user cross‑platform (`identity.py`).
+- **Sandboxed execution** — shell/code execution runs through a pluggable isolation
+  backend: `local` (host shell, cross‑platform), `docker` (throwaway container,
+  cap‑drop ALL, no‑new‑privileges, `--network none`, read‑only rootfs, host‑uid
+  mapping), or remote `ssh`/`modal`/`daytona`. The `run_shell` tool is
+  `DESTRUCTIVE` (held) and sandboxed by construction (`sandbox.py`).
+- **OWASP Agentic Top‑10 coverage matrix** — an auditable map of the AAI001–010
+  agentic threats to the concrete Praxis controls (`docs/OWASP_AGENTIC_COVERAGE.md`).
 - **Compliance attestation** + a full, attributable **audit trail**.
 - **Sensitivity‑aware routing** — content classified as sensitive never leaves
   the machine (pinned to local models).
+- **Cross‑platform secret protection** — credential/identity files are restricted
+  to the current user on every OS: `chmod 0600` on POSIX, `icacls` ACLs on Windows
+  (no false 0600 assurance) (`config.secure_file`).
 
 ## 2. Agentic inference layer
 
@@ -119,13 +143,28 @@ The capability layer on top of the spine.
   benefit from prior learning.
 - **Skill quality control** — outcomes are recorded and low‑quality skills are
   auto‑quarantined (`skill_evaluator.py`).
+- **Evolutionary self‑improvement (PR‑gated)** — Praxis optimizes the skills it
+  keeps: a fitness function scored from real governed usage history drives a
+  reflective LLM rewrite (or an offline heuristic), guarded by security scan +
+  size caps + a ≥50% semantic‑preservation check + strict fitness improvement.
+  It **proposes** a diff; applying it is a separate, reviewed step — never a silent
+  self‑edit (`evolution.py`, `praxis evolve`).
 
 ## 6. Multi‑agent orchestration
 
 - **Scoped subagents** — narrowed tool registries per role, all under the shared
   governance spine (`orchestrator.py`).
+- **Model‑callable delegation** — the agent can spawn a scoped subagent mid‑run via
+  the `delegate` tool (`DRAFT`: autonomous, but the subagent's own `SEND`/
+  `DESTRUCTIVE` calls are still held); recursion is prevented structurally because
+  subagent role allowlists never include `delegate` (`real_tools.py`).
 - **Concurrent fan‑out** — run several goals concurrently over a thread‑safe
   store (`praxis fanout`).
+- **Scheduled autonomy (cron)** — recurring unattended jobs with interval
+  (`30m`/`2h`), keyword (`daily`/`hourly`/`weekly`), `daily@HH:MM`, and 5‑field
+  cron schedules; due jobs are **atomically claimed** (no double‑fire) and run
+  through the governed loop, results recorded and rescheduled (`cron.py`,
+  `praxis cron`, `/api/cron`).
 - **Hierarchical plan‑and‑execute** — decompose a goal into a **dependency DAG**
   of governed steps, execute with per‑step monitoring, **skip dependents** of a
   failed/held step, and **replan** a failed step's remainder (bounded)
@@ -136,21 +175,49 @@ The capability layer on top of the spine.
 ## 7. Tools & extensibility
 
 - **Dependency‑free MCP client** — consume tools from **any external MCP server**
-  with no extra dependencies (stdlib JSON‑RPC over stdio). External tools are
-  **untrusted**: risk‑classified (annotations → name → config override; unknown
-  defaults to *held*) and broker‑gated. Wired into the live agent (`mcp_client.py`).
+  with no extra dependencies. Supports both **stdio** (JSON‑RPC) and **remote
+  Streamable‑HTTP** (JSON + SSE, session IDs, `${ENV}` auth‑header substitution).
+  External tools are **untrusted**: risk‑classified (annotations → name → config
+  override; unknown defaults to *held*), security‑scanned for poisoning, and
+  broker‑gated. Wired into the live agent (`mcp_client.py`).
+- **Prebuilt MCP presets** — one‑command enablement of curated servers:
+  **xAI Docs** (keyless, READ) and **Peekaboo** (macOS screen/GUI computer‑use;
+  see/capture = READ, click/type = SEND‑held). `praxis mcp --list-presets/
+  --enable-preset/--probe` (`mcp_presets.py`).
 - **MCP server** — expose Praxis tools to Claude/Copilot/any MCP host
   (`mcp_adapter.py`, optional `mcp` extra).
-- **A2A — callable agent** — other agents/systems invoke Praxis over HTTP
-  (`POST /api/agent/run`, `GET /api/agent/card`): hand it a goal, get back a
-  **governed** result (status, steps, held approvals); discover its capabilities
-  via an agent card (`agent_service.py`).
+- **A2A — callable agent + client** — other agents invoke Praxis over HTTP
+  (`POST /api/agent/run`, `GET /api/agent/card`) for a **governed** result; and
+  Praxis can call **other** A2A agents via the `call_agent` tool (`SEND`: held),
+  with a bounded (8 MiB) response read so a hostile peer can't exhaust memory
+  (`agent_service.py`, `a2a_client.py`).
+- **Outbound messaging gateways** — deliver to Telegram / Slack / Discord /
+  generic webhook / ntfy via the `send_message` tool (`SEND`: held; draft‑before‑
+  send) with `${ENV}` auth substitution and per‑channel formatting
+  (`gateways.py`, `praxis message`).
+- **Generation tools** — `generate_image` and `text_to_speech` via OpenAI/xAI‑
+  compatible providers (`DRAFT`: local artifact), honest when unconfigured
+  (`real_tools.py`).
+- **Plugin system + marketplace** — drop‑in `~/.praxis/plugins/*.py` plugins
+  (disabled by default, **source security‑scanned before import**, tools flow
+  through the same broker), plus a publish/search/install marketplace on a local/
+  shared registry (scanned at both publish and install, no auto‑run)
+  (`plugins.py`, `marketplace.py`, `praxis plugins`, `praxis market`).
+- **Credential vault** — named secret bundles scoped per‑tool, injected as env
+  vars only for a call's duration (ephemeral, restored after), 0600/ACL‑restricted
+  and obfuscated at rest; loudly warns if `PRAXIS_VAULT_KEY` is set without the
+  `cryptography` extra rather than silently downgrading (`vault.py`,
+  `praxis secrets-bundle`).
 - **Governed browser / computer‑use** — navigate/read (autonomous) vs click/type
-  (consequential) (`browser.py`, optional `browser` extra).
+  (consequential) (`browser.py`, optional `browser` extra); desktop control also
+  available via the Peekaboo MCP preset.
 - **Web, files, and Microsoft 365** — fetch_url, search_web, query_knowledge,
-  read/write file, list_dir, calendar/mail (`real_tools.py`, `m365_tools.py`,
-  `wiki_safe.py`). **Web search works out of the box** with a keyless DuckDuckGo
-  default; Tavily/Brave/SerpAPI are optional upgrades.
+  read/write file, list_dir, run_shell (sandboxed), calendar/mail (`real_tools.py`,
+  `m365_tools.py`, `wiki_safe.py`). **Web search works out of the box** with a
+  keyless DuckDuckGo default; Tavily/Brave/SerpAPI are optional upgrades.
+- **Model providers** — OpenAI, Anthropic, Ollama, OpenRouter, xAI, **Microsoft
+  Azure AI Foundry** (`azure-foundry`), and more; offline deterministic mock by
+  default (`providers.py`).
 
 ## Out of the box
 
@@ -206,6 +273,13 @@ A fresh install is usable immediately — no hidden configuration:
   regression** even if the overall suite still passes; JSON artifact + run history
   (`eval_history.py`, `praxis eval --json/--save/--set-baseline/--check/--history`).
 - **Mutation‑tested governance core** — a strong oracle of broker‑guard tests.
+- **Reliability benchmarking** — runs the eval suite ×k and reports
+  **pass@1 / pass^k / variance** plus per‑case flaky detection, so reliability
+  (not just pass/fail) is measurable (`benchmark.py`, `praxis bench`).
+- **Cross‑platform CI matrix** — Linux (3.10/3.11/3.12) + macOS + Windows run the
+  full suite; both installers (`install.sh`, `install.ps1`) are executed on their
+  platforms and the Docker image + dashboard are smoke‑tested, with an 80%
+  coverage gate on Linux (`.github/workflows/ci.yml`).
 
 ### Eval categories (40/40)
 
@@ -256,6 +330,10 @@ praxis think "Analyze the trade-offs and design the cache layer" # deliberate
 praxis debate "What is the best rollout strategy?"   # best-of-N + judge
 praxis ask "What did we decide about Q4 pricing?"    # grounded, cite-or-abstain
 praxis ingest ./notes.md && praxis recall "pricing"  # RAG knowledge base
+praxis cron add "summarize overnight alerts" --schedule daily@08:00  # scheduled autonomy
+praxis evolve                                        # propose skill improvements (PR-gated)
+praxis scan skills                                   # security-scan installed skills
+praxis bench -k 5                                    # reliability: pass@1 / pass^k / variance
 praxis eval --check                                  # regression gate
 praxis daemon                                        # dashboard + HTTP/A2A API
 ```
