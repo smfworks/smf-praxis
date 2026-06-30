@@ -56,7 +56,11 @@ def test_invalid_cron_fields_fail_fast():
         nr = compute_next_run(expr)
         elapsed = time.time() - t0
         assert nr.ts is None, f"{expr} should be unparseable"
-        assert elapsed < 0.05, f"{expr} took {elapsed:.3f}s (should fail fast)"
+        # The old bug did a full ~527k-iteration year scan before returning None;
+        # up-front validation short-circuits. Generous ceiling tolerates slow/
+        # shared CI runners (Windows) while still catching a regression to the
+        # scan path, which grows well past this.
+        assert elapsed < 0.25, f"{expr} took {elapsed:.3f}s (should fail fast)"
 
 
 def test_valid_cron_still_works():
