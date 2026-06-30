@@ -942,6 +942,40 @@ def cmd_health(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_evolve(args: argparse.Namespace) -> int:
+    from . import evolution as ev
+    from .persistence import Store
+    from .skills import SkillLibrary
+    lib = SkillLibrary(store=Store.open())
+    llm = None
+    if getattr(args, "llm", False):
+        from .llm import LLMClient
+        llm = LLMClient()
+    targets = [args.skill] if args.skill else [s.name for s in lib.list()]
+    if not targets:
+        print("no skills to evolve (use 'praxis learn' to create some)")
+        return 0
+    proposals = []
+    for name in targets:
+        prop = ev.evolve_skill(lib, name, llm=llm)
+        if prop is not None:
+            proposals.append(prop)
+    if not proposals:
+        print("no improving proposals found")
+        return 0
+    for p in proposals:
+        print("\n" + p.summary())
+        print(p.diff())
+        if p.rationale:
+            print(f"rationale: {p.rationale}")
+    if getattr(args, "apply", False):
+        applied = [p.skill_name for p in proposals if ev.apply_proposal(lib, p)]
+        print(f"\napplied {len(applied)} proposal(s): {', '.join(applied)}")
+    else:
+        print("\n(propose-only; re-run with --apply to accept after review)")
+    return 0
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     import json
     import os
@@ -1235,6 +1269,14 @@ def build_parser() -> argparse.ArgumentParser:
     pmsg.add_argument("--list", action="store_true",
                       help="list available + configured channels")
     pmsg.set_defaults(func=cmd_message)
+
+    pevo = sub.add_parser("evolve", help="propose evolutionary skill improvements (PR-gated)")
+    pevo.add_argument("skill", nargs="?", default="", help="skill name (omit = all)")
+    pevo.add_argument("--apply", action="store_true",
+                      help="apply after reviewing the diff (default: propose-only)")
+    pevo.add_argument("--llm", action="store_true",
+                      help="use the configured LLM for reflective mutation")
+    pevo.set_defaults(func=cmd_evolve)
 
     pscan = sub.add_parser("scan", help="security-scan skills, MCP tools, or dependencies")
     scansub = pscan.add_subparsers(dest="scan_target")
