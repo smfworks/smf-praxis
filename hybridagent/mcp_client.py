@@ -353,14 +353,29 @@ def _sanitize(name: str) -> str:
 
 
 def mcp_tools(client: MCPClient, server_name: str = "external",
-              risk_overrides: dict | None = None) -> list[Tool]:
-    """Discover an MCP server's tools and wrap each as a governed Praxis Tool."""
+              risk_overrides: dict | None = None, scan: bool = True) -> list[Tool]:
+    """Discover an MCP server's tools and wrap each as a governed Praxis Tool.
+
+    When ``scan`` is True (default), each tool definition is run through the
+    security scanner; a tool whose description/schema fails the scan (e.g. tool
+    poisoning, hidden instructions) is **skipped** rather than registered, so a
+    malicious MCP server can't inject a booby-trapped tool into the agent.
+    """
     overrides = {k.lower(): v for k, v in (risk_overrides or {}).items()}
     out: list[Tool] = []
     for td in client.list_tools():
         tname = td.get("name") or ""
         if not tname:
             continue
+        if scan:
+            from .security_scan import scan_mcp_tool
+            rep = scan_mcp_tool(td)
+            if not rep.clean:
+                from .logging_util import get_logger
+                get_logger("praxis.mcp").warning(
+                    "skipping poisoned MCP tool %s/%s: %s",
+                    server_name, tname, rep.summary())
+                continue
         risk = risk_for_tool(td, override=overrides.get(tname.lower()))
         schema = td.get("inputSchema") or {"type": "object", "properties": {}}
 

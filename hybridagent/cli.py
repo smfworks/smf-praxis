@@ -666,6 +666,77 @@ def cmd_message(args: argparse.Namespace) -> int:
     return 0 if res.ok else 1
 
 
+def cmd_scan(args: argparse.Namespace) -> int:
+    from . import security_scan
+    target = getattr(args, "scan_target", None)
+    if target == "skills":
+        from .persistence import Store
+        from .skills import SkillLibrary
+        lib = SkillLibrary(store=Store.open())
+        skills = lib.list()
+        if not skills:
+            print("no skills to scan")
+            return 0
+        any_dirty = False
+        for sk in skills:
+            rep = security_scan.scan_skill(sk)
+            print(f"{'OK ' if rep.clean else '!! '}{rep.summary()}")
+            any_dirty = any_dirty or not rep.clean
+        return 1 if any_dirty else 0
+    if target == "mcp":
+        from . import config as cfg
+        from .mcp_client import MCPClient, _expand_env
+        servers = (cfg.load_config().get("agents", {})
+                   .get("mcp", {}).get("servers", {}) or {})
+        sc = servers.get(args.server)
+        if not sc:
+            print(f"no MCP server '{args.server}' configured")
+            return 1
+        url = sc.get("url")
+        if url:
+            client = MCPClient.connect_http(url, headers=_expand_env(sc.get("headers") or {}))
+        else:
+            command = sc.get("command")
+            if isinstance(command, str):
+                command = [command, *sc.get("args", [])]
+            client = MCPClient.connect_stdio(command, env=_expand_env(sc.get("env")))
+        try:
+            client.initialize()
+            result = security_scan.scan_mcp_tools(client.list_tools())
+        finally:
+            client.close()
+        for _name, rep in result["reports"].items():
+            print(f"{'OK ' if rep.clean else '!! '}{rep.summary()}")
+        print(f"\nclean={result['clean']}  flagged={result['flagged']}")
+        return 0 if result["clean"] else 1
+    if target == "deps":
+        import subprocess
+        try:
+            out = subprocess.check_output(["pip", "freeze"], text=True, timeout=30)
+        except Exception as exc:
+            print(f"could not list dependencies: {exc}")
+            return 1
+        pkgs = [(n.strip(), v.strip()) for line in out.splitlines()
+                if "==" in line for n, _, v in [line.partition("==")]]
+        if not pkgs:
+            print("no pinned dependencies found")
+            return 0
+        print(f"checking {len(pkgs)} packages against OSV.dev ...")
+        res = security_scan.osv_check(pkgs)
+        if res.get("error"):
+            print(f"OSV check error: {res['error']}")
+            return 1
+        affected = res.get("affected", {})
+        if not affected:
+            print("no known vulnerabilities found")
+            return 0
+        for pkg, vulns in affected.items():
+            print(f"!! {pkg}: {', '.join(vulns)}")
+        return 1
+    print("usage: praxis scan {skills | mcp --server NAME | deps}")
+    return 1
+
+
 def cmd_cron(args: argparse.Namespace) -> int:
     from datetime import datetime
 
@@ -1164,6 +1235,14 @@ def build_parser() -> argparse.ArgumentParser:
     pmsg.add_argument("--list", action="store_true",
                       help="list available + configured channels")
     pmsg.set_defaults(func=cmd_message)
+
+    pscan = sub.add_parser("scan", help="security-scan skills, MCP tools, or dependencies")
+    scansub = pscan.add_subparsers(dest="scan_target")
+    scansub.add_parser("skills", help="scan all installed skills for dangerous content")
+    psm = scansub.add_parser("mcp", help="scan a configured MCP server's tool defs")
+    psm.add_argument("--server", required=True, help="configured MCP server name")
+    scansub.add_parser("deps", help="check installed deps against OSV.dev")
+    pscan.set_defaults(func=cmd_scan)
 
     pcron = sub.add_parser("cron", help="schedule recurring autonomous jobs")
     cronsub = pcron.add_subparsers(dest="cron_action")

@@ -162,7 +162,17 @@ class SkillLibrary:
                                  provenance=f"skill:{skill.provenance}", ns="skills")
 
     # --------------------------------------------------------------- mutation
-    def add(self, skill: Skill) -> Path:
+    def add(self, skill: Skill, scan: bool = True) -> Path:
+        if scan:
+            from .security_scan import scan_skill
+            report = scan_skill(skill)
+            if not report.clean:
+                _log.warning("skill '%s' failed security scan: %s",
+                             skill.name, report.summary())
+                raise ValueError(
+                    f"skill '{skill.name}' rejected by security scan "
+                    f"(grade {report.grade}): "
+                    + "; ".join(f"{f.severity}:{f.rule}" for f in report.findings))
         path = self.path_for(skill)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(skill.to_markdown(), encoding="utf-8")
