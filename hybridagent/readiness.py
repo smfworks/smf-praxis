@@ -112,6 +112,11 @@ def _check_wiki(store=None) -> Check:
         return Check("wiki", "Knowledge base", "warn",
                      f"could not read knowledge base: {exc}")
     n = len(sources)
+    if chunks and not n:
+        # Seeded/ingested content exists (e.g. the bundled starter docs or
+        # `praxis ingest`) even though no managed wiki source is registered.
+        return Check("wiki", "Knowledge base", "ok",
+                     f"{chunks} indexed chunk(s) available")
     if n and chunks:
         return Check("wiki", "Knowledge base", "ok",
                      f"{n} source(s), {chunks} indexed chunk(s)")

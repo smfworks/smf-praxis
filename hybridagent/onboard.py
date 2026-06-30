@@ -47,6 +47,13 @@ def run_noninteractive(provider_id: str, model: str,
     model_ref = f"{provider_id}/{model}"
     cfg.write_provider(provider_id, base, provider.compatibility, model_ref,
                        provider.key_env, use_env_ref=use_env_ref)
+    # First-run bootstrap: enable memory/skill recall defaults and seed a
+    # starter knowledge namespace so the install is usable immediately.
+    try:
+        from . import bootstrap
+        bootstrap.run()
+    except Exception:
+        pass
     return {"provider": provider_id, "model": model_ref, "base_url": base,
             "key_backend": backend}
 

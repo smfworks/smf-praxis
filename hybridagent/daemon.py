@@ -626,6 +626,7 @@ document.addEventListener("keydown", function (e) {
       <div class="segmented">
         <button id="seg-chat" class="active" onclick="setMode('chat')">Chat</button>
         <button id="seg-ask" onclick="setMode('ask')">Ask</button>
+        <button id="seg-research" onclick="setMode('research')">Research</button>
         <button id="seg-do" onclick="setMode('do')">Do</button>
         <button id="seg-agent" onclick="setMode('agent')">Agent</button>
       </div>
@@ -725,6 +726,7 @@ let providers = [];
 const HINTS = {
   chat: 'Conversational chat with your model.',
   ask: 'Grounded Q&A over the knowledge base — cites sources or abstains.',
+  research: 'Live web research — searches the internet, reads results, and answers with citations.',
   do: 'Queue an autonomous task for the agent to work.',
   agent: 'Agentic tools — Praxis calls tools through the governance broker (read/draft run; send/destructive need approval).'
 };
@@ -805,9 +807,9 @@ function scrollDown(){ messagesEl.scrollTop = messagesEl.scrollHeight; }
 
 function setMode(m){
   mode = m;
-  ['chat','ask','do','agent'].forEach(x => document.getElementById('seg-'+x).classList.toggle('active', x===m));
+  ['chat','ask','research','do','agent'].forEach(x => document.getElementById('seg-'+x).classList.toggle('active', x===m));
   document.getElementById('modeHint').textContent = HINTS[m];
-  const ph = {do:'Describe a goal to queue…', ask:'Ask a grounded question…', agent:'Ask Praxis to do something — it can call tools…'};
+  const ph = {do:'Describe a goal to queue…', ask:'Ask a grounded question…', research:'Ask anything — Praxis will search the web…', agent:'Ask Praxis to do something — it can call tools…'};
   document.getElementById('message').placeholder = ph[m] || 'Message Praxis…  (Enter to send, Shift+Enter for newline)';
 }
 function newChat(){
@@ -1178,6 +1180,14 @@ async function sendMessage(ev){
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
       typing.remove();
       appendAgent(res.text || res.error || 'No answer.', (res.citations||[]).join(', '));
+    } else if(mode === 'research'){
+      const res = await api('/api/research', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query: text})});
+      typing.remove();
+      let body = res.text || res.error || 'No answer.';
+      if(res.results && res.results.length){
+        body += '\n\n**Sources**\n' + res.results.map((r,i)=>(i+1)+'. ['+(r.title||r.url)+']('+r.url+')').join('\n');
+      }
+      appendAgent(body, (res.citations||[]).length + ' cited');
     } else if(mode === 'agent'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
@@ -1577,6 +1587,13 @@ class _StatusHandler(BaseHTTPRequestHandler):
                         for c in getattr(answer, "contradictions", [])
                     ],
                 })
+                return
+            if self.path == "/api/research":
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.research(
+                    payload.get("query", ""),
+                    max_results=int(payload.get("max_results", 5) or 5)))
                 return
             if self.path == "/api/agent/run":
                 length = int(self.headers.get("Content-Length", 0))
@@ -2254,6 +2271,12 @@ class Daemon:
         agent = PraxisAgent.persistent(llm=LLMClient(), work_dir=work_dir)
         if autonomous_risks is not None:
             agent.broker.policy.autonomous_risks = set(autonomous_risks)
+        # First-run bootstrap (idempotent): recall defaults + starter knowledge.
+        try:
+            from . import bootstrap
+            bootstrap.run(store)
+        except Exception:
+            pass
         host = status_host or os.environ.get("PRAXIS_HOST", _DEFAULT_HOST)
         return cls(store=store, agent=agent, status_port=status_port,
                    status_host=host)
@@ -2276,6 +2299,14 @@ class Daemon:
         self.store = self.agent.store
         if self.manager is None:
             self.manager = TaskManager(self.store)
+        # First-run bootstrap: enable recall defaults and seed the starter
+        # knowledge namespace so even an offline-mock daemon is usable (and the
+        # Knowledge panel + grounded ask have content) on first boot. Idempotent.
+        try:
+            from . import bootstrap
+            bootstrap.run(self.store)
+        except Exception:
+            pass
         # Ensure broker allowlist covers whatever registry the agent built.
         self.agent.broker.policy.allowed_tools.update(self.agent.registry.names())
         # Opt-in: expose configured external MCP servers' tools to the governed
@@ -2926,6 +2957,63 @@ class Daemon:
         self._ensure_agent()
         assert self.agent is not None
         return self.agent.ask(question, k=k, refresh_wiki=False)
+
+    def research(self, query: str, max_results: int = 5) -> dict:
+        """Live web research: search the web, fetch the top results, and
+        synthesize a grounded, cited answer (cite-or-abstain).
+
+        Works out of the box via the keyless DuckDuckGo default; a configured
+        provider (Tavily/Brave/SerpAPI) upgrades result quality. Returns the
+        synthesized answer plus the underlying result list so the UI can show
+        both the prose and its sources.
+        """
+        self._ensure_agent()
+        assert self.agent is not None
+        query = (query or "").strip()
+        if not query:
+            return {"error": "query required"}
+        from .grounding import GroundedResponder
+        from .rag import RetrievedChunk
+        from .real_tools import fetch_url
+        from .search import web_search
+        results = web_search(query, max_results=max_results)
+        if results is None:
+            return {"text": "Web research is disabled (PRAXIS_SEARCH_DISABLE_DEFAULT). "
+                            "Enable a search provider to research online.",
+                    "abstained": True, "citations": [], "results": []}
+        if not results:
+            return {"text": f"No web results found for {query!r}.",
+                    "abstained": True, "citations": [], "results": []}
+        # Build grounding chunks: use the snippet, enriched with a short fetched
+        # excerpt of the top results so synthesis has real content to cite.
+        chunks: list = []
+        meta: list[dict] = []
+        for i, r in enumerate(results):
+            text = r.snippet or ""
+            if i < 3:  # fetch only the top few to bound latency
+                try:
+                    fetched = fetch_url(r.url)
+                    # fetch_url returns a header line + body; keep a bounded slice.
+                    body = fetched.split("\n", 1)[1] if "\n" in fetched else fetched
+                    if body:
+                        text = (text + "\n" + body)[:1500]
+                except Exception:
+                    pass
+            chunks.append(RetrievedChunk(
+                text=text or r.title, source=r.url, score=1.0,
+                kind="web", provenance=f"web:{r.url}"))
+            meta.append({"title": r.title, "url": r.url,
+                         "snippet": r.snippet})
+        answer = GroundedResponder(
+            self.agent.llm, can_escalate=self.agent._under_budget).answer(
+                query, chunks)
+        self._bill_chat()
+        return {
+            "text": answer.text,
+            "abstained": answer.abstained,
+            "citations": answer.citations,
+            "results": meta,
+        }
 
     def _bill_chat(self) -> None:
         """Accrue an interactive chat's real token cost to the spend budget.
