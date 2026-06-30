@@ -877,6 +877,26 @@ class Store:
                 "AND next_run_ts <= ? ORDER BY next_run_ts ASC", (now,)).fetchall()
         return [dict(r) for r in rows]
 
+    def claim_due_cron_jobs(self, now: float | None = None) -> list[dict]:
+        """Atomically select due jobs AND clear their next_run_ts in one locked
+        transaction, so a second tick (or a concurrent worker) can't pick up the
+        same job before reschedule() re-arms it — preventing double-firing. The
+        caller MUST reschedule each returned job to re-arm or stop it.
+        """
+        now = now if now is not None else time.time()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM cron_jobs WHERE enabled=1 AND next_run_ts IS NOT NULL "
+                "AND next_run_ts <= ? ORDER BY next_run_ts ASC", (now,)).fetchall()
+            claimed = [dict(r) for r in rows]
+            if claimed:
+                ids = [r["job_id"] for r in claimed]
+                self._conn.executemany(
+                    "UPDATE cron_jobs SET next_run_ts=NULL WHERE job_id=?",
+                    [(i,) for i in ids])
+                self._conn.commit()
+        return claimed
+
     def set_cron_enabled(self, job_id: str, enabled: bool) -> bool:
         with self._lock:
             cur = self._conn.execute(

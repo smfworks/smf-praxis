@@ -211,3 +211,51 @@ def test_http_transport_rejects_id_mismatch():
             assert "id" in str(exc).lower()
     finally:
         srv.shutdown()
+
+
+# BUG 7 (cron/persistence): rapid second tick double-fired a due job.
+def test_cron_claim_prevents_double_fire(tmp_path, monkeypatch):
+    import time
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.cron import CronScheduler
+    from hybridagent.persistence import Store
+    store = Store.open()
+    sched = CronScheduler(store)
+    job = sched.create("ping", "30m")
+    jid = job["job_id"]
+    store.set_cron_next_run(jid, time.time() - 10)
+    first = sched.claim()
+    second = sched.claim()   # before reschedule
+    assert len(first) == 1
+    assert len(second) == 0  # claimed job not returned twice
+
+
+# BUG 6 (vault): PRAXIS_VAULT_KEY set without cryptography must warn, not silently
+# store plaintext-equivalent base64 while pretending to encrypt.
+def test_vault_warns_on_silent_encryption_downgrade(tmp_path, monkeypatch, caplog):
+    import logging
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRAXIS_VAULT_KEY", "some-key")
+    from hybridagent import vault
+    # only meaningful when cryptography is absent (the degraded path)
+    try:
+        import cryptography  # noqa: F401
+        return  # encryption available -> no downgrade to warn about
+    except ImportError:
+        pass
+    with caplog.at_level(logging.WARNING):
+        vault._fernet()
+    assert any("NOT encrypted" in r.message or "cryptography" in r.message
+               for r in caplog.records)
+
+
+def test_vault_roundtrip_prefix_collision(tmp_path, monkeypatch):
+    """A stored value that itself starts with 'f:' or 'b:' must round-trip."""
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.delenv("PRAXIS_VAULT_KEY", raising=False)
+    from hybridagent.vault import CredentialVault
+    import os
+    v = CredentialVault()
+    v.put("c", {"X": "f:not-really-fernet"})
+    with v.inject("c"):
+        assert os.environ.get("X") == "f:not-really-fernet"

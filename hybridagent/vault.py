@@ -48,6 +48,14 @@ def _fernet():
         import hashlib
         digest = hashlib.sha256(key.encode()).digest()
         return Fernet(base64.urlsafe_b64encode(digest))
+    except ImportError:
+        # The user set PRAXIS_VAULT_KEY expecting encryption, but cryptography
+        # isn't installed. Do NOT silently downgrade to base64 (which is not
+        # encryption) without telling them — that's a false security assurance.
+        _log.warning("PRAXIS_VAULT_KEY is set but the 'cryptography' package is "
+                     "not installed; vault values are stored base64-OBFUSCATED, "
+                     "NOT encrypted. Install cryptography for real encryption.")
+        return None
     except Exception:  # noqa: BLE001
         return None
 
