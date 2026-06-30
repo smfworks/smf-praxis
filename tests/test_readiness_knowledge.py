@@ -151,3 +151,37 @@ def test_bootstrap_seeds_starter_knowledge(tmp_path, monkeypatch):
     assert conf["agents"]["memoryRecall"] is True
     assert conf["agents"]["skillRecall"] is True
 
+
+def test_query_knowledge_tool_is_registered_and_read_risk(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.broker import RiskClass
+    from hybridagent.tools import default_registry
+    reg = default_registry()
+    assert "query_knowledge" in reg.names()
+    assert reg.get("query_knowledge").risk is RiskClass.READ
+
+
+def test_query_knowledge_answers_from_seeded_kb(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent import bootstrap
+    from hybridagent.persistence import Store
+    from hybridagent.real_tools import query_knowledge
+    bootstrap.run(Store.open())
+    out = query_knowledge("What is the Praxis governance broker?")
+    assert "praxis-overview" in out
+    assert "[query_knowledge]" in out
+
+
+def test_recall_preview_surfaces_memory(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.daemon import Daemon
+    d = Daemon.from_env()
+    d._ensure_agent()
+    d.agent.memory.add_durable(
+        "The project deadline is the end of Q3.", kind="fact",
+        provenance="test")
+    preview = d._recall_preview([{"role": "user", "content": "when is the deadline"}])
+    assert isinstance(preview["memory"], list)
+    assert isinstance(preview["skills"], list)
+
+

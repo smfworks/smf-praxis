@@ -10,7 +10,14 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .broker import RiskClass
-from .real_tools import fetch_url, list_dir, read_file, search_web, write_file
+from .real_tools import (
+    fetch_url,
+    list_dir,
+    query_knowledge,
+    read_file,
+    search_web,
+    write_file,
+)
 
 
 @dataclass
@@ -180,6 +187,16 @@ _SEARCH_WEB_SCHEMA = {
     "additionalProperties": False,
 }
 
+_QUERY_KB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question": {"type": "string",
+                     "description": "Question to answer from the knowledge base"},
+    },
+    "required": ["question"],
+    "additionalProperties": False,
+}
+
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -208,6 +225,9 @@ def default_registry() -> ToolRegistry:
     reg.register(Tool("search_web", RiskClass.READ,
                       "Search the web (Tavily/Brave/SerpAPI when configured)",
                       search_web, parameters=_SEARCH_WEB_SCHEMA))
+    reg.register(Tool("query_knowledge", RiskClass.READ,
+                      "Answer from the local knowledge base / RAG repositories",
+                      query_knowledge, parameters=_QUERY_KB_SCHEMA))
     from .browser import browser_tools
     for tool in browser_tools():
         reg.register(tool)
