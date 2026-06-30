@@ -92,3 +92,62 @@ def test_daemon_sources_add_rejects_empty_uri(tmp_path, monkeypatch):
     from hybridagent.daemon import Daemon
     d = Daemon.from_env()
     assert "error" in d.sources_add("")
+
+
+def test_research_synthesizes_cited_answer(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent import search
+    from hybridagent.daemon import Daemon
+    from hybridagent.search import SearchResult
+
+    def fake_web_search(q, max_results=5):
+        return [
+            SearchResult("RRF", "https://ex.com/rrf",
+                         "Reciprocal Rank Fusion combines ranked lists by "
+                         "summing one over k plus rank."),
+            SearchResult("BM25", "https://ex.com/bm25",
+                         "BM25 is a lexical ranking function."),
+        ]
+    # Patch the symbol the daemon imports at call time.
+    monkeypatch.setattr(search, "web_search", fake_web_search)
+    d = Daemon.from_env()
+    res = d.research("how does reciprocal rank fusion work")
+    assert res["abstained"] is False
+    assert res["citations"], "expected at least one citation"
+    assert any("ex.com" in u for u in [r["url"] for r in res["results"]])
+
+
+def test_research_handles_no_results(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent import search
+    from hybridagent.daemon import Daemon
+    monkeypatch.setattr(search, "web_search", lambda q, max_results=5: [])
+    d = Daemon.from_env()
+    res = d.research("a query with no hits")
+    assert res["abstained"] is True
+    assert res["results"] == []
+
+
+def test_research_rejects_empty_query(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.daemon import Daemon
+    d = Daemon.from_env()
+    assert "error" in d.research("")
+
+
+def test_bootstrap_seeds_starter_knowledge(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent import bootstrap, config
+    from hybridagent.persistence import Store
+    store = Store.open()
+    res = bootstrap.run(store)
+    assert res["knowledge"]["seeded"] is True
+    assert res["knowledge"]["chunks"] > 0
+    # Idempotent: a second run does not re-seed.
+    again = bootstrap.run(store)
+    assert again["knowledge"]["seeded"] is False
+    # Defaults were written.
+    conf = config.load_config()
+    assert conf["agents"]["memoryRecall"] is True
+    assert conf["agents"]["skillRecall"] is True
+
