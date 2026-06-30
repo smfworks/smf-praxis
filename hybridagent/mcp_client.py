@@ -144,6 +144,115 @@ class StdioTransport:
         return cls(proc.stdout, proc.stdin, proc=proc)
 
 
+class HttpTransport:
+    """MCP Streamable-HTTP transport (stdlib ``urllib`` only).
+
+    Speaks JSON-RPC 2.0 to a remote MCP server over HTTPS: each ``request`` is a
+    single POST whose response is either ``application/json`` or an SSE
+    ``text/event-stream`` carrying one ``data:`` JSON-RPC message (the
+    Streamable-HTTP shape used by remote MCP servers such as xAI's Docs MCP).
+    A ``Mcp-Session-Id`` returned by the server on initialize is echoed on every
+    subsequent request. Notifications are fire-and-forget POSTs.
+
+    Same surface as :class:`StdioTransport` (``request``/``notify``/``close``)
+    so :class:`MCPClient` is transport-agnostic.
+    """
+
+    def __init__(self, url: str, headers: dict | None = None) -> None:
+        self._url = url
+        self._base_headers = dict(headers or {})
+        self._next_id = 0
+        self._lock = threading.Lock()
+        self._session_id: str | None = None
+
+    def _post(self, payload: dict, timeout: float) -> tuple[dict | None, dict]:
+        import urllib.request
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            # Streamable HTTP servers require the client to accept both shapes.
+            "Accept": "application/json, text/event-stream",
+            **self._base_headers,
+        }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        req = urllib.request.Request(self._url, data=body, headers=headers,
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            sid = resp.headers.get("Mcp-Session-Id")
+            if sid:
+                self._session_id = sid
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            raw = resp.read().decode("utf-8", errors="replace")
+        if "text/event-stream" in ctype:
+            return self._parse_sse(raw), {}
+        if not raw.strip():
+            return None, {}
+        try:
+            return json.loads(raw), {}
+        except ValueError:
+            return None, {}
+
+    @staticmethod
+    def _parse_sse(text: str) -> dict | None:
+        """Return the last JSON-RPC message carried in an SSE ``data:`` stream."""
+        last: dict | None = None
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[len("data:"):].strip()
+            if not payload:
+                continue
+            try:
+                msg = json.loads(payload)
+            except ValueError:
+                continue
+            if isinstance(msg, dict):
+                last = msg
+        return last
+
+    def request(self, method: str, params: dict | None = None,
+                timeout: float = 20.0) -> dict:
+        with self._lock:
+            self._next_id += 1
+            mid = self._next_id
+        payload = {"jsonrpc": "2.0", "id": mid, "method": method,
+                   "params": params or {}}
+        try:
+            msg, _ = self._post(payload, timeout)
+        except Exception as exc:  # noqa: BLE001 - normalize to MCPError
+            raise MCPError(f"{method} failed: {exc}") from exc
+        if not msg:
+            raise MCPError(f"{method}: empty response")
+        if "error" in msg:
+            err = msg["error"]
+            detail = err.get("message", err) if isinstance(err, dict) else err
+            raise MCPError(f"{method} failed: {detail}")
+        result = msg.get("result", {})
+        return result if isinstance(result, dict) else {}
+
+    def notify(self, method: str, params: dict | None = None) -> None:
+        payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        try:
+            self._post(payload, timeout=10.0)
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        # Best-effort: ask the server to drop the session if one was issued.
+        if not self._session_id:
+            return
+        try:
+            import urllib.request
+            headers = {**self._base_headers, "Mcp-Session-Id": self._session_id}
+            req = urllib.request.Request(self._url, headers=headers,
+                                         method="DELETE")
+            urllib.request.urlopen(req, timeout=5.0).close()
+        except Exception:
+            pass
+
+
 # -------------------------------------------------------------------- client
 class MCPClient:
     """A minimal MCP client over a :class:`StdioTransport` (or any compatible)."""
@@ -187,6 +296,16 @@ class MCPClient:
     def connect_stdio(cls, command: list[str], env: dict | None = None,
                       cwd: str | None = None, **kw: Any) -> "MCPClient":
         return cls(StdioTransport.spawn(command, env=env, cwd=cwd), **kw)
+
+    @classmethod
+    def connect_http(cls, url: str, headers: dict | None = None,
+                     **kw: Any) -> "MCPClient":
+        """Connect to a remote MCP server over Streamable HTTP (no subprocess).
+
+        Used for hosted MCP endpoints such as xAI's Docs MCP. ``headers`` may
+        carry auth (e.g. ``{"Authorization": "Bearer <key>"}``).
+        """
+        return cls(HttpTransport(url, headers=headers), **kw)
 
 
 # ------------------------------------------------------------- risk mapping
@@ -255,11 +374,33 @@ def mcp_tools(client: MCPClient, server_name: str = "external",
     return out
 
 
-def load_mcp_tools(timeout: float = 20.0) -> "tuple[list[Tool], list[MCPClient]]":
-    """Spawn every enabled ``agents.mcp.servers`` entry and adapt their tools.
+def _expand_env(value: Any) -> Any:
+    """Substitute ``${VAR}`` references from the environment in strings (and the
+    string values of a dict), so MCP auth headers can reference a secret env var
+    instead of storing a key in plaintext config."""
+    import os
+    import re
 
-    Returns ``(tools, clients)``; the caller owns closing the clients. A server
-    that fails to start is skipped so one bad entry can't break the agent.
+    def _sub(s: str) -> str:
+        return re.sub(r"\$\{([A-Z0-9_]+)\}",
+                      lambda m: os.environ.get(m.group(1), ""), s)
+    if isinstance(value, str):
+        return _sub(value)
+    if isinstance(value, dict):
+        return {k: (_sub(v) if isinstance(v, str) else v)
+                for k, v in value.items()}
+    return value
+
+
+def load_mcp_tools(timeout: float = 20.0) -> "tuple[list[Tool], list[MCPClient]]":
+    """Spawn/connect every enabled ``agents.mcp.servers`` entry and adapt tools.
+
+    Each server is either a **stdio** server (``command`` + optional ``args``/
+    ``env``) or a **remote HTTP** server (``url`` + optional ``headers``, used for
+    hosted MCP endpoints such as xAI's Docs MCP). Header/env values support
+    ``${ENV_VAR}`` substitution so secrets stay out of config. Returns
+    ``(tools, clients)``; the caller owns closing the clients. A server that
+    fails to start is skipped so one bad entry can't break the agent.
     """
     from . import config as cfg
     servers = (cfg.load_config().get("agents", {})
@@ -269,14 +410,21 @@ def load_mcp_tools(timeout: float = 20.0) -> "tuple[list[Tool], list[MCPClient]]
     for name, sc in servers.items():
         if not sc.get("enabled", True):
             continue
-        command = sc.get("command")
-        if isinstance(command, str):
-            command = [command, *sc.get("args", [])]
-        if not command:
-            continue
         client: MCPClient | None = None
         try:
-            client = MCPClient.connect_stdio(command, env=sc.get("env"))
+            url = sc.get("url")
+            if url:
+                # Remote HTTP (Streamable HTTP) MCP server.
+                headers = _expand_env(sc.get("headers") or {})
+                client = MCPClient.connect_http(url, headers=headers)
+            else:
+                command = sc.get("command")
+                if isinstance(command, str):
+                    command = [command, *sc.get("args", [])]
+                if not command:
+                    continue
+                client = MCPClient.connect_stdio(
+                    command, env=_expand_env(sc.get("env")))
             client.initialize()
             tools.extend(mcp_tools(client, server_name=name,
                                    risk_overrides=sc.get("risk")))
