@@ -131,6 +131,28 @@ def _check_wiki(store=None) -> Check:
                  "or `praxis wiki-add <uri>` / `praxis ingest <file>`.")
 
 
+def _check_sandbox() -> Check:
+    """Report the execution-isolation backend (G6)."""
+    try:
+        from .sandbox import backend_status
+        st = backend_status()
+    except Exception as exc:  # noqa: BLE001
+        return Check("sandbox", "Execution sandbox", "off", f"unavailable: {exc}")
+    eff = st["effective"]
+    if eff == "docker":
+        return Check("sandbox", "Execution sandbox", "ok",
+                     "Docker isolation active (network="
+                     f"{st['network']}, image={st['image']})")
+    if st["configured"] in ("docker", "auto") and not st["docker_available"]:
+        return Check("sandbox", "Execution sandbox", "warn",
+                     "configured for Docker but Docker is unavailable; "
+                     "running locally (path-confined only)",
+                     "Install/start Docker, or set agents.sandbox.backend=local.")
+    return Check("sandbox", "Execution sandbox", "off",
+                 "local backend (path-confined; no process/network isolation)",
+                 "Set agents.sandbox.backend=docker for container isolation.")
+
+
 def run_checks(store=None) -> list[Check]:
     """Run every readiness check. Order is the display order."""
     return [
@@ -140,6 +162,7 @@ def run_checks(store=None) -> list[Check]:
         _check_wiki(store),
         _check_embed(),
         _check_skills(),
+        _check_sandbox(),
     ]
 
 
