@@ -22,6 +22,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import List
 
 _INTERVAL_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 _KEYWORDS = {"hourly": 3600.0, "daily": 86400.0, "weekly": 604800.0}
@@ -171,7 +172,7 @@ class CronScheduler:
             mode=normalize_mode(mode), deliver=deliver, next_run_ts=nr.ts)
         return self.store.get_cron_job(job_id)
 
-    def list(self) -> list[dict]:
+    def list(self) -> List[dict]:
         return self.store.list_cron_jobs()
 
     def delete(self, job_id: str) -> bool:
@@ -187,10 +188,10 @@ class CronScheduler:
                 self.store.set_cron_next_run(job_id, nr.ts)
         return ok
 
-    def due(self, now: float | None = None) -> list[dict]:
+    def due(self, now: float | None = None) -> List[dict]:
         return self.store.due_cron_jobs(now)
 
-    def claim(self, now: float | None = None) -> list[dict]:
+    def claim(self, now: float | None = None) -> List[dict]:
         """Atomically claim due jobs (clears their next_run_ts) so a rapid second
         tick can't double-run them. Caller MUST reschedule each claimed job."""
         if hasattr(self.store, "claim_due_cron_jobs"):

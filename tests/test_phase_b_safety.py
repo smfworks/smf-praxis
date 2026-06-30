@@ -1,8 +1,6 @@
 """Phase B safety: agent identity (G8), policy hook (G8), sandbox backend (G6)."""
 import os
 
-import pytest
-
 from hybridagent import config as cfg
 
 

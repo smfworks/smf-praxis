@@ -149,9 +149,9 @@ def deliver(target: str, text: str, store=None) -> DeliveryResult:
     target = (target or "").strip()
     if not target or target == "local":
         return DeliveryResult(True, "local", "not delivered (local)")
-    channel, _, dest = target.partition(":")
+    channel, _, dest_raw = target.partition(":")
     channel = channel.strip().lower()
-    dest = dest.strip() or None
+    dest = dest_raw.strip() or None
     sender = _CHANNELS.get(channel)
     if sender is None:
         return DeliveryResult(False, channel,

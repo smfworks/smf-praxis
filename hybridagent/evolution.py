@@ -109,7 +109,7 @@ def trigger_fitness(trigger: str, goals: list[str]) -> float:
     tk = _keywords(trigger)
     if not tk:
         return 0.0
-    hits = 0
+    hits = 0.0
     for g in goals:
         gk = _keywords(g)
         if gk and (tk & gk):

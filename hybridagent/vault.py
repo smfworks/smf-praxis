@@ -26,6 +26,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import List
 
 from . import config as cfg
 from .logging_util import get_logger
@@ -127,7 +128,7 @@ class CredentialVault:
         return True
 
     # ------------------------------------------------------------------ read
-    def list(self) -> list[Bundle]:
+    def list(self) -> List[Bundle]:
         return [Bundle(name=n, scope=b.get("scope", []),
                        keys=sorted(b.get("values", {})))
                 for n, b in self._read().items()]
@@ -145,7 +146,7 @@ class CredentialVault:
             return {}
         return {k: _dec(v) for k, v in b.get("values", {}).items()}
 
-    def bundles_for_tool(self, tool: str) -> list[str]:
+    def bundles_for_tool(self, tool: str) -> List[str]:
         """Names of bundles whose scope includes ``tool`` (or is unscoped)."""
         out = []
         for n, b in self._read().items():

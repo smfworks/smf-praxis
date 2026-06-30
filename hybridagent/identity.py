@@ -143,11 +143,15 @@ class AgentIdentity:
 
     def attest(self, action: str, args: dict | None = None) -> Attestation:
         args_hash = hashlib.sha256(_canonical(args or {})).hexdigest()
+        ts = time.time()
+        nonce = secrets.token_hex(8)
         payload = {"agent_id": self.agent_id, "action": action,
-                   "args_hash": args_hash, "ts": time.time(),
-                   "nonce": secrets.token_hex(8), "algo": self.algo}
+                   "args_hash": args_hash, "ts": ts,
+                   "nonce": nonce, "algo": self.algo}
         sig = self._sign_bytes(_canonical(payload))
-        return Attestation(signature=sig, **payload)
+        return Attestation(agent_id=self.agent_id, action=action,
+                           args_hash=args_hash, ts=ts, nonce=nonce,
+                           algo=self.algo, signature=sig)
 
     def verify(self, att: Attestation) -> bool:
         """Verify an attestation this identity signed (or, for ed25519, that
