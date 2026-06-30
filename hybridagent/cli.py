@@ -976,6 +976,69 @@ def cmd_evolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plugins(args: argparse.Namespace) -> int:
+    from . import plugins as pl
+    action = getattr(args, "plugins_action", None) or "list"
+    if action in ("enable", "disable"):
+        res = pl.set_enabled(args.name, action == "enable")
+        print(f"{action}d plugin '{res['plugin']}'")
+        return 0
+    infos = pl.list_plugins()
+    if not infos:
+        print(f"no plugins found in {pl.plugins_dir()} "
+              "(drop a *.py with a register(registry) function)")
+        return 0
+    for i in infos:
+        print(f"{'[on] ' if i.enabled else '[off]'} {i.name}  ({i.path})")
+    return 0
+
+
+def cmd_secrets_bundle(args: argparse.Namespace) -> int:
+    from .vault import CredentialVault
+    v = CredentialVault()
+    action = getattr(args, "bundle_action", None) or "list"
+    if action == "put":
+        values = {}
+        for pair in args.values or []:
+            if "=" in pair:
+                k, _, val = pair.partition("=")
+                values[k.strip()] = val
+        if not values:
+            print("provide values as KEY=VALUE (e.g. GITHUB_TOKEN=ghp_...)")
+            return 1
+        scope = (args.scope or "").split(",") if args.scope else []
+        scope = [s.strip() for s in scope if s.strip()]
+        b = v.put(args.name, values, scope=scope or None)
+        print(f"stored bundle '{b.name}' keys={b.keys} scope={b.scope or 'all'}")
+        return 0
+    if action == "remove":
+        print("removed" if v.delete(args.name) else "not found")
+        return 0
+    bundles = v.list()
+    if not bundles:
+        print("no credential bundles (add one: praxis secrets-bundle put NAME KEY=VAL)")
+        return 0
+    for b in bundles:
+        print(f"{b.name}: keys={b.keys} scope={b.scope or 'all tools'}")
+    return 0
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from .benchmark import run_reliability
+    rep = run_reliability(k=args.k, category=args.category)
+    if getattr(args, "json", False):
+        print(_json.dumps(rep.to_dict(), indent=2))
+    else:
+        print(rep.summary())
+        if rep.flaky_cases:
+            print("flaky cases (nondeterminism — investigate):")
+            for cid, c in rep.flaky_cases.items():
+                print(f"  {cid}: passed {c}/{rep.k}")
+    return 0 if rep.stable else 1
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     import json
     import os
@@ -1277,6 +1340,32 @@ def build_parser() -> argparse.ArgumentParser:
     pevo.add_argument("--llm", action="store_true",
                       help="use the configured LLM for reflective mutation")
     pevo.set_defaults(func=cmd_evolve)
+
+    ppl = sub.add_parser("plugins", help="manage third-party plugins")
+    plsub = ppl.add_subparsers(dest="plugins_action")
+    plsub.add_parser("list", help="list discovered plugins (default)")
+    ple = plsub.add_parser("enable", help="enable a plugin")
+    ple.add_argument("name")
+    pld = plsub.add_parser("disable", help="disable a plugin")
+    pld.add_argument("name")
+    ppl.set_defaults(func=cmd_plugins)
+
+    psb = sub.add_parser("secrets-bundle", help="manage named credential bundles")
+    sbsub = psb.add_subparsers(dest="bundle_action")
+    sbsub.add_parser("list", help="list credential bundles (default)")
+    sbp = sbsub.add_parser("put", help="create/replace a bundle")
+    sbp.add_argument("name")
+    sbp.add_argument("values", nargs="*", help="KEY=VALUE pairs")
+    sbp.add_argument("--scope", default="", help="comma-separated tool names (default: all)")
+    sbr = sbsub.add_parser("remove", help="delete a bundle")
+    sbr.add_argument("name")
+    psb.set_defaults(func=cmd_secrets_bundle)
+
+    pbench = sub.add_parser("bench", help="reliability benchmark (run eval suite k times)")
+    pbench.add_argument("-k", type=int, default=5, help="number of runs (default 5)")
+    pbench.add_argument("--category", default=None, help="restrict to one eval category")
+    pbench.add_argument("--json", action="store_true", help="emit JSON")
+    pbench.set_defaults(func=cmd_bench)
 
     pscan = sub.add_parser("scan", help="security-scan skills, MCP tools, or dependencies")
     scansub = pscan.add_subparsers(dest="scan_target")

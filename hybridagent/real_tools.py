@@ -100,6 +100,75 @@ def delegate(goal: str = "", role: str = "", **_kw) -> str:
             f"(run {run.run_id}); inspect with 'praxis subagents'")
 
 
+def generate_image(prompt: str = "", size: str = "1024x1024", **_kw) -> str:
+    """Generate an image from a text prompt via an OpenAI-compatible image API.
+
+    DRAFT risk: produces an artifact reference (URL/b64), sends nothing anywhere.
+    Requires an image-capable provider key (OPENAI_API_KEY or XAI_API_KEY);
+    returns an honest note when none is configured.
+    """
+    import json as _json
+    import os
+    import urllib.request
+
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return "[generate_image] a prompt is required"
+    candidates = [
+        ("OPENAI_API_KEY", "https://api.openai.com/v1/images/generations", "gpt-image-1"),
+        ("XAI_API_KEY", "https://api.x.ai/v1/images/generations", "grok-2-image"),
+    ]
+    for env, url, model in candidates:
+        key = os.environ.get(env)
+        if not key:
+            continue
+        try:
+            body = _json.dumps({"model": model, "prompt": prompt, "size": size,
+                                "n": 1}).encode()
+            req = urllib.request.Request(
+                url, data=body, method="POST",
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {key}"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = _json.loads(resp.read().decode())
+            item = (data.get("data") or [{}])[0]
+            ref = item.get("url") or (item.get("b64_json", "")[:40] + "...(b64)")
+            return f"[generate_image] generated via {model}: {ref}"
+        except Exception as exc:  # noqa: BLE001
+            return f"[generate_image] {model} failed: {exc}"
+    return ("[generate_image] no image provider configured "
+            "(set OPENAI_API_KEY or XAI_API_KEY)")
+
+
+def text_to_speech(text: str = "", voice: str = "alloy", **_kw) -> str:
+    """Synthesize speech from text via an OpenAI-compatible TTS API, saving an
+    mp3 under PRAXIS_WORK_DIR. DRAFT risk: writes a local artifact, sends nothing.
+    """
+    import json as _json
+    import os
+    import urllib.request
+
+    text = (text or "").strip()
+    if not text:
+        return "[text_to_speech] text is required"
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return "[text_to_speech] no TTS provider configured (set OPENAI_API_KEY)"
+    try:
+        body = _json.dumps({"model": "gpt-4o-mini-tts", "input": text[:4000],
+                            "voice": voice}).encode()
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/audio/speech", data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {key}"})
+        out_path = _resolve(f"tts_{abs(hash(text)) % 10**8}.mp3")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            out_path.write_bytes(resp.read())
+        return f"[text_to_speech] wrote {out_path.name} ({voice})"
+    except Exception as exc:  # noqa: BLE001
+        return f"[text_to_speech] failed: {exc}"
+
+
 def call_agent(target: str = "", goal: str = "", **_kw) -> str:
     """Call another autonomous agent (A2A) to handle a goal and return its result.
 
