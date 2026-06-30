@@ -93,18 +93,31 @@ def select_backend() -> str:
     return "local"
 
 
-def _run_local(command: list[str], workdir: str, timeout: float,
+def _run_local(command, workdir: str, timeout: float,
                env: dict | None) -> ExecResult:
+    # A string command runs through the HOST shell (cmd.exe on Windows, /bin/sh
+    # on POSIX) via shell=True, so local execution works cross-platform. A list
+    # command is executed argv-style (no shell). Hardcoding "sh -c" broke Windows.
+    use_shell = isinstance(command, str)
     try:
         proc = subprocess.run(
             command, cwd=workdir, capture_output=True, text=True,
-            timeout=timeout, env={**os.environ, **(env or {})}, check=False)
+            timeout=timeout, env={**os.environ, **(env or {})}, check=False,
+            shell=use_shell)
         return ExecResult(proc.returncode == 0, proc.returncode,
                           proc.stdout, proc.stderr, "local")
     except subprocess.TimeoutExpired:
         return ExecResult(False, 124, "", "timed out", "local", "timeout")
     except Exception as exc:  # noqa: BLE001
         return ExecResult(False, 1, "", str(exc), "local", "error")
+
+
+def _as_posix_argv(command) -> list[str]:
+    """Wrap a string command for a POSIX target (docker container / ssh host),
+    where /bin/sh is always present regardless of the host OS."""
+    if isinstance(command, str):
+        return ["sh", "-c", command]
+    return command
 
 
 def _run_docker(command: list[str], workdir: str, timeout: float,
@@ -207,21 +220,21 @@ def run(command, workdir: str = ".", timeout: float = 60.0,
         env: dict | None = None, backend: str | None = None) -> ExecResult:
     """Run a command under the configured (or given) isolation backend.
 
-    ``command`` may be a list (argv) or a string (run via ``sh -c``).
+    ``command`` may be a list (argv, run without a shell) or a string. A string
+    runs through the HOST shell for the local backend (cmd.exe/sh, cross-platform)
+    and through ``/bin/sh`` for the POSIX targets (docker container / ssh host).
     """
-    if isinstance(command, str):
-        command = ["sh", "-c", command]
     eff = backend or select_backend()
     block = _config_block()
     if eff == "docker":
         return _run_docker(
-            command, workdir, timeout, env,
+            _as_posix_argv(command), workdir, timeout, env,
             image=block.get("image", _DEFAULT_IMAGE),
             network=block.get("network", "none"),
             mem=str(block.get("memory", "512m")),
             pids=int(block.get("pids_limit", 256)))
     if eff == "ssh":
-        return _run_ssh(command, workdir, timeout, env,
+        return _run_ssh(_as_posix_argv(command), workdir, timeout, env,
                         host=block.get("ssh_host", ""),
                         key=block.get("ssh_key"),
                         remote_dir=block.get("remote_dir"))
@@ -231,7 +244,7 @@ def run(command, workdir: str = ".", timeout: float = 60.0,
             _log.warning("backend '%s' has no agents.sandbox.%s_run configured; "
                          "running locally", eff, eff)
             return _run_local(command, workdir, timeout, env)
-        return _run_cli_sandbox(command, timeout, env, tool=eff,
+        return _run_cli_sandbox(_as_posix_argv(command), timeout, env, tool=eff,
                                 run_args=run_args)
     return _run_local(command, workdir, timeout, env)
 

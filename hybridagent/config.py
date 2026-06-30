@@ -23,6 +23,33 @@ def home_dir() -> Path:
     return Path(base) if base else Path.home() / f".{APP}"
 
 
+def secure_file(path) -> bool:
+    """Restrict a secret file to the current user, cross-platform.
+
+    POSIX: chmod 0600. Windows: chmod only flips the read-only bit (it does NOT
+    stop other users reading the file), so we use icacls to grant the current
+    user full control and remove inherited ACLs — real protection rather than a
+    false 0600 assurance. Returns True if restriction was applied, False if it
+    could not be (caller may warn). Best-effort: never raises.
+    """
+    p = Path(path)
+    try:
+        if os.name == "nt":
+            import getpass
+            import subprocess
+            user = os.environ.get("USERNAME") or getpass.getuser()
+            # /inheritance:r removes inherited ACEs; /grant gives only this user.
+            r = subprocess.run(
+                ["icacls", str(p), "/inheritance:r",
+                 "/grant:r", f"{user}:F"],
+                capture_output=True, timeout=10, check=False)
+            return r.returncode == 0
+        os.chmod(p, 0o600)
+        return True
+    except Exception:  # noqa: BLE001 - never block a write on a perms failure
+        return False
+
+
 def config_path() -> Path:
     return home_dir() / f"{APP}.json"
 
@@ -149,10 +176,7 @@ def _write_file_key(provider_id: str, api_key: str) -> None:
     auth = _load_auth()
     auth.setdefault(provider_id, {})["apiKey"] = api_key
     auth_path().write_text(json.dumps(auth, indent=2), encoding="utf-8")
-    try:  # best-effort: tighten perms on POSIX
-        os.chmod(auth_path(), 0o600)
-    except OSError:
-        pass
+    secure_file(auth_path())
 
 
 def _delete_file_key(provider_id: str) -> None:

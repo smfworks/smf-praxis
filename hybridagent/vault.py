@@ -43,9 +43,10 @@ def _fernet():
     if not key:
         return None
     try:
-        from cryptography.fernet import Fernet
         # derive a urlsafe 32-byte key from the provided secret
         import hashlib
+
+        from cryptography.fernet import Fernet
         digest = hashlib.sha256(key.encode()).digest()
         return Fernet(base64.urlsafe_b64encode(digest))
     except ImportError:
@@ -101,10 +102,8 @@ class CredentialVault:
     def _write(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, indent=2))
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+        from . import config as _cfg
+        _cfg.secure_file(self.path)
 
     # ---------------------------------------------------------------- mutate
     def put(self, name: str, values: dict, scope: list[str] | None = None) -> Bundle:

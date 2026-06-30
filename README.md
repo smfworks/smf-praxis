@@ -69,11 +69,11 @@ irm https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.ps1 | iex
 # or from a clone:  .\install.ps1
 ```
 
-Useful flags (same on both scripts): `--with docs,multimodal,fast` to add
-optional extras, `--no-configure` to skip onboarding, and
-`--provider ollama --model llama3.1` to configure non-interactively. Then
-`source .venv/bin/activate` (`.venv\Scripts\Activate.ps1` on Windows) and run
-`praxis demo`.
+Useful flags — bash uses `--with docs,multimodal,fast` / `--no-configure` /
+`--provider ollama --model llama3.1`; PowerShell uses the same names as
+parameters: `-With docs,multimodal,fast` / `-NoConfigure` /
+`-Provider ollama -Model llama3.1`. Then `source .venv/bin/activate`
+(`.venv\Scripts\Activate.ps1` on Windows) and run `praxis demo`.
 
 ### From PyPI
 
