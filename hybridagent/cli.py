@@ -80,21 +80,45 @@ def cmd_m365(_args: argparse.Namespace) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
+    # Preset management: prebuilt server configs (e.g. xAI Docs MCP).
+    if getattr(args, "list_presets", False):
+        from . import mcp_presets
+        for name in mcp_presets.preset_names():
+            p = mcp_presets.get_preset(name) or {}
+            target = p.get("url") or p.get("command")
+            print(f"{name:14} {target}\n               {p.get('description', '')}")
+        return 0
+    if getattr(args, "enable_preset", None):
+        from . import mcp_presets
+        res = mcp_presets.enable_preset(args.enable_preset)
+        if res.get("error"):
+            print(res["error"])
+            return 1
+        print(f"enabled MCP preset '{res['enabled']}' "
+              f"(probe it: praxis mcp --probe {res['enabled']})")
+        return 0
+
     # Client mode: discover/inspect external MCP servers (stdlib, no 'mcp' pkg).
     if getattr(args, "list", False) or getattr(args, "probe", None):
         from . import config as cfg
         servers = (cfg.load_config().get("agents", {})
                    .get("mcp", {}).get("servers", {}) or {})
         if args.probe:
-            from .mcp_client import MCPClient, mcp_tools
+            from .mcp_client import MCPClient, _expand_env, mcp_tools
             sc = servers.get(args.probe)
             if not sc:
                 print(f"no MCP server '{args.probe}' under agents.mcp.servers")
                 return 1
-            command = sc.get("command")
-            if isinstance(command, str):
-                command = [command, *sc.get("args", [])]
-            client = MCPClient.connect_stdio(command, env=sc.get("env"))
+            url = sc.get("url")
+            if url:
+                client = MCPClient.connect_http(
+                    url, headers=_expand_env(sc.get("headers") or {}))
+            else:
+                command = sc.get("command")
+                if isinstance(command, str):
+                    command = [command, *sc.get("args", [])]
+                client = MCPClient.connect_stdio(
+                    command, env=_expand_env(sc.get("env")))
             try:
                 client.initialize()
                 tools = mcp_tools(client, server_name=args.probe,
@@ -107,11 +131,13 @@ def cmd_mcp(args: argparse.Namespace) -> int:
                 client.close()
             return 0
         if not servers:
-            print("no MCP servers configured (set agents.mcp.servers in praxis.json)")
+            print("no MCP servers configured (set agents.mcp.servers in praxis.json"
+                  " or run: praxis mcp --enable-preset xai-docs)")
             return 0
         for name, sc in servers.items():
             state = "enabled" if sc.get("enabled", True) else "disabled"
-            print(f"{name:16} {state:9} {sc.get('command')}")
+            target = sc.get("url") or sc.get("command")
+            print(f"{name:16} {state:9} {target}")
         return 0
 
     # Server mode (default): expose Praxis tools over stdio (needs the 'mcp' pkg).
@@ -1291,6 +1317,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="list configured external MCP servers")
     pmcp.add_argument("--probe", metavar="NAME",
                       help="connect to a configured MCP server and list its tools")
+    pmcp.add_argument("--list-presets", action="store_true",
+                      help="list prebuilt MCP server presets (e.g. xai-docs)")
+    pmcp.add_argument("--enable-preset", metavar="NAME",
+                      help="enable a prebuilt MCP preset (e.g. xai-docs) in config")
     pmcp.set_defaults(func=cmd_mcp)
 
     pdm = sub.add_parser("daemon", help="long-running task worker")

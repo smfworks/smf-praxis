@@ -146,6 +146,19 @@ CATALOG: dict[str, Provider] = {
         ],
         notes="Single key (AI_GATEWAY_API_KEY) fronts many providers; model ids are 'vendor/model'.",
     ),
+    "azure-foundry": Provider(
+        id="azure-foundry", label="Microsoft Foundry (Azure AI)",
+        base_url="https://YOUR-RESOURCE.services.ai.azure.com/models",
+        compatibility="openai", key_env="AZURE_AI_API_KEY", needs_key=True,
+        suggested_models=["gpt-4o", "gpt-4o-mini", "DeepSeek-R1",
+                          "Llama-3.3-70B-Instruct", "Phi-4", "grok-3",
+                          "mistral-large-2411"],
+        notes=("Microsoft Foundry Models OpenAI-compatible endpoint. Replace "
+               "YOUR-RESOURCE in the base URL with your Foundry resource name "
+               "(https://<resource>.services.ai.azure.com/models), and set "
+               "AZURE_AI_API_KEY to a resource key. Hosts OpenAI, DeepSeek, "
+               "Llama, Phi, Grok, Mistral and more under one endpoint."),
+    ),
     "custom": Provider(
         id="custom", label="Custom (OpenAI-compatible)",
         base_url="", compatibility="openai",
@@ -156,7 +169,7 @@ CATALOG: dict[str, Provider] = {
 
 ORDER = ["ollama", "openai", "anthropic", "google", "xai", "mistral", "groq",
          "deepseek", "perplexity", "together", "fireworks", "openrouter",
-         "github", "vercel-ai-gateway", "custom"]
+         "github", "vercel-ai-gateway", "azure-foundry", "custom"]
 
 
 def discover_ollama_models(base_url: str, timeout: float = 3.0) -> list[str]:
