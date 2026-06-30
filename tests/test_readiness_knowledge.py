@@ -15,7 +15,8 @@ def test_readiness_reports_all_checks(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     rep = readiness.readiness(Store.open())
     keys = {c["key"] for c in rep["checks"]}
-    assert keys == {"model", "memory", "search", "wiki", "embed", "skills"}
+    assert keys == {"model", "memory", "search", "wiki", "embed", "skills",
+                    "sandbox"}
     # Web research is ready out of the box via the keyless default.
     search = next(c for c in rep["checks"] if c["key"] == "search")
     assert search["status"] == "ok"

@@ -204,6 +204,15 @@ class GovernancePolicy:
     # set (separate from allowed_tools so the daemon's allowlist refresh can't undo
     # the pack restriction). None = no pack restriction.
     pack_tools: set[str] | None = None
+    # Optional external policy hook (OPA/Rego, Cedar, or any custom evaluator).
+    # Called as hook(ctx: dict) -> "deny" | "allow" | None for every authorize().
+    # ctx = {actor, tool, risk, args, args_hash, cycle_id, provenance}.
+    #   "deny"  -> hard deny (overrides everything, evaluated first)
+    #   "allow" -> short-circuit allow for an otherwise-consequential action
+    #   None    -> defer to the built-in governance logic (default)
+    # Kept as a plain callable so the dependency-free core stands alone; an
+    # OPA/Rego or Cedar binding plugs in here without touching broker internals.
+    policy_hook: object = None
 
 
 class GovernanceBroker:
@@ -294,6 +303,29 @@ class GovernanceBroker:
                   rationale: str = "") -> Decision:
         decision_id = f"dec-{uuid.uuid4().hex[:12]}"
         args_hash = self._hash_args(args)
+        # External policy hook (OPA/Rego/Cedar/custom) runs first: a "deny" is an
+        # absolute veto (defense in depth over the built-in logic); an "allow"
+        # short-circuits the consequential-action path for an explicitly
+        # whitelisted action. Hook errors fail SAFE (treated as no-opinion) so a
+        # broken policy can never silently widen access.
+        hook = getattr(self.policy, "policy_hook", None)
+        if callable(hook):
+            try:
+                verdict = hook({"actor": actor, "tool": tool, "risk": risk.value,
+                                "args": args, "args_hash": args_hash,
+                                "cycle_id": cycle_id, "provenance": provenance})
+            except Exception:  # noqa: BLE001 - a broken hook must not open access
+                verdict = "deny"
+            if verdict == "deny":
+                return self._log_decision(
+                    actor, tool, risk, Verdict.DENY, "denied by policy hook",
+                    decision_id=decision_id, cycle_id=cycle_id,
+                    policy_rule="policy_hook_deny", args_hash=args_hash)
+            if verdict == "allow" and tool in self.policy.allowed_tools:
+                return self._log_decision(
+                    actor, tool, risk, Verdict.ALLOW, "allowed by policy hook",
+                    decision_id=decision_id, cycle_id=cycle_id,
+                    policy_rule="policy_hook_allow", args_hash=args_hash)
         if tool not in self.policy.allowed_tools:
             return self._log_decision(actor, tool, risk, Verdict.DENY,
                                       "tool not in allowlist", decision_id=decision_id,
