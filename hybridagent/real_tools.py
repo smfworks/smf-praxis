@@ -77,6 +77,33 @@ def list_dir(path: str = ".", **_kw) -> str:
 
 
 # ------------------------------------------------------------------ web tools
+def query_knowledge(question: str, k: int = 5, **_kw) -> str:
+    """Answer a question grounded in the local knowledge base (RAG repositories).
+
+    Searches every registered knowledge namespace and returns the most relevant
+    indexed chunks with their sources, so the agent can ground answers in the
+    operator's documents instead of guessing. Returns an honest note when the
+    knowledge base is empty.
+    """
+    try:
+        from .persistence import Store
+        from .rag import Rag
+        rag = Rag(Store.open())
+        hits = rag.retrieve_all_ns(question, k=max(1, min(int(k or 5), 10)))
+    except Exception as exc:
+        return f"[query_knowledge] knowledge base unavailable: {exc}"
+    if not hits:
+        return ("[query_knowledge] no indexed knowledge yet. Add sources via the "
+                "dashboard Knowledge panel or `praxis ingest <file>`.")
+    lines = [f"[query_knowledge] {len(hits)} relevant chunk(s) for {question!r}:"]
+    for i, h in enumerate(hits, 1):
+        snippet = " ".join((h.text or "").split())
+        if len(snippet) > 400:
+            snippet = snippet[:397] + "..."
+        lines.append(f"{i}. ({h.source}) {snippet}")
+    return "\n".join(lines)
+
+
 def fetch_url(url: str, **_kw) -> str:
     """Fetch the text content of a URL.
 

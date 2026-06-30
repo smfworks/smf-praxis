@@ -973,6 +973,16 @@ async function agentChat(conv, wire, typing){
         const dl = frame.split('\n').find(l => l.startsWith('data:')); if(!dl) continue;
         let ev; try { ev = JSON.parse(dl.slice(5).trim()); } catch(_){ continue; }
         if(ev.type === 'meta'){ model = ev.model || ''; }
+        else if(ev.type === 'recall'){
+          var mem = (ev.memory||[]).length, sk = (ev.skills||[]).length;
+          if(mem || sk){
+            var parts = [];
+            if(mem) parts.push(mem + ' memor' + (mem===1?'y':'ies'));
+            if(sk) parts.push(sk + ' skill' + (sk===1?'':'s'));
+            var detail = (ev.memory||[]).map(function(m){return m.text;}).concat((ev.skills||[]).map(function(s){return 'skill: '+s.name;})).join(' · ');
+            addStep('🧠 <b>Recalled</b> <span class="muted">'+escapeHtml(parts.join(', '))+'</span><div class="muted" style="margin-top:.2rem;font-size:.74rem">'+escapeHtml(detail.slice(0,260))+'</div>', 'ok');
+          }
+        }
         else if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
         else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
         else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
@@ -3102,8 +3112,40 @@ class Daemon:
             engine = VerifiedChatAgent(engine, max_revisions=vc.max_revisions)
         grounded = self._ground_with_memory(system or _AGENT_SYSTEM, messages)
         grounded = self._ground_with_skills(grounded, messages)
+        # Surface what persistent memory / skills were recalled INTO this turn so
+        # the dashboard can show that memory is alive and working (Phase 3).
+        recall = self._recall_preview(messages)
+        if recall["memory"] or recall["skills"]:
+            yield {"type": "recall", **recall}
         for event in engine.run(messages, system=grounded):
             yield {"type": event.type, **event.data}
+
+    def _recall_preview(self, messages: list[dict]) -> dict:
+        """Collect a compact preview of the memory + skills recalled for the
+        latest user turn, for the dashboard's 'recalled into this turn' view."""
+        out: dict = {"memory": [], "skills": []}
+        last_user = next((str(m.get("content", "")) for m in reversed(messages)
+                          if m.get("role") == "user"), "")
+        if not last_user.strip() or self.agent is None:
+            return out
+        try:
+            if self.agent.memory is not None:
+                for it in self.agent.memory.recall(last_user, k=4):
+                    out["memory"].append({
+                        "kind": getattr(it, "kind", "note"),
+                        "text": (it.text or "")[:200],
+                        "provenance": getattr(it, "provenance", ""),
+                    })
+        except Exception:
+            pass
+        try:
+            skills = getattr(self.agent, "skills", None)
+            if skills is not None:
+                for sk in skills.retrieve(last_user, k=3):
+                    out["skills"].append({"name": getattr(sk, "name", "")})
+        except Exception:
+            pass
+        return out
 
     def _ground_with_memory(self, system: str, messages: list[dict]) -> str:
         """Prepend BM25-recalled memory relevant to the latest user turn.
