@@ -169,6 +169,36 @@ def text_to_speech(text: str = "", voice: str = "alloy", **_kw) -> str:
         return f"[text_to_speech] failed: {exc}"
 
 
+def run_shell(command: str = "", timeout: int = 60, **_kw) -> str:
+    """Execute a shell command through the configured isolation backend.
+
+    Runs via hybridagent.sandbox, so the command is confined by whatever backend
+    the operator configured (local path-confinement, Docker container, SSH host,
+    or a serverless sandbox CLI) — isolation is enforced by construction, not
+    bolted on. DESTRUCTIVE risk: shell is the highest-blast-radius capability, so
+    the broker HOLDS it for human approval before it runs.
+    """
+    command = (command or "").strip()
+    if not command:
+        return "[run_shell] a command is required"
+    try:
+        from .sandbox import run as sandbox_run
+        import os as _os
+        workdir = _os.environ.get("PRAXIS_WORK_DIR", ".")
+        res = sandbox_run(command, workdir=workdir, timeout=float(timeout))
+    except Exception as exc:  # noqa: BLE001
+        return f"[run_shell] failed: {exc}"
+    head = f"[run_shell] ({res.backend}) exit={res.exit_code}"
+    out = (res.stdout or "").strip()
+    err = (res.stderr or "").strip()
+    parts = [head]
+    if out:
+        parts.append(out[:2000])
+    if err:
+        parts.append("stderr: " + err[:500])
+    return "\n".join(parts)
+
+
 def call_agent(target: str = "", goal: str = "", **_kw) -> str:
     """Call another autonomous agent (A2A) to handle a goal and return its result.
 

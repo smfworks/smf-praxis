@@ -34,6 +34,23 @@ PRESETS: dict[str, dict] = {
         "enabled": True,
         "description": "DeepWiki MCP (read-only): query open-source repo docs.",
     },
+    "peekaboo": {
+        # macOS screen/computer automation MCP server (stdio, via npx).
+        # Risk pins: see/capture are READ; click/type/hotkey are CONSEQUENTIAL
+        # (send) so the broker HOLDS them for approval — desktop control is never
+        # auto-executed.
+        "command": "npx",
+        "args": ["-y", "@steipete/peekaboo-mcp"],
+        "enabled": True,
+        "description": "Peekaboo computer-use MCP (macOS): screenshots + GUI "
+                       "automation. Requires Node + Screen-Recording/Accessibility "
+                       "permissions. Click/type held for approval.",
+        "risk": {
+            "image": "read", "see": "read", "list": "read", "analyze": "read",
+            "click": "send", "type": "send", "scroll": "send", "hotkey": "send",
+            "press": "send", "drag": "send", "move": "send",
+        },
+    },
 }
 
 

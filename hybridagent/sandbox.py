@@ -30,7 +30,7 @@ from .logging_util import get_logger
 
 _log = get_logger("praxis.sandbox")
 
-_VALID_BACKENDS = {"local", "docker", "auto"}
+_VALID_BACKENDS = {"local", "docker", "auto", "ssh", "modal", "daytona"}
 _DEFAULT_IMAGE = "python:3.12-slim"
 
 
@@ -60,6 +60,10 @@ def _config_block() -> dict:
     return cfg.load_config().get("agents", {}).get("sandbox", {}) or {}
 
 
+def _tool_available(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
 def select_backend() -> str:
     """Resolve the effective backend from config, honoring availability."""
     block = _config_block()
@@ -74,6 +78,18 @@ def select_backend() -> str:
         return "local"
     if choice == "auto":
         return "docker" if _docker_available() else "local"
+    if choice == "ssh":
+        if block.get("ssh_host"):
+            return "ssh"
+        _log.warning("sandbox backend 'ssh' requested but agents.sandbox.ssh_host "
+                     "is unset; falling back to 'local'")
+        return "local"
+    if choice in ("modal", "daytona"):
+        if _tool_available(choice):
+            return choice
+        _log.warning("sandbox backend '%s' requested but its CLI is not "
+                     "installed; falling back to 'local'", choice)
+        return "local"
     return "local"
 
 
@@ -125,6 +141,59 @@ def _run_docker(command: list[str], workdir: str, timeout: float,
         return ExecResult(False, 1, "", str(exc), "docker", "error")
 
 
+def _run_ssh(command: list[str], workdir: str, timeout: float,
+             env: dict | None, *, host: str, key: str | None,
+             remote_dir: str | None) -> ExecResult:
+    """Run a command on a remote host over SSH (a 'serverless'/offloaded backend).
+
+    The host is operator-configured and trusted; we shell-quote the remote
+    command and run it in the configured remote working directory. This offloads
+    heavy/risky execution off the local machine entirely.
+    """
+    import shlex
+    remote_parts = []
+    for k, v in (env or {}).items():
+        remote_parts.append(f"{k}={shlex.quote(str(v))}")
+    if remote_dir:
+        remote_parts.append(f"cd {shlex.quote(remote_dir)} &&")
+    remote_parts.append(" ".join(shlex.quote(c) for c in command))
+    remote_cmd = " ".join(remote_parts)
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
+    if key:
+        ssh += ["-i", key]
+    ssh += [host, remote_cmd]
+    try:
+        proc = subprocess.run(ssh, capture_output=True, text=True,
+                              timeout=timeout, check=False)
+        return ExecResult(proc.returncode == 0, proc.returncode,
+                          proc.stdout, proc.stderr, "ssh")
+    except subprocess.TimeoutExpired:
+        return ExecResult(False, 124, "", "timed out", "ssh", "timeout")
+    except Exception as exc:  # noqa: BLE001
+        return ExecResult(False, 1, "", str(exc), "ssh", "error")
+
+
+def _run_cli_sandbox(command: list[str], timeout: float, env: dict | None,
+                     *, tool: str, run_args: list[str]) -> ExecResult:
+    """Run a command via a serverless-sandbox CLI (modal/daytona).
+
+    Uses the provider CLI's run/exec subcommand from config so we don't hardcode
+    a fast-moving CLI surface: ``agents.sandbox.<tool>_run`` supplies the argv
+    prefix (e.g. ['modal','run','...'] or ['daytona','exec','-w','ws','--']).
+    """
+    full = list(run_args) + command
+    try:
+        proc = subprocess.run(
+            full, capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, **(env or {})}, check=False)
+        return ExecResult(proc.returncode == 0, proc.returncode,
+                          proc.stdout, proc.stderr, tool)
+    except subprocess.TimeoutExpired:
+        return ExecResult(False, 124, "", "timed out", tool, "timeout")
+    except Exception as exc:  # noqa: BLE001
+        return ExecResult(False, 1, "", str(exc), tool, "error")
+
+
 def run(command, workdir: str = ".", timeout: float = 60.0,
         env: dict | None = None, backend: str | None = None) -> ExecResult:
     """Run a command under the configured (or given) isolation backend.
@@ -142,6 +211,19 @@ def run(command, workdir: str = ".", timeout: float = 60.0,
             network=block.get("network", "none"),
             mem=str(block.get("memory", "512m")),
             pids=int(block.get("pids_limit", 256)))
+    if eff == "ssh":
+        return _run_ssh(command, workdir, timeout, env,
+                        host=block.get("ssh_host", ""),
+                        key=block.get("ssh_key"),
+                        remote_dir=block.get("remote_dir"))
+    if eff in ("modal", "daytona"):
+        run_args = block.get(f"{eff}_run")
+        if not run_args:
+            _log.warning("backend '%s' has no agents.sandbox.%s_run configured; "
+                         "running locally", eff, eff)
+            return _run_local(command, workdir, timeout, env)
+        return _run_cli_sandbox(command, timeout, env, tool=eff,
+                                run_args=run_args)
     return _run_local(command, workdir, timeout, env)
 
 
