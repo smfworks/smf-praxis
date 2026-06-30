@@ -28,6 +28,10 @@ from .logging_util import get_logger
 
 _log = get_logger("praxis.a2a")
 
+# Cap on an A2A peer's response body — peers are untrusted; refuse to buffer an
+# unbounded body that could exhaust memory. 8 MiB is generous for a goal result.
+_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
 
 def _expand_env(value):
     def _sub(s: str) -> str:
@@ -65,11 +69,18 @@ class A2AClient:
             h["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=h, method=method)
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            # Cap the response body: a remote A2A peer is untrusted and could
+            # return an arbitrarily large body to exhaust memory. Read one byte
+            # past the limit so we can detect (and reject) an oversized response.
+            raw_bytes = resp.read(_MAX_RESPONSE_BYTES + 1)
+        if len(raw_bytes) > _MAX_RESPONSE_BYTES:
+            raise ValueError(
+                f"A2A response exceeds {_MAX_RESPONSE_BYTES} bytes (peer={self.base_url})")
+        raw = raw_bytes.decode("utf-8", errors="replace")
         try:
             return json.loads(raw) if raw.strip() else {}
         except ValueError:
-            return {"raw": raw}
+            return {"raw": raw[:10000]}
 
     def card(self) -> dict:
         """Discover the remote agent's capabilities."""

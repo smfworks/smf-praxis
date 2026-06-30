@@ -259,3 +259,75 @@ def test_vault_roundtrip_prefix_collision(tmp_path, monkeypatch):
     v.put("c", {"X": "f:not-really-fernet"})
     with v.inject("c"):
         assert os.environ.get("X") == "f:not-really-fernet"
+
+
+# BUG 8 (a2a_client): an untrusted peer's response body was read unbounded.
+def test_a2a_rejects_oversized_response():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from hybridagent import a2a_client as a2a
+
+    class Big(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            ln = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(ln)
+            body = json.dumps({"summary": "A" * (a2a._MAX_RESPONSE_BYTES + 1000)}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except Exception:
+                pass
+
+    srv = HTTPServer(("127.0.0.1", 0), Big)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        res = a2a.call_agent(f"http://127.0.0.1:{port}/", "x")
+        assert "error" in res
+        assert "exceeds" in res["error"]
+    finally:
+        srv.shutdown()
+
+
+def test_a2a_normal_response_works():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from hybridagent import a2a_client as a2a
+
+    class OK(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            b = json.dumps({"name": "praxis", "tools": []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def do_POST(self):
+            ln = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(ln)
+            b = json.dumps({"summary": "done", "status": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+    srv = HTTPServer(("127.0.0.1", 0), OK)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        res = a2a.call_agent(f"http://127.0.0.1:{port}/", "x")
+        assert res.get("status") == "ok"
+    finally:
+        srv.shutdown()
