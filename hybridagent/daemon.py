@@ -724,7 +724,7 @@ let activeId = null;
 const HIST_KEY = 'praxis.chats.v1';
 let providers = [];
 const HINTS = {
-  chat: 'Conversational chat with your model.',
+  chat: 'Conversational chat — Praxis can call tools such as fetch_url when helpful.',
   ask: 'Grounded Q&A over the knowledge base — cites sources or abstains.',
   research: 'Live web research — searches the internet, reads results, and answers with citations.',
   do: 'Queue an autonomous task for the agent to work.',
@@ -809,7 +809,7 @@ function setMode(m){
   mode = m;
   ['chat','ask','research','do','agent'].forEach(x => document.getElementById('seg-'+x).classList.toggle('active', x===m));
   document.getElementById('modeHint').textContent = HINTS[m];
-  const ph = {do:'Describe a goal to queue…', ask:'Ask a grounded question…', research:'Ask anything — Praxis will search the web…', agent:'Ask Praxis to do something — it can call tools…'};
+  const ph = {do:'Describe a goal to queue…', ask:'Ask a grounded question…', research:'Ask anything — Praxis will search the web…', agent:'Ask Praxis to do something — it can call tools…', chat:'Chat with Praxis — it can call tools when helpful.'};
   document.getElementById('message').placeholder = ph[m] || 'Message Praxis…  (Enter to send, Shift+Enter for newline)';
 }
 function newChat(){
@@ -1185,7 +1185,7 @@ async function sendMessage(ev){
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
       const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
-      await streamChat(conv, wire, typing);
+      await agentChat(conv, wire, typing);
     } else if(mode === 'ask'){
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
       typing.remove();

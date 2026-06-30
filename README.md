@@ -175,8 +175,11 @@ praxis onboard
 The wizard walks you through:
 1. **Existing-config detection** — Keep / Modify / Reset.
 2. **Pick a provider** — Ollama · OpenAI · Anthropic · Google Gemini · xAI (Grok) · Mistral · Groq · DeepSeek · Perplexity · Together AI · Fireworks AI · OpenRouter · GitHub Models · Vercel AI Gateway · Custom (OpenAI-compatible).
-3. **Pick a model** — suggestions per provider (Ollama models are auto-discovered from the local host), or enter one manually.
-4. **Key storage** — environment-variable reference (recommended; nothing secret on disk) or paste-now (stored in `~/.praxis/auth-profiles.json`, gitignored).
+3. **Pick a model** — suggestions per provider. Local Ollama models are
+   auto-discovered from the local host; Ollama.com cloud models are discovered
+   via your `OLLAMA_API_TOKEN`.
+4. **Key storage** — environment-variable reference (recommended; nothing secret
+   on disk) or paste-now (stored in `~/.praxis/auth-profiles.json`, gitignored).
 
 Config is written to `~/.praxis/praxis.json` (override the dir
 with `PRAXIS_HOME`):
@@ -197,8 +200,13 @@ with `PRAXIS_HOME`):
 Non-interactive (scripts/CI):
 
 ```bash
-praxis onboard --provider ollama --model llama3.1
-praxis onboard --provider openrouter --model "openai/gpt-4o-mini"   # uses OPENROUTER_API_KEY
+praxis model set openai/gpt-4o-mini --api-key $OPENAI_API_KEY   # paste key directly
+praxis model set openai/gpt-4o-mini                               # reads OPENAI_API_KEY env var
+praxis model list --discover                                      # probe local/cloud Ollama for models
+praxis onboard --provider ollama-cloud --model llama3.3           # reads OLLAMA_API_TOKEN env var
+praxis onboard --provider ollama-cloud --model llama3.3 --api-key $OLLAMA_API_TOKEN  # paste token
+praxis onboard --provider ollama --model llama3.1                # local Ollama, no key needed
+praxis onboard --provider openrouter --model "openai/gpt-4o-mini" # uses OPENROUTER_API_KEY
 ```
 
 **Model selection (`PRAXIS_LLM`):** `auto` (default — use the configured

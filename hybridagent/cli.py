@@ -20,6 +20,7 @@ import sys
 from . import PraxisAgent
 from . import config as cfg
 from . import onboard as onboard_mod
+from .providers import CATALOG, ORDER, discover_ollama_models
 
 
 def _print_report(agent: PraxisAgent, report) -> None:
@@ -1295,17 +1296,88 @@ def cmd_tui(_args: argparse.Namespace) -> int:
     from . import tui
     return tui.run()
 
+def _need_api_key(provider, api_key: str | None, action: str = "use") -> str | None:
+    """Return an error message if a provider requires a key but none was supplied,
+    otherwise None."""
+    if not provider.needs_key:
+        return None
+    if api_key:
+        return None
+    env_name = provider.key_env or "API_KEY"
+    return (f"Provider '{provider.id}' requires an API key to {action}. "
+            f"Pass --api-key or set the {env_name} environment variable.")
+
 
 def cmd_onboard(args: argparse.Namespace) -> int:
     if args.provider and args.model:
+        prov = CATALOG[args.provider]
+        api_key = args.api_key or os.environ.get(prov.key_env or "")
+        err = _need_api_key(prov, api_key, action="configure")
+        if err:
+            print(f"Error: {err}")
+            return 1
         summary = onboard_mod.run_noninteractive(
             args.provider, args.model, base_url=args.base_url,
-            api_key=args.api_key, use_env_ref=not args.api_key,
+            api_key=api_key, use_env_ref=not args.api_key,
         )
         print(f"Configured (non-interactive): model = {summary['model']}")
         print(f"Config written to: {cfg.config_path()}")
         return 0
+    if args.provider:
+        # Non-interactive provider given but no model: list available models
+        # so the user can pick, then exit. Useful for Ollama cloud/local.
+        prov = CATALOG[args.provider]
+        api_key = args.api_key or os.environ.get(prov.key_env or "")
+        models = discover_ollama_models(
+            args.base_url or prov.base_url, api_key=api_key)
+        print(f"Models available for {args.provider}:")
+        for m in models or prov.suggested_models:
+            print(f"  {m}")
+        return 0
     onboard_mod.run()
+    return 0
+
+
+def cmd_model(args: argparse.Namespace) -> int:
+    """Quickly view or set the active provider/model."""
+    current = cfg.get_default_model()
+    if args.action == "get":
+        print(current or "not configured")
+        return 0
+    if args.action == "set":
+        provider_id, model = cfg.split_model_ref(args.model_ref)
+        if not model or provider_id not in CATALOG:
+            print(f"Invalid model ref: {args.model_ref}  (expected provider/model)")
+            return 1
+        prov = CATALOG[provider_id]
+        api_key = args.api_key or os.environ.get(prov.key_env or "")
+        err = _need_api_key(prov, api_key, action="set")
+        if err:
+            print(f"Error: {err}")
+            return 1
+        summary = onboard_mod.run_noninteractive(
+            provider_id, model, base_url=args.base_url,
+            api_key=api_key, use_env_ref=not args.api_key,
+        )
+        print(f"Set model: {summary['model']}")
+        print(f"Config written to: {cfg.config_path()}")
+        return 0
+    if args.action == "list":
+        for pid in ORDER:
+            prov = CATALOG[pid]
+            mark = "*" if current and current.startswith(pid + "/") else " "
+            print(f"{mark} {pid}: {prov.label}")
+            if args.discover and pid in ("ollama", "ollama-cloud"):
+                api_key = None
+                if pid == "ollama-cloud":
+                    api_key = os.environ.get(prov.key_env or "")
+                    if not api_key:
+                        print("      (set OLLAMA_API_TOKEN to discover cloud models)")
+                        continue
+                models = discover_ollama_models(prov.base_url, api_key=api_key)
+                for m in models or prov.suggested_models:
+                    print(f"      - {m}")
+        return 0
     return 0
 
 
@@ -1644,16 +1716,29 @@ def build_parser() -> argparse.ArgumentParser:
     pd = sub.add_parser("demo", help="run the bundled demo")
     pd.set_defaults(func=cmd_demo)
 
-    po = sub.add_parser("onboard", help="pick a model provider + model (interactive)")
-    po.add_argument("--provider", choices=["ollama", "openrouter", "github",
-                                           "openai", "anthropic", "xai",
-                                           "vercel-ai-gateway", "custom"],
-                    help="non-interactive: provider id")
+    po = sub.add_parser("onboard", help="pick a model provider + model (interactive or --provider/--model)")
+    po.add_argument("--provider", choices=list(ORDER),
+                    help="non-interactive: provider id (e.g. ollama, ollama-cloud, openai)")
     po.add_argument("--model", help="non-interactive: model id")
     po.add_argument("--base-url", default=None, help="non-interactive: custom base URL")
     po.add_argument("--api-key", default=None,
                     help="non-interactive: paste key (else an env reference is used)")
     po.set_defaults(func=cmd_onboard)
+
+    pmdl = sub.add_parser("model", help="quickly view/list/set the active provider/model")
+    mdl_sub = pmdl.add_subparsers(dest="action", required=True)
+    mdl_get = mdl_sub.add_parser("get", help="show the currently configured model ref")
+    mdl_get.set_defaults(func=cmd_model)
+    mdl_set = mdl_sub.add_parser("set", help="set the active model (provider/model)")
+    mdl_set.add_argument("model_ref", help="model ref to use, e.g. openai/gpt-4o-mini")
+    mdl_set.add_argument("--base-url", default=None, help="override provider base URL")
+    mdl_set.add_argument("--api-key", default=None,
+                         help="paste key now (else env reference is used)")
+    mdl_set.set_defaults(func=cmd_model)
+    mdl_list = mdl_sub.add_parser("list", help="list all providers; --discover for Ollama models")
+    mdl_list.add_argument("--discover", action="store_true",
+                          help="probe ollama/ollama-cloud for available models")
+    mdl_list.set_defaults(func=cmd_model)
 
     pt = sub.add_parser("tui", help="launch the interactive terminal UI")
     pt.set_defaults(func=cmd_tui)

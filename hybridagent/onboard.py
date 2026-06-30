@@ -26,12 +26,14 @@ def _choose(prompt: str, options: list[str], default_index: int = 0) -> int:
         print("  Invalid choice, try again.")
 
 
-def _model_options(provider: Provider, base_url: str) -> list[str]:
-    if provider.id == "ollama":
-        discovered = discover_ollama_models(base_url)
+def _model_options(provider: Provider, base_url: str,
+                   api_key: str | None = None) -> list[str]:
+    if provider.id in ("ollama", "ollama-cloud"):
+        discovered = discover_ollama_models(base_url, api_key=api_key)
         if discovered:
             return discovered
-        print("  (No local Ollama models discovered; showing common suggestions.)")
+        kind = "cloud" if provider.id == "ollama-cloud" else "local"
+        print(f"  (No {kind} Ollama models discovered; showing common suggestions.)")
     return list(provider.suggested_models)
 
 
@@ -93,16 +95,7 @@ def run() -> dict:
     if provider.notes:
         print(f"  note: {provider.notes}")
 
-    # 4. Model.
-    options = _model_options(provider, base_url)
-    options = options + ["(enter a model id manually)"]
-    midx = _choose("Pick a model:", options, default_index=0)
-    if midx == len(options) - 1:
-        model = input("Enter model id: ").strip()
-    else:
-        model = options[midx]
-
-    # 5. Key storage.
+    # 4. Key storage (ask before model discovery so cloud Ollama can list models).
     use_env_ref = True
     api_key = None
     if provider.needs_key:
@@ -113,13 +106,23 @@ def run() -> dict:
             default_index=0,
         )
         if mode == 0:
-            if not os.environ.get(provider.key_env or ""):
+            api_key = os.environ.get(provider.key_env or "")
+            if not api_key:
                 print(f"  ⚠ {provider.key_env} is not set in this environment. "
                       f"Set it before running: setx {provider.key_env} <key> (Windows) "
                       f"or export {provider.key_env}=<key> (bash).")
         else:
             api_key = input(f"Paste {provider.key_env}: ").strip()
             use_env_ref = False
+
+    # 5. Model (with key so cloud Ollama discovery works).
+    options = _model_options(provider, base_url, api_key=api_key)
+    options = options + ["(enter a model id manually)"]
+    midx = _choose("Pick a model:", options, default_index=0)
+    if midx == len(options) - 1:
+        model = input("Enter model id: ").strip()
+    else:
+        model = options[midx]
 
     summary = run_noninteractive(provider.id, model, base_url, api_key, use_env_ref)
     print("\n" + "=" * 64)
@@ -134,3 +137,7 @@ def run() -> dict:
             print(f" Key source: {cfg.auth_path()} (gitignored)")
     print("=" * 64)
     return summary
+
+
+if __name__ == "__main__":
+    run()

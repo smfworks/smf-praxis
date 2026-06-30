@@ -632,9 +632,11 @@ def test_dashboard_serves_streaming_ui(tmp_store, mock_agent):
         base = f"http://127.0.0.1:{daemon.status_port}"
         with urllib.request.urlopen(f"{base}/") as resp:
             html = resp.read().decode("utf-8")
-        # The chat composer must consume the streaming endpoint live.
-        assert "function streamChat" in html
-        assert "/api/chat/stream" in html
+        # Default Chat mode now routes through the governed agent endpoint so
+        # that URL requests can invoke tools like fetch_url.
+        assert "function agentChat" in html
+        assert "/api/chat/agent" in html
+        assert "streamChat" in html   # still present for Agent/streaming modes
     finally:
         daemon._stop_status_server()
 

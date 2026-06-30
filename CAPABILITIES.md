@@ -215,9 +215,9 @@ The capability layer on top of the spine.
   read/write file, list_dir, run_shell (sandboxed), calendar/mail (`real_tools.py`,
   `m365_tools.py`, `wiki_safe.py`). **Web search works out of the box** with a
   keyless DuckDuckGo default; Tavily/Brave/SerpAPI are optional upgrades.
-- **Model providers** — OpenAI, Anthropic, Ollama, OpenRouter, xAI, **Microsoft
-  Azure AI Foundry** (`azure-foundry`), and more; offline deterministic mock by
-  default (`providers.py`).
+- **Model providers** — OpenAI, Anthropic, Ollama **local + Ollama.com cloud**,
+  OpenRouter, xAI, **Microsoft Azure AI Foundry** (`azure-foundry`), and more;
+  offline deterministic mock by default (`providers.py`).
 
 ## Out of the box
 
@@ -330,6 +330,9 @@ praxis think "Analyze the trade-offs and design the cache layer" # deliberate
 praxis debate "What is the best rollout strategy?"   # best-of-N + judge
 praxis ask "What did we decide about Q4 pricing?"    # grounded, cite-or-abstain
 praxis ingest ./notes.md && praxis recall "pricing"  # RAG knowledge base
+praxis onboard --provider ollama-cloud --model llama3.3   # configure Ollama.com
+praxis model set openai/gpt-4o-mini                        # one-line model switch
+praxis model list --discover                               # list available local/cloud Ollama models
 praxis cron add "summarize overnight alerts" --schedule daily@08:00  # scheduled autonomy
 praxis evolve                                        # propose skill improvements (PR-gated)
 praxis scan skills                                   # security-scan installed skills

@@ -40,6 +40,15 @@ class Provider:
 # Provider IDs follow common conventions; OpenRouter + GitHub Models added
 # because Michael asked for them (both OpenAI-compatible).
 CATALOG: dict[str, Provider] = {
+    "ollama-cloud": Provider(
+        id="ollama-cloud", label="Ollama.com (cloud-hosted models)",
+        base_url="https://ollama.com/v1", compatibility="openai",
+        key_env="OLLAMA_API_TOKEN", needs_key=True,
+        suggested_models=["llama3.3", "qwen2.5", "mistral", "phi4",
+                          "deepseek-r1", "llama3.2-vision"],
+        notes=("Ollama.com cloud models via OpenAI-compatible endpoint. "
+               "Set OLLAMA_API_TOKEN from your Ollama account."),
+    ),
     "ollama": Provider(
         id="ollama", label="Ollama (local open models)",
         base_url="http://127.0.0.1:11434/v1", compatibility="openai",
@@ -167,18 +176,46 @@ CATALOG: dict[str, Provider] = {
     ),
 }
 
-ORDER = ["ollama", "openai", "anthropic", "google", "xai", "mistral", "groq",
-         "deepseek", "perplexity", "together", "fireworks", "openrouter",
-         "github", "vercel-ai-gateway", "azure-foundry", "custom"]
+ORDER = ["ollama-cloud", "ollama", "openai", "anthropic", "google", "xai",
+         "mistral", "groq", "deepseek", "perplexity", "together", "fireworks",
+         "openrouter", "github", "vercel-ai-gateway", "azure-foundry", "custom"]
 
 
-def discover_ollama_models(base_url: str, timeout: float = 3.0) -> list[str]:
-    """Best-effort model discovery from a local Ollama host (/api/tags)."""
+def discover_ollama_models(base_url: str, timeout: float = 3.0,
+                         api_key: str | None = None) -> list[str]:
+    """Best-effort model discovery from an Ollama endpoint.
+
+    Local Ollama uses /api/tags. Ollama.com's OpenAI-compatible cloud service
+    uses /v1/models. We try the standard OpenAI models endpoint first (with an
+    Authorization header if a key is supplied), then fall back to the native
+    local endpoint.
+    """
     root = base_url.rstrip("/")
+    openai_url = f"{root}/models"
+    native_url = f"{root}/api/tags"
     if root.endswith("/v1"):
-        root = root[:-3]
+        openai_url = f"{root}/models"
+        native_url = f"{root[:-3]}/api/tags"
+
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # 1. OpenAI-compatible /v1/models (works for local and Ollama.com cloud).
     try:
-        with urllib.request.urlopen(f"{root}/api/tags", timeout=timeout) as resp:
+        req = urllib.request.Request(openai_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+        models = data.get("data", data.get("models", []))
+        ids = [m["id"] if isinstance(m, dict) else m for m in models]
+        if ids:
+            return ids
+    except Exception:
+        pass
+
+    # 2. Native local /api/tags fallback (no auth needed).
+    try:
+        with urllib.request.urlopen(native_url, timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
         return [m["name"] for m in data.get("models", [])]
     except Exception:
