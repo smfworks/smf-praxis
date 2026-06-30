@@ -14,7 +14,7 @@ is proactive *and* safe.
   deterministic mock LLM); richer features are opt‑in extras. Runs on **Linux,
   macOS, and Windows** (Python 3.10+), verified in CI on all three.
 - **Quality‑gated** — every capability is covered by an offline eval and the full
-  suite is a CI gate (currently **30/30**), plus a regression gate against a
+  suite is a CI gate (currently **40/40**), plus a regression gate against a
   baseline.
 
 The loop: **perceive → plan → govern → act/draft → reflect → consolidate**.
@@ -185,7 +185,7 @@ The capability layer on top of the spine.
   (`eval_history.py`, `praxis eval --json/--save/--set-baseline/--check/--history`).
 - **Mutation‑tested governance core** — a strong oracle of broker‑guard tests.
 
-### Eval categories (30/30)
+### Eval categories (40/40)
 
 | Category | Cases | Covers |
 |---|---|---|
@@ -206,6 +206,7 @@ The capability layer on top of the spine.
 | a2a | 1 | governed run + capability card |
 | voice | 1 | turn/realtime backends selectable |
 | browser | 1 | navigate/read vs click/type risk |
+| vertical | 10 | per‑vertical packs ship the promised persona + governance posture |
 
 ---
 
