@@ -13,9 +13,9 @@ import pytest
 from hybridagent.agent import PraxisAgent
 from hybridagent.broker import RiskClass
 from hybridagent.daemon import (
+    _DASHBOARD_HTML,
     Daemon,
     DaemonState,
-    _DASHBOARD_HTML,
     _find_port,
     _parse_multipart_stream,
     _read_state,

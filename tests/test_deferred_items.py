@@ -26,8 +26,8 @@ def test_marketplace_publish_install_lifecycle(tmp_path, monkeypatch):
     from hybridagent import marketplace as mk
     pub = mk.publish(str(src), name="mk_demo", description="demo")
     assert pub.get("published") == "mk_demo"
-    assert [l.name for l in mk.search()] == ["mk_demo"]
-    assert [l.name for l in mk.search("demo")] == ["mk_demo"]
+    assert [b.name for b in mk.search()] == ["mk_demo"]
+    assert [b.name for b in mk.search("demo")] == ["mk_demo"]
     res = mk.install("mk_demo", enable=True)
     assert res["installed"] == "mk_demo" and res["enabled"]
     from hybridagent.tools import default_registry

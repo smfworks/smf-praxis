@@ -2457,7 +2457,7 @@ class Daemon:
         try:
             from .cron import CronScheduler
             sched = CronScheduler(self.store)
-            due = sched.claim()
+            due = sched.claim() or []
         except Exception as exc:
             self._log("error", f"cron tick error: {exc}")
             return

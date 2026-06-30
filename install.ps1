@@ -64,7 +64,8 @@ function Invoke-Py {
     $base = @($PyBin[1..($PyBin.Count - 1)])
     & $PyBin[0] @base @RemArgs
 }
-Say ("using " + ((Invoke-Py --version) 2>&1 -join " "))
+$pyVersion = (Invoke-Py --version 2>&1 | Out-String).Trim()
+Say "using $pyVersion"
 
 # 2. Resolve the project root, cloning if run standalone.
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }

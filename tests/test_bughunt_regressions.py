@@ -253,8 +253,9 @@ def test_vault_roundtrip_prefix_collision(tmp_path, monkeypatch):
     """A stored value that itself starts with 'f:' or 'b:' must round-trip."""
     _isolate(tmp_path, monkeypatch)
     monkeypatch.delenv("PRAXIS_VAULT_KEY", raising=False)
-    from hybridagent.vault import CredentialVault
     import os
+
+    from hybridagent.vault import CredentialVault
     v = CredentialVault()
     v.put("c", {"X": "f:not-really-fernet"})
     with v.inject("c"):
@@ -365,6 +366,7 @@ def test_sandbox_docker_still_posix_wrapped():
 # cross-platform and the secret writers must call it.
 def test_secure_file_restricts_on_posix(tmp_path):
     import os
+
     from hybridagent import config
     p = tmp_path / "secret.json"
     p.write_text("{}")
@@ -397,6 +399,7 @@ def test_status_handler_has_socket_timeout():
 
 def test_status_handler_clamps_body_read():
     import inspect
+
     from hybridagent.daemon import _StatusHandler
     # the body reader clamps to a max_bytes ceiling rather than trusting the
     # declared Content-Length unbounded

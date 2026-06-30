@@ -121,7 +121,24 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["hybridagent"]
-omit = ["hybridagent/tui.py"]
+# Omit modules that cannot be meaningfully unit-tested in the CI `[dev]`
+# environment because they require an UNINSTALLED optional extra or interactive
+# IO. They're exercised by integration/install tests and manual runs, not the
+# unit suite, so counting their uncovered lines only dilutes the core metric:
+#   tui.py         interactive terminal loop
+#   onboard.py     interactive provider/model wizard (stdin)
+#   browser.py     needs the [browser] extra (Playwright)
+#   multimodal.py  needs the [multimodal] extra (Pillow / whisper / opencv)
+#   mcp_adapter.py needs the [mcp] extra
+#   voice.py       needs configured TTS/STT providers
+omit = [
+    "hybridagent/tui.py",
+    "hybridagent/onboard.py",
+    "hybridagent/browser.py",
+    "hybridagent/multimodal.py",
+    "hybridagent/mcp_adapter.py",
+    "hybridagent/voice.py",
+]
 
 [tool.coverage.report]
 # CLI dispatch is covered by smoke tests; exclude the interactive TUI loop and
