@@ -944,6 +944,16 @@ class Store:
             )
             self._conn.commit()
 
+    def list_skill_outcomes(self, skill_name: str, limit: int = 50) -> list[dict]:
+        """Recent governed outcome rows for a skill (newest first). Used by the
+        evolution optimizer to measure trigger fitness against real usage."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT skill_name,goal,outcome,score,cycle_id,notes,ts "
+                "FROM skill_outcomes WHERE skill_name=? ORDER BY ts DESC LIMIT ?",
+                (skill_name, limit)).fetchall()
+        return [dict(r) for r in rows]
+
     def skill_metadata(self, skill_name: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
