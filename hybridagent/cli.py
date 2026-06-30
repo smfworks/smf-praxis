@@ -984,13 +984,15 @@ def cmd_market(args: argparse.Namespace) -> int:
                         version=args.version, description=args.description or "",
                         author=args.author or "")
         if res.get("error"):
-            print(res["error"]); return 1
+            print(res["error"])
+            return 1
         print(f"published {res['published']} v{res['version']} (grade {res['grade']})")
         return 0
     if action == "install":
         res = mk.install(args.name, enable=args.enable)
         if res.get("error"):
-            print(res["error"]); return 1
+            print(res["error"])
+            return 1
         print(f"installed {res['installed']} (grade {res['grade']}, "
               f"enabled={res['enabled']})")
         if not res["enabled"]:
@@ -1005,9 +1007,10 @@ def cmd_market(args: argparse.Namespace) -> int:
     if not listings:
         print(f"no published plugins in {mk.registry_dir()}")
         return 0
-    for l in listings:
-        print(f"{l.name} v{l.version} [{l.grade}] — {l.description or '(no description)'}"
-              + (f"  by {l.author}" if l.author else ""))
+    for item in listings:
+        print(f"{item.name} v{item.version} [{item.grade}] — "
+              f"{item.description or '(no description)'}"
+              + (f"  by {item.author}" if item.author else ""))
     return 0
 
 

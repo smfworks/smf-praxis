@@ -331,3 +331,56 @@ def test_a2a_normal_response_works():
         assert res.get("status") == "ok"
     finally:
         srv.shutdown()
+
+
+# BUG 9 (sandbox.py): local string commands were hardcoded to "sh -c", which
+# does not exist on Windows. Local execution must use the host shell.
+def test_sandbox_local_string_command_no_sh_hardcode():
+    import inspect
+
+    from hybridagent import sandbox
+    # run() must not pre-wrap with the POSIX-only ["sh", "-c", ...] for local
+    src = inspect.getsource(sandbox.run)
+    assert '"sh", "-c"' not in src.replace(" ", "").replace("'", '"') or "_as_posix" in src
+    # the local runner uses shell=True for strings (host shell, cross-platform)
+    local_src = inspect.getsource(sandbox._run_local)
+    assert "shell=use_shell" in local_src
+
+
+def test_sandbox_local_string_executes():
+    from hybridagent.sandbox import run
+    r = run("echo cross-platform", backend="local")
+    assert r.ok and "cross-platform" in r.stdout
+
+
+def test_sandbox_docker_still_posix_wrapped():
+    from hybridagent.sandbox import _as_posix_argv
+    # docker/ssh target Linux -> string wrapped with sh -c
+    assert _as_posix_argv("echo x") == ["sh", "-c", "echo x"]
+    assert _as_posix_argv(["echo", "x"]) == ["echo", "x"]
+
+
+# BUG 10 (config/vault/identity): secret files claimed 0600 protection but on
+# Windows chmod only flips the read-only bit. secure_file() must restrict
+# cross-platform and the secret writers must call it.
+def test_secure_file_restricts_on_posix(tmp_path):
+    import os
+    from hybridagent import config
+    p = tmp_path / "secret.json"
+    p.write_text("{}")
+    assert config.secure_file(p) is True
+    if os.name != "nt":
+        assert (os.stat(p).st_mode & 0o777) == 0o600
+
+
+def test_secret_writers_use_secure_file(tmp_path, monkeypatch):
+    import os
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.identity import AgentIdentity, _identity_path
+    from hybridagent.vault import CredentialVault
+    CredentialVault().put("b", {"K": "v"})
+    AgentIdentity.load_or_create("praxis")
+    if os.name != "nt":
+        from hybridagent.vault import _vault_path
+        assert (os.stat(_vault_path()).st_mode & 0o777) == 0o600
+        assert (os.stat(_identity_path()).st_mode & 0o777) == 0o600

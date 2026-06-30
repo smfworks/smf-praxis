@@ -182,8 +182,9 @@ def run_shell(command: str = "", timeout: int = 60, **_kw) -> str:
     if not command:
         return "[run_shell] a command is required"
     try:
-        from .sandbox import run as sandbox_run
         import os as _os
+
+        from .sandbox import run as sandbox_run
         workdir = _os.environ.get("PRAXIS_WORK_DIR", ".")
         res = sandbox_run(command, workdir=workdir, timeout=float(timeout))
     except Exception as exc:  # noqa: BLE001

@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -125,10 +124,7 @@ class AgentIdentity:
         data[self.agent_id] = {"algo": self.algo, "secret": self._secret.hex(),
                                "public": self._public}
         path.write_text(json.dumps(data, indent=2))
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        cfg.secure_file(path)
 
     # ----------------------------------------------------------------- signing
     @property

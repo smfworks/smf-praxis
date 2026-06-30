@@ -1,102 +1,135 @@
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   Praxis one-command installer + configurator (Windows / PowerShell).
 
 .DESCRIPTION
-  Finds Python (>= 3.10) -> creates a .venv -> installs Praxis -> runs the
-  onboarding wizard. The core install is dependency-free; extras are opt-in.
+  Mirrors install.sh for Windows. Finds Python (>=3.10), creates a .venv,
+  installs Praxis (core is dependency-free), smoke-tests it, and runs the
+  onboarding wizard. Run from a clone or piped from the web.
 
 .EXAMPLE
-  .\install.ps1
-  .\install.ps1 -With docs,multimodal
-  .\install.ps1 -NoConfigure
-  .\install.ps1 -Provider ollama -Model llama3.1   # non-interactive configure
+  # From the web (PowerShell):
+  irm https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.ps1 | iex
 
-  From scratch (single command):
-    irm https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.ps1 | iex
+.EXAMPLE
+  # From a clone:
+  .\install.ps1                          # core install + interactive onboarding
+  .\install.ps1 -With docs               # also install the document-parser extra
+  .\install.ps1 -With "docs,fast"        # multiple extras
+  .\install.ps1 -NoConfigure             # install only; skip onboarding
+  .\install.ps1 -Provider ollama -Model llama3.1   # non-interactive configure
 #>
 [CmdletBinding()]
 param(
-  [string[]] $With,
-  [string]   $Venv = ".venv",
-  [switch]   $NoConfigure,
-  [string]   $Provider,
-  [string]   $Model,
-  [switch]   $Editable
+    [string]$With = "",
+    [string]$Venv = ".venv",
+    [switch]$NoConfigure,
+    [string]$Provider = "",
+    [string]$Model = "",
+    [switch]$Editable
 )
+
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/smfworks/smf-praxis.git"
 
-function Say  { param($m) Write-Host "[praxis] $m" -ForegroundColor Cyan }
-function Die  { param($m) Write-Host "[praxis] $m" -ForegroundColor Red; exit 1 }
+function Say($msg)  { Write-Host "[praxis] $msg" -ForegroundColor Cyan }
+function Die($msg)  { Write-Host "[praxis] $msg" -ForegroundColor Red; exit 1 }
 
-# 1. Locate a usable Python (>= 3.10).
-$pybin = $null
-foreach ($cand in @("python", "py", "python3")) {
-  $cmd = Get-Command $cand -ErrorAction SilentlyContinue
-  if ($cmd) {
-    $ok = & $cand -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,10) else 1)" 2>$null
-    if ($LASTEXITCODE -eq 0) { $pybin = $cand; break }
-  }
+# 1. Locate a usable Python (>= 3.10). Try the py launcher, then python/python3.
+# Each candidate is an argv array so the 'py -3' launcher works as one unit.
+$PyBin = $null
+$candidates = @(
+    ,@("py", "-3")
+) + @(
+    ,@("python")
+) + @(
+    ,@("python3")
+)
+foreach ($cand in $candidates) {
+    $exe = $cand[0]
+    if (Get-Command $exe -ErrorAction SilentlyContinue) {
+        $checkArgs = @($cand[1..($cand.Count - 1)]) + @(
+            "-c", "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,10) else 1)")
+        try {
+            & $exe @checkArgs 2>$null
+            if ($LASTEXITCODE -eq 0) { $PyBin = $cand; break }
+        } catch { }
+    }
 }
-if (-not $pybin) { Die "Python >= 3.10 not found. Install it (https://python.org) and re-run." }
-Say "using $(& $pybin --version 2>&1)"
+if (-not $PyBin) { Die "Python >= 3.10 not found. Install it from https://python.org and re-run." }
+# Helper to invoke the resolved python with extra args.
+function Invoke-Py {
+    param([Parameter(ValueFromRemainingArguments=$true)]$RemArgs)
+    $base = @($PyBin[1..($PyBin.Count - 1)])
+    & $PyBin[0] @base @RemArgs
+}
+Say ("using " + ((Invoke-Py --version) 2>&1 -join " "))
 
-# 2. Resolve the project root (run from a clone, or clone if piped in).
-$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-if (Test-Path (Join-Path $scriptDir "pyproject.toml")) {
-  $projectDir = $scriptDir
+# 2. Resolve the project root, cloning if run standalone.
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+if (Test-Path (Join-Path $ScriptDir "pyproject.toml")) {
+    $ProjectDir = $ScriptDir
 } elseif (Test-Path ".\pyproject.toml") {
-  $projectDir = (Get-Location).Path
+    $ProjectDir = (Get-Location).Path
 } else {
-  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Die "git is required to fetch Praxis." }
-  $projectDir = Join-Path (Get-Location).Path "smf-praxis"
-  if (Test-Path (Join-Path $projectDir ".git")) {
-    Say "updating existing clone in $projectDir"; git -C $projectDir pull --ff-only
-  } else {
-    Say "cloning $RepoUrl"; git clone --depth 1 $RepoUrl $projectDir
-  }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Die "git is required to fetch Praxis. Install Git for Windows and re-run."
+    }
+    $ProjectDir = Join-Path (Get-Location).Path "smf-praxis"
+    if (Test-Path (Join-Path $ProjectDir ".git")) {
+        Say "updating existing clone in $ProjectDir"
+        git -C $ProjectDir pull --ff-only
+    } else {
+        Say "cloning $RepoUrl"
+        git clone --depth 1 $RepoUrl $ProjectDir
+    }
 }
-Say "project: $projectDir"
-Set-Location $projectDir
+Say "project: $ProjectDir"
+Set-Location $ProjectDir
 
 # 3. Create the virtual environment.
-if (-not (Test-Path $Venv)) { Say "creating virtualenv: $Venv"; & $pybin -m venv $Venv }
-$venvPy = Join-Path $Venv "Scripts\python.exe"
-if (-not (Test-Path $venvPy)) { $venvPy = Join-Path $Venv "bin/python" }  # cross-shell
+if (-not (Test-Path $Venv)) {
+    Say "creating virtualenv: $Venv"
+    Invoke-Py -m venv $Venv
+}
+$VenvPy = Join-Path $Venv "Scripts\python.exe"
+if (-not (Test-Path $VenvPy)) { $VenvPy = Join-Path $Venv "bin/python" }  # cross-shell
+if (-not (Test-Path $VenvPy)) { Die "virtualenv python not found under $Venv" }
 
-# 4. Install Praxis.
+# 4. Install Praxis (core dependency-free; extras opt-in).
 Say "upgrading pip"
-& $venvPy -m pip install --quiet --upgrade pip
-$target = "."
-if ($With) { $target = ".[$($With -join ',')]" }
-$ed = @(); if ($Editable) { $ed = @("-e") }
-Say "installing praxis $(if($Editable){'(editable) '})$target"
-& $venvPy -m pip install @ed $target
+& $VenvPy -m pip install --quiet --upgrade pip
+$Target = "."
+if ($With) { $Target = ".[$With]" }
+$editFlag = @()
+if ($Editable) { $editFlag = @("-e") }
+Say "installing praxis $Target"
+& $VenvPy -m pip install @editFlag $Target
 
 # 5. Smoke-test, then configure.
 Say "verifying install"
-& $venvPy -m hybridagent.cli demo *> $null
-if ($LASTEXITCODE -eq 0) { Say "demo OK" } else { Die "demo smoke test failed" }
+& $VenvPy -m hybridagent.cli demo | Out-Null
+if ($LASTEXITCODE -eq 0) { Say "demo OK" } else { Die "smoke test failed" }
 
 if (-not $NoConfigure) {
-  if ($Provider -and $Model) {
-    Say "configuring (non-interactive): $Provider/$Model"
-    & $venvPy -m hybridagent.cli onboard --provider $Provider --model $Model
-  } else {
-    Say "starting onboarding wizard"
-    & $venvPy -m hybridagent.cli onboard
-  }
+    if ($Provider -and $Model) {
+        Say "configuring (non-interactive): $Provider/$Model"
+        & $VenvPy -m hybridagent.cli onboard --provider $Provider --model $Model
+    } else {
+        Say "starting onboarding wizard"
+        & $VenvPy -m hybridagent.cli onboard
+    }
 }
 
+$activate = Join-Path $ProjectDir (Join-Path $Venv "Scripts\Activate.ps1")
 Write-Host ""
 Write-Host "[praxis] ready." -ForegroundColor Green
-@"
-  Activate the environment:   $projectDir\$Venv\Scripts\Activate.ps1
-  Try the demo:               praxis demo
-  Configure a model:          praxis onboard
-  Run a task:                 praxis handle "Prepare a customer follow-up email"
-
-Offline by default (deterministic mock LLM); point at a real provider with
-'praxis onboard'. Docs: $projectDir\README.md
-"@ | Write-Host
+Write-Host ""
+Write-Host "  Activate the environment:   $activate"
+Write-Host "  Try the demo:               praxis demo"
+Write-Host "  Configure a model:          praxis onboard"
+Write-Host "  Run a task:                 praxis handle `"Prepare a customer follow-up email`""
+Write-Host ""
+Write-Host "Offline by default (deterministic mock LLM); point at a real provider"
+Write-Host "with 'praxis onboard'. Docs: $ProjectDir\README.md"
