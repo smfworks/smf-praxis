@@ -11,6 +11,7 @@ from typing import Callable
 
 from .broker import RiskClass
 from .real_tools import (
+    call_agent,
     delegate,
     fetch_url,
     list_dir,
@@ -225,6 +226,19 @@ _DELEGATE_SCHEMA = {
     "additionalProperties": False,
 }
 
+_CALL_AGENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "target": {"type": "string",
+                   "description": "A registered A2A peer name or an http(s) base "
+                                  "URL of an agent with a Praxis A2A endpoint"},
+        "goal": {"type": "string",
+                 "description": "The goal to ask the remote agent to execute"},
+    },
+    "required": ["target", "goal"],
+    "additionalProperties": False,
+}
+
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -262,6 +276,9 @@ def default_registry() -> ToolRegistry:
     reg.register(Tool("delegate", RiskClass.DRAFT,
                       "Delegate a sub-goal to a scoped, governed subagent",
                       delegate, parameters=_DELEGATE_SCHEMA))
+    reg.register(Tool("call_agent", RiskClass.SEND,
+                      "Call another A2A agent to handle a goal (held for approval)",
+                      call_agent, parameters=_CALL_AGENT_SCHEMA))
     from .browser import browser_tools
     for tool in browser_tools():
         reg.register(tool)
