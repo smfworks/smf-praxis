@@ -77,6 +77,21 @@ def list_dir(path: str = ".", **_kw) -> str:
 
 
 # ------------------------------------------------------------------ web tools
+def send_message(target: str = "", text: str = "", **_kw) -> str:
+    """Send a message to a configured messaging gateway (Telegram/Slack/Discord/
+    webhook/ntfy). ``target`` is '<channel>' or '<channel>:<destination>'.
+
+    SEND-risk: the broker holds it for human approval before it reaches anyone
+    (draft-before-send), so the agent can propose notifications without spamming.
+    """
+    from .gateways import deliver
+    if not target or not text:
+        return "[send_message] target and text are required"
+    res = deliver(target, text)
+    return (f"[send_message] {'sent' if res.ok else 'FAILED'} via {res.channel} "
+            f"({res.detail})")
+
+
 def query_knowledge(question: str, k: int = 5, **_kw) -> str:
     """Answer a question grounded in the local knowledge base (RAG repositories).
 

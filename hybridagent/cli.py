@@ -650,6 +650,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if rep["counts"].get("warn", 0) == 0 else 1
 
 
+def cmd_message(args: argparse.Namespace) -> int:
+    from . import gateways
+    if getattr(args, "list", False):
+        configured = gateways.configured_targets()
+        print("available channels: " + ", ".join(gateways.available_channels()))
+        print("configured channels: " + (", ".join(configured) or "none "
+              "(set agents.gateways.<channel> in praxis.json)"))
+        return 0
+    if not args.target or not args.text:
+        print("usage: praxis message <target> <text>   (e.g. telegram \"hi\")")
+        return 1
+    res = gateways.deliver(args.target, args.text)
+    print(f"{'sent' if res.ok else 'FAILED'} via {res.channel}: {res.detail}")
+    return 0 if res.ok else 1
+
+
 def cmd_cron(args: argparse.Namespace) -> int:
     from datetime import datetime
 
@@ -1140,6 +1156,14 @@ def build_parser() -> argparse.ArgumentParser:
     pdoc = sub.add_parser("doctor",
                           help="first-run readiness checklist (model/memory/search/wiki)")
     pdoc.set_defaults(func=cmd_doctor)
+
+    pmsg = sub.add_parser("message", help="send a message via a gateway (telegram/slack/discord/webhook/ntfy)")
+    pmsg.add_argument("target", nargs="?", default="",
+                      help="'<channel>' or '<channel>:<destination>'")
+    pmsg.add_argument("text", nargs="?", default="", help="message body")
+    pmsg.add_argument("--list", action="store_true",
+                      help="list available + configured channels")
+    pmsg.set_defaults(func=cmd_message)
 
     pcron = sub.add_parser("cron", help="schedule recurring autonomous jobs")
     cronsub = pcron.add_subparsers(dest="cron_action")
