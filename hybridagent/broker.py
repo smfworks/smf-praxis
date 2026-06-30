@@ -303,12 +303,16 @@ class GovernanceBroker:
                   rationale: str = "") -> Decision:
         decision_id = f"dec-{uuid.uuid4().hex[:12]}"
         args_hash = self._hash_args(args)
-        # External policy hook (OPA/Rego/Cedar/custom) runs first: a "deny" is an
-        # absolute veto (defense in depth over the built-in logic); an "allow"
-        # short-circuits the consequential-action path for an explicitly
-        # whitelisted action. Hook errors fail SAFE (treated as no-opinion) so a
-        # broken policy can never silently widen access.
+        # External policy hook (OPA/Rego/Cedar/custom). A "deny" is an absolute
+        # veto, evaluated first (defense in depth over the built-in logic). An
+        # "allow" is NOT applied here: it may only waive the *human-approval*
+        # requirement for a consequential action, and only AFTER the
+        # non-negotiable safety gates (allowlist, pack, kill-switch, egress
+        # firewall) have all passed — otherwise a convenience "allow" rule could
+        # bypass exfiltration protection. Hook errors fail SAFE (treated as deny)
+        # so a broken policy can never widen access.
         hook = getattr(self.policy, "policy_hook", None)
+        hook_allow = False
         if callable(hook):
             try:
                 verdict = hook({"actor": actor, "tool": tool, "risk": risk.value,
@@ -321,11 +325,7 @@ class GovernanceBroker:
                     actor, tool, risk, Verdict.DENY, "denied by policy hook",
                     decision_id=decision_id, cycle_id=cycle_id,
                     policy_rule="policy_hook_deny", args_hash=args_hash)
-            if verdict == "allow" and tool in self.policy.allowed_tools:
-                return self._log_decision(
-                    actor, tool, risk, Verdict.ALLOW, "allowed by policy hook",
-                    decision_id=decision_id, cycle_id=cycle_id,
-                    policy_rule="policy_hook_allow", args_hash=args_hash)
+            hook_allow = (verdict == "allow")
         if tool not in self.policy.allowed_tools:
             return self._log_decision(actor, tool, risk, Verdict.DENY,
                                       "tool not in allowlist", decision_id=decision_id,
@@ -360,6 +360,15 @@ class GovernanceBroker:
                                           decision_id=decision_id, cycle_id=cycle_id,
                                           policy_rule="egress_blocked",
                                           args_hash=args_hash)
+        # Policy-hook "allow" applies HERE — after allowlist, pack, kill-switch and
+        # the egress firewall have all passed — so it may only waive the
+        # human-approval requirement for a consequential action, never bypass a
+        # safety gate (exfiltration of injection-flagged content stays blocked).
+        if hook_allow:
+            return self._log_decision(
+                actor, tool, risk, Verdict.ALLOW, "allowed by policy hook",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="policy_hook_allow", args_hash=args_hash)
         # Compliance off (autonomous/permissive): consequential actions run without
         # human approval. The kill-switch already had its say above, and each such
         # action is audit-logged distinctly so unsupervised runs stay visible.
