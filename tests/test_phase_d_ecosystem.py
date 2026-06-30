@@ -93,7 +93,8 @@ def test_vault_value_not_plaintext(tmp_path, monkeypatch):
     v.put("gh", {"GITHUB_TOKEN": "ghp_supersecret"})
     raw = _vault_path().read_text()
     assert "ghp_supersecret" not in raw
-    assert (os.stat(_vault_path()).st_mode & 0o777) == 0o600
+    if os.name != "nt":
+        assert (os.stat(_vault_path()).st_mode & 0o777) == 0o600
 
 
 def test_vault_scoping(tmp_path, monkeypatch):

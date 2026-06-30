@@ -1,6 +1,8 @@
 """Regression tests for bugs found in the post-Phase-D bug hunt."""
 import os
 
+import pytest
+
 from hybridagent import config as cfg
 
 
@@ -21,6 +23,8 @@ def test_docker_uses_host_uid_not_hardcoded():
 
 def test_docker_user_matches_current_uid(monkeypatch):
     """The --user value handed to docker is the host's real uid:gid."""
+    if os.name == "nt":
+        pytest.skip("os.getuid()/--user uid mapping is POSIX-only")
     from hybridagent import sandbox
     captured = {}
 

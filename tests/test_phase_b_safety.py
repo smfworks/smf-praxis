@@ -38,6 +38,11 @@ def test_identity_file_is_private(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     from hybridagent.identity import AgentIdentity, _identity_path
     AgentIdentity.load_or_create("praxis")
+    if os.name == "nt":
+        # Windows restricts via icacls (ACLs), not POSIX mode bits; just ensure
+        # the file exists and secure_file ran without error.
+        assert _identity_path().exists()
+        return
     mode = os.stat(_identity_path()).st_mode & 0o777
     assert mode == 0o600
 
