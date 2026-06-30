@@ -100,6 +100,28 @@ def delegate(goal: str = "", role: str = "", **_kw) -> str:
             f"(run {run.run_id}); inspect with 'praxis subagents'")
 
 
+def call_agent(target: str = "", goal: str = "", **_kw) -> str:
+    """Call another autonomous agent (A2A) to handle a goal and return its result.
+
+    ``target`` is a registered peer name (agents.a2a.peers) or an http(s) base
+    URL of an agent exposing the Praxis A2A contract. SEND-risk: outbound agent
+    calls are held for approval, since the remote agent is untrusted and may take
+    consequential actions of its own.
+    """
+    import json as _json
+
+    from .a2a_client import call_agent as _call
+    target = (target or "").strip()
+    goal = (goal or "").strip()
+    if not target or not goal:
+        return "[call_agent] target and goal are required"
+    res = _call(target, goal)
+    if "error" in res:
+        return f"[call_agent] {res['error']}"
+    summary = res.get("summary") or res.get("status") or _json.dumps(res)[:300]
+    return f"[call_agent] {target} -> {summary}"
+
+
 def send_message(target: str = "", text: str = "", **_kw) -> str:
     """Send a message to a configured messaging gateway (Telegram/Slack/Discord/
     webhook/ntfy). ``target`` is '<channel>' or '<channel>:<destination>'.
