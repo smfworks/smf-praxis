@@ -166,6 +166,7 @@ class HttpTransport:
         self._session_id: str | None = None
 
     def _post(self, payload: dict, timeout: float) -> tuple[dict | None, dict]:
+        import urllib.error
         import urllib.request
         body = json.dumps(payload).encode("utf-8")
         headers = {
@@ -178,12 +179,32 @@ class HttpTransport:
             headers["Mcp-Session-Id"] = self._session_id
         req = urllib.request.Request(self._url, data=body, headers=headers,
                                      method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            sid = resp.headers.get("Mcp-Session-Id")
-            if sid:
-                self._session_id = sid
-            ctype = (resp.headers.get("Content-Type") or "").lower()
-            raw = resp.read().decode("utf-8", errors="replace")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                sid = resp.headers.get("Mcp-Session-Id")
+                if sid:
+                    self._session_id = sid
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                raw = resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            # An MCP server may return a JSON-RPC error in the body of a 4xx/5xx
+            # response (bad params, method not found, ...). Surface that message
+            # instead of swallowing it behind a bare "HTTP Error 400".
+            try:
+                err_raw = exc.read().decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                err_raw = ""
+            ctype = (exc.headers.get("Content-Type") or "").lower() if exc.headers else ""
+            parsed = (self._parse_sse(err_raw) if "text/event-stream" in ctype
+                      else None)
+            if parsed is None and err_raw.strip():
+                try:
+                    parsed = json.loads(err_raw)
+                except ValueError:
+                    parsed = None
+            if isinstance(parsed, dict) and "error" in parsed:
+                return parsed, {}
+            raise MCPError(f"HTTP {exc.code}: {err_raw.strip()[:200] or exc.reason}") from exc
         if "text/event-stream" in ctype:
             return self._parse_sse(raw), {}
         if not raw.strip():
@@ -225,6 +246,12 @@ class HttpTransport:
             raise MCPError(f"{method} failed: {exc}") from exc
         if not msg:
             raise MCPError(f"{method}: empty response")
+        # Correlate the response id with the request id when the server provides
+        # one (it may be absent for some servers / SSE). A mismatched id means the
+        # server answered a different call — reject rather than trust it.
+        resp_id = msg.get("id")
+        if resp_id is not None and resp_id != mid:
+            raise MCPError(f"{method}: response id {resp_id!r} != request id {mid!r}")
         if "error" in msg:
             err = msg["error"]
             detail = err.get("message", err) if isinstance(err, dict) else err

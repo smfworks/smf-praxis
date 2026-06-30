@@ -88,3 +88,126 @@ def test_version_tuple_parsing():
     assert _version_tuple("0.1.0") < _version_tuple("0.2.0")
     assert _version_tuple("1.0") < _version_tuple("1.0.1")
     assert _version_tuple("v2.0") == (2, 0)  # tolerant of 'v' prefix
+
+
+# BUG 5 (broker): policy_hook "allow" must NOT bypass the egress firewall.
+def test_policy_hook_allow_cannot_bypass_egress(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
+
+    def allow_all(ctx):
+        return "allow"
+
+    b = GovernanceBroker(policy=GovernancePolicy(
+        allowed_tools={"send_message"}, policy_hook=allow_all))
+    b.mark_tainted("injection-flagged-secret")
+    dec = b.authorize("agent", "send_message", RiskClass.SEND,
+                      {"text": "injection-flagged-secret exfiltrated"})
+    # the egress firewall must still win over a convenience "allow"
+    assert dec.verdict.value == "deny"
+    assert "egress" in dec.reason
+
+
+def test_policy_hook_allow_cannot_bypass_allowlist(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
+
+    def allow_all(ctx):
+        return "allow"
+
+    b = GovernanceBroker(policy=GovernancePolicy(
+        allowed_tools={"read_file"}, policy_hook=allow_all))
+    # delete_file not in allowlist -> deny despite the hook's allow
+    dec = b.authorize("agent", "delete_file", RiskClass.DESTRUCTIVE,
+                      {"path": "/etc/x"})
+    assert dec.verdict.value == "deny"
+
+
+def test_policy_hook_allow_still_waives_approval_when_safe(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
+
+    def allow_all(ctx):
+        return "allow"
+
+    b = GovernanceBroker(policy=GovernancePolicy(
+        allowed_tools={"send_message"}, policy_hook=allow_all))
+    # no taint, in allowlist, kill-switch clear -> allow waives human approval
+    dec = b.authorize("agent", "send_message", RiskClass.SEND,
+                      {"text": "totally benign status update"})
+    assert dec.verdict.value == "allow"
+
+
+# BUG 4 (mcp_client): HTTP-error responses with a JSON-RPC body must surface the
+# server's message, not a bare "HTTP Error 400".
+def test_http_transport_surfaces_jsonrpc_error_body():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from hybridagent.mcp_client import HttpTransport, MCPError
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            ln = int(self.headers.get("Content-Length", 0))
+            req = json.loads(self.rfile.read(ln) or "{}")
+            body = json.dumps({"jsonrpc": "2.0", "id": req.get("id"),
+                               "error": {"code": -32000,
+                                         "message": "server says no"}}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        t = HttpTransport(f"http://127.0.0.1:{port}/mcp")
+        try:
+            t.request("tools/list", timeout=5)
+            assert False, "should have raised MCPError"
+        except MCPError as exc:
+            assert "server says no" in str(exc)
+    finally:
+        srv.shutdown()
+
+
+def test_http_transport_rejects_id_mismatch():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from hybridagent.mcp_client import HttpTransport, MCPError
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            ln = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(ln)
+            body = json.dumps({"jsonrpc": "2.0", "id": 99999,
+                               "result": {"ok": True}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        t = HttpTransport(f"http://127.0.0.1:{port}/mcp")
+        try:
+            t.request("tools/list", timeout=5)
+            assert False, "should reject mismatched response id"
+        except MCPError as exc:
+            assert "id" in str(exc).lower()
+    finally:
+        srv.shutdown()
