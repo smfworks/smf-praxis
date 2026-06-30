@@ -11,6 +11,7 @@ from typing import Callable
 
 from .broker import RiskClass
 from .real_tools import (
+    delegate,
     fetch_url,
     list_dir,
     query_knowledge,
@@ -211,6 +212,19 @@ _SEND_MESSAGE_SCHEMA = {
     "additionalProperties": False,
 }
 
+_DELEGATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string",
+                 "description": "The sub-goal to hand to an isolated subagent"},
+        "role": {"type": "string",
+                 "description": "Optional role: researcher/drafter/compliance/"
+                                "predictor (auto-routed if omitted)"},
+    },
+    "required": ["goal"],
+    "additionalProperties": False,
+}
+
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -245,6 +259,9 @@ def default_registry() -> ToolRegistry:
     reg.register(Tool("send_message", RiskClass.SEND,
                       "Send a message to a messaging gateway (held for approval)",
                       send_message, parameters=_SEND_MESSAGE_SCHEMA))
+    reg.register(Tool("delegate", RiskClass.DRAFT,
+                      "Delegate a sub-goal to a scoped, governed subagent",
+                      delegate, parameters=_DELEGATE_SCHEMA))
     from .browser import browser_tools
     for tool in browser_tools():
         reg.register(tool)
