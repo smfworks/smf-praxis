@@ -18,6 +18,7 @@ from .real_tools import (
     list_dir,
     query_knowledge,
     read_file,
+    run_shell,
     search_web,
     send_message,
     text_to_speech,
@@ -262,6 +263,16 @@ _TTS_SCHEMA = {
     "additionalProperties": False,
 }
 
+_RUN_SHELL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "command": {"type": "string", "description": "Shell command to execute"},
+        "timeout": {"type": "integer", "description": "Max seconds (default 60)"},
+    },
+    "required": ["command"],
+    "additionalProperties": False,
+}
+
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -308,6 +319,9 @@ def default_registry() -> ToolRegistry:
     reg.register(Tool("text_to_speech", RiskClass.DRAFT,
                       "Synthesize speech from text to a local mp3",
                       text_to_speech, parameters=_TTS_SCHEMA))
+    reg.register(Tool("run_shell", RiskClass.DESTRUCTIVE,
+                      "Execute a shell command via the isolation sandbox (held)",
+                      run_shell, parameters=_RUN_SHELL_SCHEMA))
     from .browser import browser_tools
     for tool in browser_tools():
         reg.register(tool)

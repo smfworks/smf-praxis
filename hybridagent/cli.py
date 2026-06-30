@@ -976,6 +976,41 @@ def cmd_evolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_market(args: argparse.Namespace) -> int:
+    from . import marketplace as mk
+    action = getattr(args, "market_action", None) or "search"
+    if action == "publish":
+        res = mk.publish(args.source, name=args.name or "",
+                        version=args.version, description=args.description or "",
+                        author=args.author or "")
+        if res.get("error"):
+            print(res["error"]); return 1
+        print(f"published {res['published']} v{res['version']} (grade {res['grade']})")
+        return 0
+    if action == "install":
+        res = mk.install(args.name, enable=args.enable)
+        if res.get("error"):
+            print(res["error"]); return 1
+        print(f"installed {res['installed']} (grade {res['grade']}, "
+              f"enabled={res['enabled']})")
+        if not res["enabled"]:
+            print(f"enable it: praxis plugins enable {res['installed']}")
+        return 0
+    if action == "uninstall":
+        res = mk.uninstall(args.name)
+        print(f"uninstalled {res['uninstalled']} (removed={res['removed']})")
+        return 0
+    # search (default)
+    listings = mk.search(getattr(args, "query", "") or "")
+    if not listings:
+        print(f"no published plugins in {mk.registry_dir()}")
+        return 0
+    for l in listings:
+        print(f"{l.name} v{l.version} [{l.grade}] — {l.description or '(no description)'}"
+              + (f"  by {l.author}" if l.author else ""))
+    return 0
+
+
 def cmd_plugins(args: argparse.Namespace) -> int:
     from . import plugins as pl
     action = getattr(args, "plugins_action", None) or "list"
@@ -1340,6 +1375,23 @@ def build_parser() -> argparse.ArgumentParser:
     pevo.add_argument("--llm", action="store_true",
                       help="use the configured LLM for reflective mutation")
     pevo.set_defaults(func=cmd_evolve)
+
+    pmk = sub.add_parser("market", help="plugin marketplace: publish/search/install")
+    mksub = pmk.add_subparsers(dest="market_action")
+    mks = mksub.add_parser("search", help="search published plugins (default)")
+    mks.add_argument("query", nargs="?", default="")
+    mkp = mksub.add_parser("publish", help="publish a plugin module")
+    mkp.add_argument("source", help="path to the plugin .py")
+    mkp.add_argument("--name", default="")
+    mkp.add_argument("--version", default="0.1.0")
+    mkp.add_argument("--description", default="")
+    mkp.add_argument("--author", default="")
+    mki = mksub.add_parser("install", help="install a published plugin")
+    mki.add_argument("name")
+    mki.add_argument("--enable", action="store_true", help="enable after install")
+    mku = mksub.add_parser("uninstall", help="remove an installed plugin")
+    mku.add_argument("name")
+    pmk.set_defaults(func=cmd_market)
 
     ppl = sub.add_parser("plugins", help="manage third-party plugins")
     plsub = ppl.add_subparsers(dest="plugins_action")
