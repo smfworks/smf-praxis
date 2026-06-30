@@ -16,6 +16,7 @@ from .real_tools import (
     query_knowledge,
     read_file,
     search_web,
+    send_message,
     write_file,
 )
 
@@ -197,6 +198,19 @@ _QUERY_KB_SCHEMA = {
     "additionalProperties": False,
 }
 
+_SEND_MESSAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "target": {"type": "string",
+                   "description": "Gateway target: '<channel>' or "
+                                  "'<channel>:<destination>' (telegram/slack/"
+                                  "discord/webhook/ntfy)"},
+        "text": {"type": "string", "description": "Message body to send"},
+    },
+    "required": ["target", "text"],
+    "additionalProperties": False,
+}
+
 
 def default_registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -228,6 +242,9 @@ def default_registry() -> ToolRegistry:
     reg.register(Tool("query_knowledge", RiskClass.READ,
                       "Answer from the local knowledge base / RAG repositories",
                       query_knowledge, parameters=_QUERY_KB_SCHEMA))
+    reg.register(Tool("send_message", RiskClass.SEND,
+                      "Send a message to a messaging gateway (held for approval)",
+                      send_message, parameters=_SEND_MESSAGE_SCHEMA))
     from .browser import browser_tools
     for tool in browser_tools():
         reg.register(tool)
