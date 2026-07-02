@@ -201,7 +201,13 @@ class LLMClient:
         deterministic tool call when the latest user turn names an available
         tool, so the governed loop is exercisable without a provider.
         """
-        convo = "\n".join(str(m.get("content", "")) for m in messages)
+        # Tool results are read-only external data from governed READ tools; they
+        # must not trigger "sensitive" routing just because the fetched page
+        # contains words like "api_key" or "token" in documentation examples.
+        convo = "\n".join(
+            str(m.get("content", "")) for m in messages
+            if m.get("role") in ("user", "assistant")
+        )
         if sensitivity is None:
             sensitivity = classify_sensitivity((system or "") + "\n" + convo)
         if self._effective_mode() == "real":

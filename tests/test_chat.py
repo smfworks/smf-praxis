@@ -69,6 +69,35 @@ def test_llm_chat_keeps_sensitive_conversation_off_cloud(tmp_path, monkeypatch):
     assert out.startswith("[mock:")
 
 
+def test_tool_results_do_not_force_mock_routing(tmp_path, monkeypatch):
+    # A huge external tool result containing sensitive-looking words (e.g.
+    # "api_key" in fetched documentation) must not classify the turn as
+    # sensitive and strip the configured cloud model.
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    monkeypatch.delenv("PRAXIS_LLM", raising=False)
+    from hybridagent import onboard
+    onboard.run_noninteractive("openai", "gpt-4o-mini")
+    llm = LLMClient()
+    router = llm.router
+    from hybridagent.router import classify_sensitivity
+    # Simulate the third turn in a URL-summarization chat: user ask + assistant
+    # tool call + two tool results full of doc HTML with trigger words.
+    messages = [
+        {"role": "user", "content": "summarize https://example.com/docs"},
+        {"role": "assistant", "content": "", "tool_calls": []},
+        {"role": "tool", "name": "fetch_url", "content": "Set your API_KEY and TOKEN here. secret=foo" * 500},
+        {"role": "tool", "name": "browser_navigate", "content": "password and token docs" * 500},
+    ]
+    # Sensitivity must be computed from user/assistant text only, not tool
+    # results (which is the fix in LLMClient.chat_tools).
+    convo = "\n".join(str(m.get("content", "")) for m in messages
+                     if m.get("role") in ("user", "assistant"))
+    sensitivity = classify_sensitivity(convo)
+    candidates = router.select("general", sensitivity, "standard")
+    assert "openai/gpt-4o-mini" in candidates
+    assert "mock" not in candidates
+
+
 def test_daemon_switch_model_validates_and_persists(tmp_path, monkeypatch):
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
     from hybridagent.daemon import Daemon
