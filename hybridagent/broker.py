@@ -229,6 +229,7 @@ class GovernanceBroker:
         # against these — never against approvals hydrated from a shared store —
         # so a fresh process can't collapse onto a prior session's pending action.
         self._session_approvals: set[str] = set()
+        self._session_allowed_tools: set[str] = set()
         self.store = store
         self.log = get_logger("praxis.broker")
         self.mode = (coerce_compliance_mode(store.get_compliance_mode())
@@ -360,6 +361,15 @@ class GovernanceBroker:
                                           decision_id=decision_id, cycle_id=cycle_id,
                                           policy_rule="egress_blocked",
                                           args_hash=args_hash)
+        # Session allowlist: a tool explicitly allowed for this daemon session runs
+        # without re-approval (e.g. "always run browser_click for this chat"). This
+        # still respects the allowlist, pack, kill-switch, and egress firewall.
+        if tool in self._session_allowed_tools:
+            return self._log_decision(
+                actor, tool, risk, Verdict.ALLOW,
+                "auto-allowed (session allowlist)",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="session_allowlist_allow", args_hash=args_hash)
         # Policy-hook "allow" applies HERE — after allowlist, pack, kill-switch and
         # the egress firewall have all passed — so it may only waive the
         # human-approval requirement for a consequential action, never bypass a
@@ -459,6 +469,16 @@ class GovernanceBroker:
             return None
         self.pending.pop(approval_id, None)
         return pending
+
+    def allow_tool_for_session(self, tool: str) -> None:
+        """Permanently allow a tool for the current daemon session.
+
+        Used by the dashboard "always run this tool" approval option. The tool
+        still passes through the allowlist, pack, kill-switch, and egress checks;
+        it only skips the human-approval step.
+        """
+        self._session_allowed_tools.add(tool)
+        self.log.info("tool %s added to session allowlist", tool)
 
     def reject(self, approval_id: str) -> None:
         self.pending.pop(approval_id, None)
