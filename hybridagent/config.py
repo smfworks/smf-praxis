@@ -271,6 +271,15 @@ def get_default_model() -> str | None:
         return None
 
 
+def get_default_provider() -> str | None:
+    """Provider portion of the configured default model ref, if any."""
+    ref = get_default_model()
+    if not ref:
+        return None
+    provider, _, _ = ref.partition("/")
+    return provider or None
+
+
 def get_embed_model() -> str | None:
     """Optional separate embedding model ref ('provider/model'); None -> mock."""
     return (load_config().get("agents", {}).get("defaults", {}).get("embedModel"))
