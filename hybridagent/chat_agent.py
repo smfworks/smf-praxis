@@ -54,7 +54,7 @@ class ChatEngine(Protocol):
 
 
 class GovernedChatAgent:
-    MAX_STEPS = 6
+    MAX_STEPS = 12
 
     def __init__(self, llm, registry: ToolRegistry, broker: GovernanceBroker,
                  memory=None, *, actor: str = "praxis-chat",
