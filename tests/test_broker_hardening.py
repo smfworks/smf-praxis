@@ -144,3 +144,24 @@ def test_governed_loop_taints_then_blocks_exfiltration():
     denied = [e for e in events if e.type == "denied"]
     assert any("egress" in str(e.data.get("reason", "")).lower() for e in denied)
     assert all(e.type != "approval" for e in events)
+
+
+def test_session_allowlist_skips_approval_but_keeps_safety_gates():
+    b = _broker("send_email")
+    d1 = _send(b, {"draft_id": "d1"})
+    assert d1.verdict is Verdict.NEEDS_APPROVAL
+    b.allow_tool_for_session("send_email")
+    d2 = _send(b, {"draft_id": "d2"})
+    assert d2.verdict is Verdict.ALLOW
+    assert d2.policy_rule == "session_allowlist_allow"
+    # Kill-switch still overrides session allowlist.
+    b.kill.trip()
+    d3 = _send(b, {"draft_id": "d3"})
+    assert d3.verdict is Verdict.DENY
+
+
+def test_session_allowlist_respects_tool_allowlist():
+    b = _broker("send_email")
+    b.allow_tool_for_session("delete_account")
+    d = b.authorize("agent", "delete_account", RiskClass.DESTRUCTIVE, {"id": "x"})
+    assert d.verdict is Verdict.DENY and d.policy_rule == "allowlist_denied"

@@ -723,6 +723,7 @@ document.addEventListener("keydown", function (e) {
 
 <script>
 let mode = 'chat';
+let isSending = false;
 let conversations = [];
 let activeId = null;
 const HIST_KEY = 'praxis.chats.v1';
@@ -1177,7 +1178,7 @@ async function sendMessage(ev){
   const text = ta.value.trim(); if(!text) return;
   ta.value=''; autoGrow(ta);
   appendUser(text);
-  const typing = appendTyping(); setBusy(true);
+  const typing = appendTyping(); setBusy(true); isSending = true;
   try {
     if(voiceMode === 'realtime'){
       const conv = ensureConversation();
@@ -1215,7 +1216,22 @@ async function sendMessage(ev){
       refresh();
     }
   } catch(e){ typing.remove(); appendAgent('Error: '+e); }
-  setBusy(false);
+  setBusy(false); isSending = false;
+}
+
+async function resumeChat(){
+  // Re-submit the current conversation after a held action was approved for this
+  // chat/always, so the agent continues without the user typing anything.
+  const conv = conversations.find(c => c.id === currentConvId);
+  if(!conv || !conv.messages.length || isSending) return;
+  const last = conv.messages[conv.messages.length-1];
+  if(last.role === 'assistant') return; // already answered
+  const typing = appendTyping(); setBusy(true); isSending = true;
+  try {
+    const wire = conv.messages.map(m => ({role:m.role, content:m.content}));
+    await agentChat(conv, wire, typing);
+  } catch(e){ typing.remove(); appendAgent('Error: '+e); }
+  setBusy(false); isSending = false;
 }
 
 /* ---------- composer behavior ---------- */
@@ -1407,17 +1423,19 @@ async function refresh(){
   apprEl.innerHTML = (appr && appr.length) ? '' : '<div class="empty">Nothing waiting approval.</div>';
   (appr||[]).forEach(a => {
     const div = document.createElement('div'); div.className = 'approval';
-    div.innerHTML = '<div class="task-id">'+a.approval_id+'</div><div class="task-goal"></div><div class="task-status"></div><button class="primary">Approve</button>';
+    div.innerHTML = '<div class="task-id">'+a.approval_id+'</div><div class="task-goal"></div><div class="task-status"></div><div class="approval-actions"><button class="primary once">Approve once</button><button class="primary chat">Approve for this chat</button><button class="primary always">Always run '+escapeHtml(a.tool)+'</button></div>';
     div.querySelector('.task-goal').textContent = a.tool;
     div.querySelector('.task-status').textContent = a.preview || '';
-    div.querySelector('button').onclick = () => approve(a.approval_id);
+    div.querySelector('button.once').onclick = () => approve(a.approval_id, 'once');
+    div.querySelector('button.chat').onclick = () => approve(a.approval_id, 'chat');
+    div.querySelector('button.always').onclick = () => approve(a.approval_id, 'always');
     apprEl.appendChild(div);
   });
   const logs = await fetch('/log').then(r => r.text()).catch(()=> '');
   document.getElementById('logs').textContent = logs || '—';
 }
-async function approve(id){
-  const res = await api('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id})});
+async function approve(id, mode='once'){
+  const res = await api('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id, mode: mode})});
   showToast(res.approved ? ('Approved '+id) : ('Could not approve'+(res.error?': '+res.error:''))); refresh();
 }
 function connectEvents(){
@@ -1428,6 +1446,16 @@ function connectEvents(){
         showToast('Task '+(p.task_id||'')+' → '+(p.status||''));
       } catch(_) {}
       refresh();
+    });
+    window.PraxisBus.on('resume', (e) => {
+      // Server says a held action was approved for this chat/always. Re-submit
+      // the current conversation so the agent can continue without the user
+      // typing anything.
+      try {
+        const ev = JSON.parse(e.data); const p = ev.payload || {};
+        showToast((p.tool||'Action')+' approved — continuing...');
+      } catch(_) {}
+      resumeChat();
     });
     // Shared bus auto-reconnects on error; the 4s poll below stays as a fallback.
   } catch(_) { /* SSE unsupported — polling still keeps the UI fresh. */ }
@@ -1657,8 +1685,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 body = self.rfile.read(length).decode()
                 payload = json.loads(body)
                 approval_id = payload.get("approval_id", "")
-                approved = self.daemon.approve(approval_id)
-                self._json_response({"approved": bool(approved), "approval_id": approval_id})
+                mode = payload.get("mode", "once")
+                approved = self.daemon.approve(approval_id, mode=mode)
+                self._json_response({"approved": bool(approved), "approval_id": approval_id, "mode": mode})
                 return
             if self.path == "/api/deny":
                 length = int(self.headers.get("Content-Length", 0))
@@ -3504,21 +3533,33 @@ class Daemon:
         self._log("info", f"default model switched to {summary['model']}")
         return {"model": summary["model"], "provider": provider_id}
 
-    def approve(self, approval_id: str) -> bool:
+    def approve(self, approval_id: str, mode: str = "once") -> bool:
         """Approve a pending consequential action and resume any waiting task."""
         self._ensure_agent()
         assert self.agent is not None
+        pending = self.agent.broker.pending.get(approval_id)
+        if pending is None:
+            return False
+        if mode in ("chat", "always"):
+            # Add the tool to the session allowlist so subsequent calls in this
+            # conversation (and this daemon session) run without re-approval.
+            self.agent.broker.allow_tool_for_session(pending.tool)
         approved = self.agent.broker.approve(approval_id, approved_by="web-ui")
         if approved is None:
             return False
+        if mode in ("chat", "always"):
+            # Notify all dashboard clients to auto-resubmit the current
+            # conversation now that the held tool is allowed.
+            self.emit_event("resume", {"approval_id": pending.approval_id,
+                                        "tool": pending.tool})
         # Resume any task whose stored result references this approval.
         assert self.manager is not None
         for task in self.manager.list(status="waiting_approval", limit=100):
             assert self.manager is not None
             row = self.manager.store.get_task(task.task_id)
             result = row.get("result") or {}
-            pending = result.get("pending_approvals", [])
-            if any(pa.get("approval_id") == approval_id for pa in pending):
+            pending_approvals = result.get("pending_approvals", [])
+            if any(pa.get("approval_id") == approval_id for pa in pending_approvals):
                 self._log("info", f"resuming task {task.task_id} after approval")
                 threading.Thread(target=self.resume, args=(task.task_id,), daemon=True).start()
         return True
