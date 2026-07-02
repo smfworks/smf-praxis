@@ -130,6 +130,8 @@ def compact_tool_messages(messages: list[dict], *, max_chars: int = 24000,
     ``tool_calls`` message is never split from the results that answer it. The
     first block (the user's goal) and the last ``keep_recent`` blocks are kept
     verbatim; the middle blocks are folded into a single, tool-call-free recap.
+    If a small number of blocks still exceeds the budget (e.g. one huge tool
+    result), individual tool-result contents are truncated to fit.
     Returns the input unchanged when already within budget or ``max_chars <= 0``.
     """
     msgs = list(messages or [])
@@ -137,14 +139,31 @@ def compact_tool_messages(messages: list[dict], *, max_chars: int = 24000,
         return msgs
     keep_recent = max(1, keep_recent)
     blocks = _tool_blocks(msgs)
-    if len(blocks) <= keep_recent + 1:  # need lead + >=1 middle + recent
-        return msgs
-    lead, recent = blocks[0], blocks[-keep_recent:]
-    middle = blocks[1:-keep_recent]
-    if not middle:
-        return msgs
-    recap = {"role": "assistant", "content": _recap_for(middle, summarize)}
-    out: list[dict] = [*lead, recap]
-    for group in recent:
-        out.extend(group)
+    if len(blocks) > keep_recent + 1:
+        lead, recent = blocks[0], blocks[-keep_recent:]
+        middle = blocks[1:-keep_recent]
+        recap = {"role": "assistant", "content": _recap_for(middle, summarize)}
+        out: list[dict] = [*lead, recap]
+        for group in recent:
+            out.extend(group)
+        if total_chars(out) <= max_chars:
+            return out
+
+    # Still over budget: truncate oversized tool results so the model call
+    # does not blow up the context window and fall back to mock/offline mode.
+    # Preserve the most recent tool result fully if possible; cap older ones.
+    budget = max_chars
+    out = []
+    for m in msgs:
+        role = m.get("role")
+        content = m.get("content", "")
+        if role == "tool" and isinstance(content, str) and len(content) > budget // 2:
+            truncated = content[:budget // 2]
+            content = (
+                truncated
+                + "\n\n[Tool result truncated by Praxis from "
+                f"{len(content)} to {len(truncated)} chars to fit the context window.]"
+            )
+            m = {**m, "content": content}
+        out.append(m)
     return out

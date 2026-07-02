@@ -19,6 +19,7 @@ so the HTTP layer can stream tool-call cards and the final answer to the UI.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -29,6 +30,7 @@ from .context import compact_tool_messages
 from .tools import ToolRegistry
 from .validation import ValidationError, validate_tool_args
 
+_log = logging.getLogger(__name__)
 
 @dataclass
 class AgentEvent:
@@ -92,6 +94,7 @@ class GovernedChatAgent:
             try:
                 turn = self.llm.chat_tools(history, tools=specs, system=system)
             except Exception as exc:  # provider/connection failure
+                _log.warning("chat_agent model call failed: %s", exc, exc_info=True)
                 yield AgentEvent("error", {"error": str(exc)})
                 return
 
