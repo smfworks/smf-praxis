@@ -54,6 +54,24 @@ def test_tool_compact_custom_summarizer():
     assert _pairing_ok(out)
 
 
+def test_tool_compact_truncates_single_huge_result():
+    """A single tool result larger than the budget must be truncated so the
+    model call does not fail and fall back to the offline mock."""
+    big = "x" * 100000
+    msgs = [
+        {"role": "user", "content": "summarize https://example.com/repo"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "name": "fetch_url", "args": {"url": "https://example.com/repo"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "fetch_url", "content": big},
+    ]
+    out = compact_tool_messages(msgs, max_chars=24000)
+    assert _pairing_ok(out)
+    assert total_chars(out) <= 24000
+    tool_msg = next(m for m in out if m.get("role") == "tool")
+    assert "truncated by Praxis" in str(tool_msg.get("content"))
+    assert len(tool_msg["content"]) < len(big)
+
+
 def test_compact_noop_under_budget():
     msgs = [{"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"}]
