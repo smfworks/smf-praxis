@@ -1225,12 +1225,30 @@ async function loadProviders(){
   providers = await api('/api/providers');
   const sel = document.getElementById('prov');
   sel.innerHTML = providers.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.label)+'</option>').join('');
-  sel.onchange = onProvChange; onProvChange();
+  sel.onchange = onProvChange;
+  // Sync picker with the actually configured model instead of defaulting to the first provider.
+  const active = await api('/api/model');
+  if(active.provider && providers.some(p=>p.id===active.provider)){
+    sel.value = active.provider;
+  }
+  onProvChange();
+  if(active.model && active.provider === sel.value){
+    document.getElementById('modelInput').value = active.model;
+  }
+  // Refresh the top-left badge too.
+  document.getElementById('modelBadge').textContent = active.model || 'mock';
+  var cta = document.getElementById('firstRunCta');
+  if(cta) cta.hidden = !!active.configured;
 }
 function onProvChange(){
   const p = providers.find(x=>x.id===document.getElementById('prov').value); if(!p) return;
+  const active = document.getElementById('modelInput').value.trim();
+  // Preserve the current input value if it already belongs to this provider's model list; otherwise default to the first model.
   document.getElementById('modelList').innerHTML = (p.models||[]).map(m=>'<option value="'+escapeHtml(m)+'"></option>').join('');
-  document.getElementById('modelInput').value = (p.models && p.models[0]) || '';
+  const list = (p.models||[]);
+  if(!list.includes(active)){
+    document.getElementById('modelInput').value = list[0] || '';
+  }
   document.getElementById('keyHint').textContent = p.needs_key ? ('Set env var '+p.key_env+' before using this provider.') : 'No API key required.';
 }
 async function applyModel(){
@@ -3337,9 +3355,11 @@ class Daemon:
     def model_info(self) -> dict:
         """Current default model + whether a real provider is configured."""
         model = cfg.get_default_model()
+        provider = cfg.get_default_provider()
         return {
             "model": model or "mock (offline)",
             "configured": model is not None,
+            "provider": provider,
             "embed_model": cfg.get_embed_model(),
         }
 
@@ -3371,14 +3391,28 @@ class Daemon:
 
     def providers_catalog(self) -> list[dict]:
         """Provider picker payload for the dashboard (no secrets)."""
-        from .providers import CATALOG, ORDER
+        from .providers import CATALOG, ORDER, discover_ollama_models
         out: list[dict] = []
         for pid in ORDER:
             p = CATALOG[pid]
+            models = list(p.suggested_models)
+            # For Ollama providers, live-discover models so the cloud catalog is
+            # actually available in the dashboard picker.
+            if pid in ("ollama", "ollama-cloud"):
+                entry = cfg.provider_entry(pid) or {}
+                base_url = entry.get("baseUrl") or p.base_url
+                key = cfg.resolve_api_key(pid)
+                discovered = discover_ollama_models(
+                    base_url=base_url, timeout=5.0, api_key=key)
+                seen = set(models)
+                for m in discovered:
+                    if m not in seen:
+                        models.append(m)
+                        seen.add(m)
             out.append({
                 "id": p.id, "label": p.label, "needs_key": p.needs_key,
                 "key_env": p.key_env, "base_url": p.base_url,
-                "models": list(p.suggested_models), "notes": p.notes,
+                "models": models, "notes": p.notes,
             })
         return out
 

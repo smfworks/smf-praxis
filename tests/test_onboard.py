@@ -27,6 +27,14 @@ def test_model_ref_split():
     assert cfg.split_model_ref("ollama/llama3.1") == ("ollama", "llama3.1")
 
 
+def test_default_provider_derived_from_model_ref(tmp_path, monkeypatch):
+    _isolate_home(tmp_path, monkeypatch)
+    assert cfg.get_default_provider() is None
+    cfg.write_provider("ollama-cloud", "https://ollama.com/v1", "openai",
+                       "ollama-cloud/kimi-k2.7-code:cloud", "OLLAMA_API_TOKEN")
+    assert cfg.get_default_provider() == "ollama-cloud"
+
+
 def test_paste_key_stored_in_auth_profile(tmp_path, monkeypatch):
     _isolate_home(tmp_path, monkeypatch)
     onboard.run_noninteractive("openai", "gpt-4o-mini",
