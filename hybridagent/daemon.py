@@ -106,7 +106,11 @@ _AGENT_SYSTEM = (
     "destructive actions are held for the user's approval — never claim a held or "
     "denied action succeeded. Prefer calling a tool over guessing, ground your "
     "answers in tool results, and when an action is held or denied, say so plainly "
-    "and continue with whatever you can safely do. Format answers with Markdown."
+    "and continue with whatever you can safely do. Format answers with Markdown. "
+    "For read-only tasks like summarizing or extracting information from a web "
+    "page, use only browser_navigate, browser_find, and browser_read; do not click, "
+    "type, scroll, or submit forms unless the user explicitly asks you to interact "
+    "with the page."
 )
 
 
