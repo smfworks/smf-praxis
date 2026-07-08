@@ -1,4 +1,4 @@
-"""Friendliness Sprint A — dashboard assets + Auto mode shell hooks."""
+"""Friendliness Sprint A/B — Auto mode, outcomes, tour, friendly errors."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import urllib.request
 from pathlib import Path
 
-from hybridagent.daemon import Daemon, _DASHBOARD_HTML, _find_port
+from hybridagent.daemon import _DASHBOARD_HTML, Daemon, _find_port
 from hybridagent.llm import LLMClient
 
 
@@ -20,9 +20,21 @@ def test_dashboard_embeds_friendliness_surface():
     assert 'id="apprBadge"' in html
     assert "let mode = 'auto'" in html
     assert "resolveSendMode" in html
+    # Sprint B hooks in the shell
+    assert "attachOutcome" in html
+    assert "PraxisFriendly" in html
+    assert "Look up complete" in html
+    assert "Research complete" in html
+    assert "Action held" in html
     js = Path("hybridagent/web/friendliness.js").read_text(encoding="utf-8")
     assert "PraxisIntent" in js
-    assert "missions" in js
+    assert "PraxisFriendly" in js
+    assert "friendlyError" in js or "function friendlyError" in js
+    assert "markTour" in js
+    assert "tour-hint" in js or "paintTourHint" in js
+    css = Path("hybridagent/web/friendliness.css").read_text(encoding="utf-8")
+    assert ".tour-hint" in css
+    assert ".mission.done" in css
 
 
 def test_friendliness_assets_served(tmp_path, monkeypatch):
@@ -38,13 +50,16 @@ def test_friendliness_assets_served(tmp_path, monkeypatch):
             js = r.read().decode()
             ctype = r.headers.get("Content-Type", "")
         assert "PraxisIntent" in js and "javascript" in ctype
+        assert "PraxisFriendly" in js
         with urllib.request.urlopen(f"{url}/web/friendliness.css", timeout=10) as r:
             css = r.read().decode()
         assert "#healthBanner" in css and ".missions" in css
+        assert ".tour-hint" in css
         with urllib.request.urlopen(f"{url}/", timeout=10) as r:
             html = r.read().decode()
         assert "/web/friendliness.js" in html
         assert 'id="modeAuto"' in html
+        assert "attachOutcome" in html
         # Legacy segmented tabs should not be the primary control.
         assert 'id="seg-chat"' not in html
         with urllib.request.urlopen(f"{url}/status", timeout=10) as r:

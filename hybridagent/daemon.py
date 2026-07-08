@@ -1094,7 +1094,7 @@ async function agentChat(conv, wire, typing){
         }
         else if(ev.type === 'tool_call'){ var k = cardKey(ev); cards[ev.tool] = cards[k] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
         else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
-        else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
+        else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval<div class="muted" style="margin-top:.25rem;font-size:.74rem">Nothing was sent yet. In Approvals: <b>A</b> once · <b>C</b> this chat · <b>D</b> deny — then Praxis continues automatically.</div>', 'hold'); if(window.PraxisOutcome&&window.PraxisOutcome.attach){ window.PraxisOutcome.attach({title:'Action held', status:'held', ran:ev.tool||'tool', changed:'No external side effect yet', next:'Approve in the Approvals panel (or press A/C). Praxis will resume this chat.'}); } if(window.PraxisFriendly&&window.PraxisFriendly.markTour) window.PraxisFriendly.markTour('hold'); refresh(); }
         else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
         else if(ev.type === 'final'){ finalText = ev.text || ''; }
         else if(ev.type === 'error'){ finalText = (finalText ? finalText+'\n\n' : '') + '⚠️ ' + (ev.error || 'error'); }
@@ -1284,6 +1284,16 @@ async function sendMessage(ev){
   appendUser(text);
   const typing = appendTyping(); setBusy(true); isSending = true;
   const effective = resolveSendMode(text);
+  function softErr(e){
+    return (window.PraxisFriendly && window.PraxisFriendly.error)
+      ? window.PraxisFriendly.error(e) : ('Error: '+e);
+  }
+  function attachOutcome(o){
+    if(window.PraxisOutcome && window.PraxisOutcome.attach) window.PraxisOutcome.attach(o);
+  }
+  function markTour(step){
+    if(window.PraxisFriendly && window.PraxisFriendly.markTour) window.PraxisFriendly.markTour(step);
+  }
   try {
     if(voiceMode === 'realtime'){
       const conv = ensureConversation();
@@ -1296,52 +1306,85 @@ async function sendMessage(ev){
       conv.updated = Date.now(); persistConversations(); renderHistList();
       const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
       await agentChat(conv, wire, typing);
+      // Draft/hold missions often start from chat/agent mode.
+      if(/draft|email|follow-up/i.test(text)) markTour('hold');
     } else if(effective === 'ask'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
       typing.remove();
-      const out = res.text || res.error || 'No answer.';
-      const meta = (res.citations||[]).join(', ');
-      appendAgent(out, meta);
-      conv.messages.push({role:'assistant', content: out, model: meta || 'ask', ts: Date.now()});
+      if(res.error && !res.text){
+        appendAgent(softErr(res.error));
+      } else {
+        const out = res.text || 'No answer.';
+        const cites = (res.citations||[]);
+        const meta = cites.join(', ');
+        appendAgent(out, meta);
+        attachOutcome({
+          title: 'Look up complete',
+          status: cites.length ? 'answered' : 'ok',
+          mode: 'Look up',
+          goal: text,
+          citations: cites.length ? (cites.length + ' citation(s)') : 'none (may have abstained)',
+          next: cites.length
+            ? 'Open sources if you need the full note; ask a follow-up to go deeper.'
+            : 'Add knowledge in the Knowledge panel, then retry for grounded answers.'
+        });
+        markTour('ask');
+      }
+      conv.messages.push({role:'assistant', content: (res.text || res.error || 'No answer.'), model: ((res.citations||[]).join(', ') || 'ask'), ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
     } else if(effective === 'research'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       const res = await api('/api/research', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query: text})});
       typing.remove();
-      let body = res.text || res.error || 'No answer.';
-      if(res.results && res.results.length){
-        body += '\n\n**Sources**\n' + res.results.map((r,i)=>(i+1)+'. ['+(r.title||r.url)+']('+r.url+')').join('\n');
+      if(res.error && !res.text){
+        appendAgent(softErr(res.error));
+      } else {
+        let body = res.text || 'No answer.';
+        if(res.results && res.results.length){
+          body += '\n\n**Sources**\n' + res.results.map((r,i)=>(i+1)+'. ['+(r.title||r.url)+']('+r.url+')').join('\n');
+        }
+        const n = (res.citations||[]).length || (res.results||[]).length;
+        const meta = n + ' cited';
+        appendAgent(body, meta);
+        attachOutcome({
+          title: 'Research complete',
+          status: 'answered',
+          mode: 'Research',
+          goal: text,
+          citations: n ? (n + ' source(s)') : 'none returned',
+          next: 'Try mission 2 (draft email) to see how consequential sends pause for approval.'
+        });
+        markTour('research');
       }
-      const meta = (res.citations||[]).length + ' cited';
-      appendAgent(body, meta);
-      conv.messages.push({role:'assistant', content: body, model: meta || 'research', ts: Date.now()});
+      conv.messages.push({role:'assistant', content: (res.text || res.error || 'No answer.'), model: (((res.citations||[]).length)+' cited') || 'research', ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
     } else {
       // do — queue autonomous work
       const res = await api('/submit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({goal: text, max_attempts: 3})});
       typing.remove();
       const ok = !!res.task_id;
-      appendAgent(ok ? ('Queued task **'+res.task_id+'** — watch the Queue panel.') : (res.error || 'Could not queue task.'));
-      if(ok && window.PraxisOutcome){
-        const wrap = messagesEl.querySelector('.msg.agent:last-child .bubble-wrap');
-        if(wrap){
-          const holder = document.createElement('div');
-          holder.innerHTML = window.PraxisOutcome.renderHtml({
-            title: 'Queued work',
-            status: 'pending',
-            goal: text,
-            task_id: res.task_id,
-            next: 'Watch the Queue panel. Send/destructive steps will pause for approval.'
-          });
-          if(holder.firstChild) wrap.appendChild(holder.firstChild);
-        }
+      if(!ok){
+        appendAgent(softErr(res.error || 'Could not queue task.'));
+      } else {
+        appendAgent('Queued task **'+res.task_id+'** — watch the Queue panel.');
+        attachOutcome({
+          title: 'Queued work',
+          status: 'pending',
+          mode: 'Work on this',
+          goal: text,
+          task_id: res.task_id,
+          ran: 'Submitted to the autonomous task queue',
+          changed: 'Nothing consequential yet — drafts may appear; sends stay held',
+          next: 'Watch Queue + Approvals. Approve with A (once) or C (this chat) when a send is held.'
+        });
+        markTour('do');
       }
       refresh();
     }
-  } catch(e){ typing.remove(); appendAgent('Error: '+e); }
+  } catch(e){ typing.remove(); appendAgent(softErr(e)); }
   setBusy(false); isSending = false;
 }
 
@@ -1357,7 +1400,7 @@ async function resumeChat(){
   try {
     const wire = conv.messages.map(m => ({role:m.role, content:m.content}));
     await agentChat(conv, wire, typing);
-  } catch(e){ typing.remove(); appendAgent('Error: '+e); }
+  } catch(e){ typing.remove(); appendAgent((window.PraxisFriendly&&window.PraxisFriendly.error)?window.PraxisFriendly.error(e):('Error: '+e)); }
   setBusy(false); isSending = false;
 }
 
@@ -1644,7 +1687,7 @@ function connectEvents(){
       // typing anything.
       try {
         const ev = JSON.parse(e.data); const p = ev.payload || {};
-        showToast((p.tool||'Action')+' approved — continuing...');
+        showToast((p.tool||'Action')+' approved — continuing with what changed next…'); if(window.PraxisOutcome&&window.PraxisOutcome.attach){ window.PraxisOutcome.attach({title:'Approved — resuming', status:'ok', ran:p.tool||'tool', changed:'Approval granted; re-running this chat so the tool can complete', next:'Wait for the next assistant message with the tool result.'}); }
       } catch(_) {}
       resumeChat();
     });
