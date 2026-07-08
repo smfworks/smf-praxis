@@ -166,13 +166,38 @@ def cmd_daemon(args: argparse.Namespace) -> int:
         if not status.get("running"):
             print("daemon not running")
             return 0
+        import urllib.error
         import urllib.request
         port = status.get("port")
+        if port is None:
+            try:
+                from .config import home_dir
+                pfile = home_dir() / "daemon.port"
+                if pfile.exists():
+                    port = int(pfile.read_text().strip())
+            except Exception:
+                port = None
+        if not port:
+            print("could not stop daemon: no control port found")
+            return 1
         try:
-            urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/stop", timeout=5
+            # /stop is registered on do_POST only; bare GET returns 404.
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
+            urllib.request.urlopen(req, timeout=5)
         except Exception as exc:
+            # Server often drops the connection while shutting down.
+            msg = str(exc).lower()
+            if any(s in msg for s in (
+                "connection reset", "remotely closed", "errno 104",
+                "connection refused", "urlopen error",
+            )):
+                print("stop requested")
+                return 0
             print(f"could not stop daemon: {exc}")
             return 1
         print("stop requested")
