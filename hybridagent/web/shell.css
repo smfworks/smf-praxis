@@ -1,0 +1,266 @@
+/* Command Deck shell — viewport-bound layout + tabbed right rail.
+ * Prevents the right column from becoming an infinite vertical stack.
+ */
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body.deck-shell {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header + health stay put; main fills remaining height */
+body.deck-shell > header {
+  flex: none;
+}
+body.deck-shell > #healthBanner {
+  flex: none;
+}
+
+body.deck-shell > main {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: .65rem .75rem .75rem;
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr) minmax(20rem, 24rem);
+  gap: .65rem;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+@media (max-width: 1200px) {
+  body.deck-shell > main {
+    grid-template-columns: 12rem minmax(0, 1fr) minmax(18rem, 22rem);
+  }
+}
+
+@media (max-width: 980px) {
+  body.deck-shell {
+    overflow: auto;
+  }
+  body.deck-shell > main {
+    grid-template-columns: 1fr;
+    overflow: visible;
+    height: auto;
+  }
+  body.deck-shell #historyRail {
+    max-height: 12rem;
+  }
+  body.deck-shell #chat {
+    height: min(70vh, 40rem);
+    min-height: 22rem;
+  }
+  body.deck-shell #deckRail {
+    height: auto;
+    max-height: none;
+  }
+}
+
+/* Columns fill viewport height */
+body.deck-shell #historyRail,
+body.deck-shell #chat,
+body.deck-shell #deckRail {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+body.deck-shell #chat {
+  min-height: 0;
+}
+
+body.deck-shell .hist {
+  min-height: 0;
+}
+
+/* ---- Right rail shell ---- */
+#deckRail {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--panel), var(--bg2));
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.rail-primary {
+  flex: none;
+  padding: .7rem .75rem .55rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+  background: rgba(10, 12, 16, .25);
+}
+
+.rail-primary .rail-block h2 {
+  margin: 0 0 .4rem;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+.rail-primary .rail-block.compact .field label {
+  font-size: .68rem;
+}
+
+.rail-primary #approvals {
+  max-height: 9.5rem;
+  overflow-y: auto;
+}
+
+.rail-primary #approvals .empty {
+  font-size: .8rem;
+  margin: 0;
+}
+
+/* Tab strip */
+.rail-tabs {
+  flex: none;
+  display: flex;
+  gap: .2rem;
+  padding: .4rem .5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.rail-tabs button {
+  flex: 1;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding: .4rem .25rem;
+  border-radius: .5rem;
+  cursor: pointer;
+  transition: color .12s, background .12s, border-color .12s;
+}
+
+.rail-tabs button:hover {
+  color: var(--text);
+  background: var(--panel2);
+}
+
+.rail-tabs button.active {
+  color: var(--text);
+  background: var(--panel2);
+  border-color: var(--border);
+  box-shadow: inset 0 0 0 1px rgba(91, 141, 239, .25);
+}
+
+.rail-tabs button .rail-dot {
+  display: inline-block;
+  width: .4rem;
+  height: .4rem;
+  border-radius: 50%;
+  background: var(--warn);
+  margin-left: .2rem;
+  vertical-align: middle;
+  opacity: 0;
+}
+.rail-tabs button.has-signal .rail-dot { opacity: 1; }
+
+/* Scrollable pane area — only one tab visible */
+.rail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.rail-pane {
+  display: none;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: .55rem .6rem .75rem;
+  gap: .55rem;
+  flex-direction: column;
+  scrollbar-width: thin;
+}
+
+.rail-pane.active {
+  display: flex;
+}
+
+.rail-pane::-webkit-scrollbar { width: 8px; }
+.rail-pane::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+
+/* Nested panels inside a pane — flatter, denser */
+.rail-pane .panel.pad,
+.rail-section {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: .75rem;
+  padding: .65rem .7rem;
+  box-shadow: none;
+  flex: none;
+}
+
+.rail-pane .panel.pad h2,
+.rail-section h2 {
+  margin: 0 0 .45rem;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+/* Cap heavy mounts so one panel can't dominate the tab */
+.rail-pane #tasks,
+.rail-pane #runlist,
+.rail-pane #board-mount,
+.rail-pane #safety-mount,
+.rail-pane #inference-mount,
+.rail-pane #metrics-mount,
+.rail-pane #memory-mount,
+.rail-pane #knowledge-mount {
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.rail-pane #logs {
+  max-height: 8rem;
+}
+
+/* Model row denser in primary */
+.rail-primary .row {
+  margin-top: .35rem;
+}
+.rail-primary .hint {
+  margin-top: .35rem;
+  font-size: .68rem;
+}
+.rail-primary .cta {
+  margin-top: .35rem;
+  font-size: .72rem;
+  padding: .4rem .5rem;
+}
+
+/* Files dropzone slightly smaller in rail */
+.rail-pane .dropzone {
+  padding: .7rem .55rem;
+}
+
+/* Chat height accounts for shell padding + optional health banner */
+body.deck-shell #chat {
+  height: 100%;
+}
+
+/* Soften old full-page scroll feel for hist */
+body.deck-shell .hist {
+  height: 100%;
+}

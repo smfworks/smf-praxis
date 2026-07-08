@@ -438,6 +438,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/settings.css" />
 <link rel="stylesheet" href="/web/onboard.css" />
 <link rel="stylesheet" href="/web/friendliness.css" />
+<link rel="stylesheet" href="/web/shell.css" />
 <script>
 /* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
  * opening their own /events stream saturated the browser's 6-connection-per-host
@@ -620,6 +621,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/settings.js" defer></script>
 <script src="/web/onboard.js" defer></script>
 <script src="/web/friendliness.js" defer></script>
+<script src="/web/shell.js" defer></script>
 </head>
 <body>
 <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -675,75 +677,98 @@ document.addEventListener("keydown", function (e) {
     <div id="intentChip" aria-live="polite"></div>
   </section>
 
-  <aside>
-    <div class="panel pad">
-      <h2>Model</h2>
-      <div class="field">
-        <label>Provider</label>
-        <select id="prov"></select>
+  <aside id="deckRail" class="deck-rail" aria-label="Command deck panels">
+    <div class="rail-primary">
+      <div class="rail-block compact">
+        <h2>Model</h2>
+        <div class="field">
+          <label>Provider</label>
+          <select id="prov"></select>
+        </div>
+        <div class="row">
+          <input id="modelInput" class="txt" list="modelList" placeholder="model id" />
+          <datalist id="modelList"></datalist>
+          <button class="primary" onclick="applyModel()">Use</button>
+        </div>
+        <div class="hint" id="keyHint"></div>
+        <div class="cta" id="firstRunCta" hidden>⚡ You're on the offline <strong>mock</strong> model. <button type="button" class="cta-btn" onclick="if(window.PraxisOnboard)PraxisOnboard.open()">Set up Praxis</button> to connect a live model.</div>
       </div>
-      <div class="row">
-        <input id="modelInput" class="txt" list="modelList" placeholder="model id" />
-        <datalist id="modelList"></datalist>
-        <button class="primary" onclick="applyModel()">Use</button>
+      <div class="rail-block">
+        <h2>Approvals</h2>
+        <div id="approvals"><div class="empty">Nothing waiting approval.</div></div>
       </div>
-      <div class="hint" id="keyHint"></div>
-      <div class="cta" id="firstRunCta" hidden>⚡ You're on the offline <strong>mock</strong> model. <button type="button" class="cta-btn" onclick="if(window.PraxisOnboard)PraxisOnboard.open()">Set up Praxis</button> to connect a live model.</div>
     </div>
-    <div class="panel pad">
-      <h2>Voice</h2>
-      <div class="vmodes" id="vmodes"></div>
-      <div class="hint" id="voiceHint">Voice is off.</div>
+
+    <div class="rail-tabs" role="tablist" aria-label="Deck sections">
+      <button type="button" role="tab" data-rail="ops" class="active" aria-selected="true">Ops<span class="rail-dot" aria-hidden="true"></span></button>
+      <button type="button" role="tab" data-rail="work" aria-selected="false">Work<span class="rail-dot" aria-hidden="true"></span></button>
+      <button type="button" role="tab" data-rail="mind" aria-selected="false">Mind<span class="rail-dot" aria-hidden="true"></span></button>
+      <button type="button" role="tab" data-rail="more" aria-selected="false">More<span class="rail-dot" aria-hidden="true"></span></button>
     </div>
-    <div class="panel pad">
-      <h2>Files</h2>
-      <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="Upload files">
-        <input id="fileInput" type="file" multiple hidden />
-        <div class="dz-icon">⬆</div>
-        <div class="dz-text">Drop files here or <span class="dz-link">browse</span></div>
-        <div class="dz-sub">Saved to the agent's work directory</div>
+
+    <div class="rail-body">
+      <div class="rail-pane active" data-pane="ops" role="tabpanel">
+        <div class="rail-section">
+          <h2>Queue</h2>
+          <div id="tasks"><div class="empty">No tasks yet.</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Files</h2>
+          <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="Upload files">
+            <input id="fileInput" type="file" multiple hidden />
+            <div class="dz-icon">⬆</div>
+            <div class="dz-text">Drop files here or <span class="dz-link">browse</span></div>
+            <div class="dz-sub">Saved to the agent's work directory</div>
+          </div>
+          <div id="uploads"></div>
+        </div>
+        <div class="rail-section">
+          <h2>Voice</h2>
+          <div class="vmodes" id="vmodes"></div>
+          <div class="hint" id="voiceHint">Voice is off.</div>
+        </div>
       </div>
-      <div id="uploads"></div>
-    </div>
-    <div class="panel pad">
-      <h2>Queue</h2>
-      <div id="tasks"><div class="empty">No tasks yet.</div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Run Graph</h2>
-      <div id="runlist"><div class="empty">No runs yet.</div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Work Board</h2>
-      <div id="board-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Safety Center</h2>
-      <div id="safety-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Inference</h2>
-      <div id="inference-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Metrics</h2>
-      <div id="metrics-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Memory</h2>
-      <div id="memory-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Knowledge</h2>
-      <div id="knowledge-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Approvals</h2>
-      <div id="approvals"><div class="empty">Nothing waiting approval.</div></div>
-    </div>
-    <div class="panel pad">
-      <h2>Activity log</h2>
-      <pre id="logs" class="logs">—</pre>
+
+      <div class="rail-pane" data-pane="work" role="tabpanel">
+        <div class="rail-section">
+          <h2>Run Graph</h2>
+          <div id="runlist"><div class="empty">No runs yet.</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Work Board</h2>
+          <div id="board-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+      </div>
+
+      <div class="rail-pane" data-pane="mind" role="tabpanel">
+        <div class="rail-section">
+          <h2>Memory</h2>
+          <div id="memory-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Knowledge</h2>
+          <div id="knowledge-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+      </div>
+
+      <div class="rail-pane" data-pane="more" role="tabpanel">
+        <div class="rail-section">
+          <h2>Safety Center</h2>
+          <div id="safety-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Inference</h2>
+          <div id="inference-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Metrics</h2>
+          <div id="metrics-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Activity log</h2>
+          <pre id="logs" class="logs">—</pre>
+        </div>
+      </div>
     </div>
   </aside>
 </main>
@@ -1602,6 +1627,7 @@ async function refresh(){
     }
     taskEl.appendChild(div);
   });
+  if(window.PraxisShell) window.PraxisShell.signal('ops', !!(tasks&&tasks.length));
   const appr = await api('/api/approvals');
   const apprEl = document.getElementById('approvals');
   apprEl.innerHTML = (appr && appr.length) ? '' : '<div class="empty">Nothing waiting approval.</div>';
