@@ -230,6 +230,10 @@ class GovernanceBroker:
         # so a fresh process can't collapse onto a prior session's pending action.
         self._session_approvals: set[str] = set()
         self._session_allowed_tools: set[str] = set()
+        # One-shot allows: consume on the next authorize for that tool (used by
+        # dashboard "Approve once" so a held chat turn can resume without
+        # permanently waiving approval for the tool).
+        self._session_one_shot_tools: set[str] = set()
         self.store = store
         self.log = get_logger("praxis.broker")
         self.mode = (coerce_compliance_mode(store.get_compliance_mode())
@@ -361,6 +365,15 @@ class GovernanceBroker:
                                           decision_id=decision_id, cycle_id=cycle_id,
                                           policy_rule="egress_blocked",
                                           args_hash=args_hash)
+        # One-shot allow: consume exactly once (dashboard "Approve once" + chat resume).
+        # Still respects allowlist, pack, kill-switch, and egress firewall.
+        if tool in self._session_one_shot_tools:
+            self._session_one_shot_tools.discard(tool)
+            return self._log_decision(
+                actor, tool, risk, Verdict.ALLOW,
+                "auto-allowed (one-shot approval)",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="session_oneshot_allow", args_hash=args_hash)
         # Session allowlist: a tool explicitly allowed for this daemon session runs
         # without re-approval (e.g. "always run browser_click for this chat"). This
         # still respects the allowlist, pack, kill-switch, and egress firewall.
@@ -479,6 +492,18 @@ class GovernanceBroker:
         """
         self._session_allowed_tools.add(tool)
         self.log.info("tool %s added to session allowlist", tool)
+
+    def allow_tool_once(self, tool: str) -> None:
+        """Allow a tool for exactly one subsequent authorize() in this session.
+
+        Used by dashboard "Approve once" so a held chat turn can resume and the
+        model can complete the action without permanently waiving approval.
+        """
+        name = (tool or "").strip()
+        if not name:
+            return
+        self._session_one_shot_tools.add(name)
+        self.log.info("tool %s granted one-shot session allow", name)
 
     def reject(self, approval_id: str) -> None:
         self.pending.pop(approval_id, None)

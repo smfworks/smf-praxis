@@ -182,10 +182,19 @@
         row.innerHTML =
           '<div class="tool">' + esc(a.tool) + '</div>' +
           '<div class="prev">' + esc(a.preview || a.rationale || "") + '</div>' +
-          '<div class="acts"><button class="ok" type="button">Approve</button>' +
+          '<div class="acts">' +
+          '<button class="ok once" type="button">Approve once</button>' +
+          '<button class="ok chat" type="button">This chat</button>' +
+          '<button class="ok always" type="button">Always</button>' +
           '<button class="no" type="button">Deny</button></div>';
-        row.querySelector(".ok").onclick = function () {
-          api("/api/approve", { approval_id: a.approval_id }).then(load);
+        row.querySelector(".once").onclick = function () {
+          api("/api/approve", { approval_id: a.approval_id, mode: "once" }).then(load);
+        };
+        row.querySelector(".chat").onclick = function () {
+          api("/api/approve", { approval_id: a.approval_id, mode: "chat" }).then(load);
+        };
+        row.querySelector(".always").onclick = function () {
+          api("/api/approve", { approval_id: a.approval_id, mode: "always" }).then(load);
         };
         row.querySelector(".no").onclick = function () {
           api("/api/deny", { approval_id: a.approval_id }).then(load);

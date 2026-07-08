@@ -377,6 +377,21 @@ select:focus, .txt:focus { border-color: var(--accent); }
 .task-goal { font-size: .86rem; margin: .15rem 0; }
 .task-status { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .approval .primary { margin-top: .4rem; padding: .35rem .7rem; font-size: .76rem; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
+.approval .primary { margin-top: 0; }
+.approval .deny {
+  margin-top: 0; padding: .35rem .7rem; font-size: .76rem; cursor: pointer;
+  border-radius: .45rem; border: 1px solid rgba(255,90,95,.35);
+  background: rgba(255,90,95,.12); color: var(--bad);
+}
+.approval .deny:hover { background: rgba(255,90,95,.22); }
+#tickErrors {
+  max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: .72rem; padding: .28rem .6rem; border-radius: 999px;
+  background: rgba(255,90,95,.12); color: var(--bad); border: 1px solid rgba(255,90,95,.3);
+  cursor: help;
+}
+#tickErrors[hidden] { display: none !important; }
 pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .74rem; color: var(--faint); max-height: 11rem; overflow-y: auto; margin: 0; }
 .empty { color: var(--faint); font-size: .85rem; padding: .15rem 0; }
 /* Visible keyboard focus inside modal overlays (a11y). */
@@ -614,6 +629,7 @@ document.addEventListener("keydown", function (e) {
   <button id="settingsBtn" class="badge" type="button" title="Settings">⚙</button>
   <span id="connPill" class="pill conn conn-connecting" title="Live update stream"><span class="dot"></span><span id="connText">connecting…</span></span>
   <span id="status" class="badge">checking…</span>
+  <span id="tickErrors" class="badge bad" hidden title=""></span>
 </header>
 
 <main>
@@ -956,6 +972,12 @@ async function streamChat(conv, wire, typing){
 async function agentChat(conv, wire, typing){
   let model = '', steps = null, finalText = '', finished = false;
   const cards = {};
+  let _stepSeq = 0;
+  function cardKey(ev){
+    // Prefer approval_id / tool call identity so concurrent same-name tools
+    // don't overwrite each other's cards.
+    return ev.approval_id || (ev.tool + '#' + (_stepSeq++));
+  }
   function ensureSteps(){
     if(steps) return;
     if(typing){ typing.remove(); typing = null; }
@@ -988,7 +1010,7 @@ async function agentChat(conv, wire, typing){
             addStep('🧠 <b>Recalled</b> <span class="muted">'+escapeHtml(parts.join(', '))+'</span><div class="muted" style="margin-top:.2rem;font-size:.74rem">'+escapeHtml(detail.slice(0,260))+'</div>', 'ok');
           }
         }
-        else if(ev.type === 'tool_call'){ cards[ev.tool] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
+        else if(ev.type === 'tool_call'){ var k = cardKey(ev); cards[ev.tool] = cards[k] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
         else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
         else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval', 'hold'); refresh(); }
         else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
@@ -1192,17 +1214,28 @@ async function sendMessage(ev){
       const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
       await agentChat(conv, wire, typing);
     } else if(mode === 'ask'){
+      const conv = ensureConversation();
+      conv.messages.push({role:'user', content:text, ts: Date.now()});
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
       typing.remove();
-      appendAgent(res.text || res.error || 'No answer.', (res.citations||[]).join(', '));
+      const out = res.text || res.error || 'No answer.';
+      const meta = (res.citations||[]).join(', ');
+      appendAgent(out, meta);
+      conv.messages.push({role:'assistant', content: out, model: meta || 'ask', ts: Date.now()});
+      conv.updated = Date.now(); persistConversations(); renderHistList();
     } else if(mode === 'research'){
+      const conv = ensureConversation();
+      conv.messages.push({role:'user', content:text, ts: Date.now()});
       const res = await api('/api/research', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query: text})});
       typing.remove();
       let body = res.text || res.error || 'No answer.';
       if(res.results && res.results.length){
         body += '\n\n**Sources**\n' + res.results.map((r,i)=>(i+1)+'. ['+(r.title||r.url)+']('+r.url+')').join('\n');
       }
-      appendAgent(body, (res.citations||[]).length + ' cited');
+      const meta = (res.citations||[]).length + ' cited';
+      appendAgent(body, meta);
+      conv.messages.push({role:'assistant', content: body, model: meta || 'research', ts: Date.now()});
+      conv.updated = Date.now(); persistConversations(); renderHistList();
     } else if(mode === 'agent'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
@@ -1221,11 +1254,12 @@ async function sendMessage(ev){
 
 async function resumeChat(){
   // Re-submit the current conversation after a held action was approved for this
-  // chat/always, so the agent continues without the user typing anything.
-  const conv = conversations.find(c => c.id === currentConvId);
+  // chat/always/once, so the agent continues without the user typing anything.
+  // NOTE: must use activeId (conversation id for the open chat).
+  const conv = conversations.find(c => c.id === activeId);
   if(!conv || !conv.messages.length || isSending) return;
-  const last = conv.messages[conv.messages.length-1];
-  if(last.role === 'assistant') return; // already answered
+  // After a hold the last message is already an assistant "held for approval"
+  // notice — still re-run so the model can complete the approved action.
   const typing = appendTyping(); setBusy(true); isSending = true;
   try {
     const wire = conv.messages.map(m => ({role:m.role, content:m.content}));
@@ -1423,20 +1457,55 @@ async function refresh(){
   apprEl.innerHTML = (appr && appr.length) ? '' : '<div class="empty">Nothing waiting approval.</div>';
   (appr||[]).forEach(a => {
     const div = document.createElement('div'); div.className = 'approval';
-    div.innerHTML = '<div class="task-id">'+a.approval_id+'</div><div class="task-goal"></div><div class="task-status"></div><div class="approval-actions"><button class="primary once">Approve once</button><button class="primary chat">Approve for this chat</button><button class="primary always">Always run '+escapeHtml(a.tool)+'</button></div>';
+    div.innerHTML = '<div class="task-id">'+escapeHtml(a.approval_id)+'</div>'
+      + '<div class="task-goal"></div><div class="task-status"></div>'
+      + '<div class="approval-actions">'
+      + '<button class="primary once" type="button">Approve once</button>'
+      + '<button class="primary chat" type="button">Approve for this chat</button>'
+      + '<button class="primary always" type="button">Always run '+escapeHtml(a.tool)+'</button>'
+      + '<button class="deny" type="button">Deny</button>'
+      + '</div>';
     div.querySelector('.task-goal').textContent = a.tool;
-    div.querySelector('.task-status').textContent = a.preview || '';
+    div.querySelector('.task-status').textContent = a.preview || a.rationale || '';
     div.querySelector('button.once').onclick = () => approve(a.approval_id, 'once');
     div.querySelector('button.chat').onclick = () => approve(a.approval_id, 'chat');
     div.querySelector('button.always').onclick = () => approve(a.approval_id, 'always');
+    div.querySelector('button.deny').onclick = () => denyApproval(a.approval_id);
     apprEl.appendChild(div);
   });
+  // Surface recent tick/provider errors so silent flake is visible.
+  const errEl = document.getElementById('tickErrors');
+  if(errEl){
+    const errs = (st.state && st.state.errors) || [];
+    if(errs.length){
+      errEl.hidden = false;
+      errEl.textContent = errs[errs.length-1];
+      errEl.title = errs.slice(-5).join('\n');
+    } else {
+      errEl.hidden = true;
+      errEl.textContent = '';
+    }
+  }
   const logs = await fetch('/log').then(r => r.text()).catch(()=> '');
   document.getElementById('logs').textContent = logs || '—';
 }
 async function approve(id, mode='once'){
   const res = await api('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id, mode: mode})});
-  showToast(res.approved ? ('Approved '+id) : ('Could not approve'+(res.error?': '+res.error:''))); refresh();
+  if(res.approved){
+    showToast('Approved '+id+(mode && mode!=='once' ? ' ('+mode+')' : ''));
+    // Fallback if SSE resume is slow/missed — chat/always/once all emit resume.
+    if(mode === 'once' || mode === 'chat' || mode === 'always'){
+      setTimeout(() => { try { resumeChat(); } catch(_){} }, 150);
+    }
+  } else {
+    showToast('Could not approve'+(res.error?': '+res.error:''));
+  }
+  refresh();
+}
+async function denyApproval(id){
+  const res = await api('/api/deny', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id})});
+  showToast(res.denied ? ('Denied '+id) : ('Could not deny'+(res.error?': '+res.error:'')));
+  refresh();
 }
 function connectEvents(){
   try {
@@ -2291,6 +2360,7 @@ class Daemon:
         llm: LLMClient | None = None,
         tick_interval: float = 5.0,
         idle_interval: float = 30.0,
+        heartbeat_interval: float = 600.0,
         max_consecutive_errors: int = 10,
         status_host: str = _DEFAULT_HOST,
         status_port: int | None = None,
@@ -2304,6 +2374,10 @@ class Daemon:
         self.llm = llm or LLMClient()
         self.tick_interval = tick_interval
         self.idle_interval = idle_interval
+        # How often to run a full proactive heartbeat when the queue is empty.
+        # Default 10 minutes — was previously every idle tick (30s), which
+        # hammered cloud providers with "scan for urgent follow-ups" LLM cycles.
+        self.heartbeat_interval = max(0.0, float(heartbeat_interval))
         self.max_consecutive_errors = max_consecutive_errors
         self.status_host = status_host
         self.status_port = status_port or _find_port(status_host)
@@ -2318,6 +2392,8 @@ class Daemon:
         self._server: ThreadingHTTPServer | None = None
         self._server_thread: threading.Thread | None = None
         self._consecutive_errors = 0
+        self._last_heartbeat_ts = 0.0
+        self._heartbeat_backoff_until = 0.0
         self._log_buffer: list[str] = []
         # Open SSE subscriber queues, one per /events connection. Guarded by
         # _sse_lock because request handlers run on independent threads.
@@ -2619,7 +2695,7 @@ class Daemon:
 
     # ---------------------------------------------------------------------- tick
     def tick(self) -> None:
-        """Process one ready task. If none are ready, run a heartbeat cycle."""
+        """Process one ready task. If none are ready, optionally run a throttled heartbeat."""
         if self.agent is None:
             self._ensure_agent()
         assert self.agent is not None
@@ -2628,18 +2704,47 @@ class Daemon:
         try:
             task = self._next_task()
             if task is None:
-                self._log("debug", "no ready tasks; running heartbeat")
-                self.agent.heartbeat(refresh_wiki=False)
+                # Idle: do NOT burn cloud tokens every idle_interval. Heartbeats
+                # are throttled (default 10 min) and skipped while the provider is
+                # in error backoff after timeouts/overloads.
+                now = time.time()
+                if (now >= getattr(self, "_heartbeat_backoff_until", 0)
+                        and (now - getattr(self, "_last_heartbeat_ts", 0))
+                        >= getattr(self, "heartbeat_interval", 600.0)):
+                    self._log("debug", "no ready tasks; running throttled heartbeat")
+                    self.agent.heartbeat(refresh_wiki=False)
+                    self._last_heartbeat_ts = now
+                    self._heartbeat_backoff_until = 0.0
+                else:
+                    self._log("debug", "no ready tasks; idle")
                 self._consecutive_errors = 0
+                # Bound the error ring so status payloads stay small.
+                if len(self.state.errors) > 20:
+                    self.state.errors = self.state.errors[-20:]
                 _write_state(self.state)
                 return
             self._run_task(task)
             self._consecutive_errors = 0
+            self._heartbeat_backoff_until = 0.0
         except Exception as exc:
             self._consecutive_errors += 1
             msg = f"tick error: {exc}"
             self.state.errors.append(msg)
+            if len(self.state.errors) > 20:
+                self.state.errors = self.state.errors[-20:]
             self._log("error", msg)
+            # Back off heartbeats on provider flake so a dead cloud model does
+            # not keep hammering every idle cycle until max_consecutive_errors.
+            err_l = str(exc).lower()
+            if any(tok in err_l for tok in (
+                "timed out", "timeout", "overloaded", "503", "429",
+                "remote end closed", "connection",
+            )):
+                # Exponential-ish backoff: 1m, 2m, 4m … capped at 15m.
+                delay = min(900.0, 60.0 * (2 ** min(self._consecutive_errors - 1, 4)))
+                self._heartbeat_backoff_until = time.time() + delay
+                self._log("warning",
+                          f"provider flake — heartbeat backoff {int(delay)}s")
         _write_state(self.state)
 
     def _next_task(self) -> Any | None:
@@ -3534,34 +3639,85 @@ class Daemon:
         return {"model": summary["model"], "provider": provider_id}
 
     def approve(self, approval_id: str, mode: str = "once") -> bool:
-        """Approve a pending consequential action and resume any waiting task."""
+        """Approve a pending consequential action and resume waiting work.
+
+        Two paths share this endpoint:
+
+        * **Task queue** — a held plan step. Execute the approved tool with its
+          stored args (via ``agent.approve``) and complete the waiting task.
+        * **Chat** — a held tool call mid-conversation. Do *not* execute here;
+          grant a one-shot or session allow and emit a ``resume`` SSE so the
+          dashboard re-submits the conversation and the model completes the turn.
+        """
         self._ensure_agent()
         assert self.agent is not None
         pending = self.agent.broker.pending.get(approval_id)
         if pending is None:
             return False
+        tool_name = pending.tool
+        mode = (mode or "once").strip().lower()
         if mode in ("chat", "always"):
-            # Add the tool to the session allowlist so subsequent calls in this
-            # conversation (and this daemon session) run without re-approval.
-            self.agent.broker.allow_tool_for_session(pending.tool)
-        approved = self.agent.broker.approve(approval_id, approved_by="web-ui")
-        if approved is None:
-            return False
-        if mode in ("chat", "always"):
-            # Notify all dashboard clients to auto-resubmit the current
-            # conversation now that the held tool is allowed.
-            self.emit_event("resume", {"approval_id": pending.approval_id,
-                                        "tool": pending.tool})
-        # Resume any task whose stored result references this approval.
+            # Skip re-approval for the rest of this daemon session.
+            self.agent.broker.allow_tool_for_session(tool_name)
+        elif mode == "once":
+            # Chat resume needs exactly one free authorize; task path executes
+            # immediately via agent.approve and does not need the one-shot.
+            self.agent.broker.allow_tool_once(tool_name)
+
         assert self.manager is not None
+        waiting: list[Any] = []
         for task in self.manager.list(status="waiting_approval", limit=100):
-            assert self.manager is not None
-            row = self.manager.store.get_task(task.task_id)
+            row = self.manager.store.get_task(task.task_id) or {}
             result = row.get("result") or {}
             pending_approvals = result.get("pending_approvals", [])
             if any(pa.get("approval_id") == approval_id for pa in pending_approvals):
-                self._log("info", f"resuming task {task.task_id} after approval")
-                threading.Thread(target=self.resume, args=(task.task_id,), daemon=True).start()
+                waiting.append(task)
+
+        if waiting:
+            # Task path: execute the held action, then mark waiters completed.
+            # agent.approve pops the pending approval and runs the tool.
+            exec_result = self.agent.approve(approval_id, approved_by="web-ui")
+            if isinstance(exec_result, str) and exec_result.startswith("no pending"):
+                return False
+            self._log("info", f"approved+executed {tool_name}: {str(exec_result)[:200]}")
+            for task in waiting:
+                self._log("info", f"completing task {task.task_id} after approval")
+                try:
+                    assert self.store is not None
+                    self.store.update_task(
+                        task.task_id, status="completed", error="",
+                        result_json=json.dumps({
+                            "cycle_id": getattr(task, "cycle_id", ""),
+                            "actions": [f"[approved] {tool_name} -> {exec_result}"],
+                            "pending_approvals": [],
+                        }),
+                        output=str(exec_result)[:4000],
+                    )
+                    self.state.tasks_completed += 1
+                    if self.state.tasks_waiting_approval > 0:
+                        self.state.tasks_waiting_approval -= 1
+                    self.emit_event("task", {
+                        "task_id": task.task_id,
+                        "status": "completed",
+                        "goal": task.goal,
+                        "output": str(exec_result)[:500],
+                        "error": "",
+                    })
+                except Exception as exc:
+                    self._log("error", f"failed to complete task {task.task_id}: {exc}")
+            return True
+
+        # Chat path: resolve the approval without executing — the dashboard
+        # re-submits the conversation so the model re-requests the tool under
+        # the (one-shot or session) allow grant.
+        approved = self.agent.broker.approve(approval_id, approved_by="web-ui")
+        if approved is None:
+            return False
+        self.emit_event("resume", {
+            "approval_id": approval_id,
+            "tool": tool_name,
+            "mode": mode,
+        })
         return True
 
     def list_tasks(self) -> list[dict]:
