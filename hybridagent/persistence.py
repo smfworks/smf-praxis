@@ -696,7 +696,7 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 "SELECT task_id,goal,status,attempts,max_attempts,created_ts,"
-                "updated_ts,next_retry_ts,cycle_id,result_json,error "
+                "updated_ts,next_retry_ts,cycle_id,result_json,error,output,plan "
                 "FROM tasks WHERE task_id=?", (task_id,),
             ).fetchone()
         if not row:
@@ -710,14 +710,14 @@ class Store:
             if status:
                 rows = self._conn.execute(
                     "SELECT task_id,goal,status,attempts,max_attempts,created_ts,"
-                    "updated_ts,next_retry_ts,cycle_id,result_json,error "
+                    "updated_ts,next_retry_ts,cycle_id,result_json,error,output,plan "
                     "FROM tasks WHERE status=? ORDER BY created_ts DESC LIMIT ?",
                     (status, limit),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
                     "SELECT task_id,goal,status,attempts,max_attempts,created_ts,"
-                    "updated_ts,next_retry_ts,cycle_id,result_json,error "
+                    "updated_ts,next_retry_ts,cycle_id,result_json,error,output,plan "
                     "FROM tasks ORDER BY created_ts DESC LIMIT ?", (limit,),
                 ).fetchall()
         out = []
