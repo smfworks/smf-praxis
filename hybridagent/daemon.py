@@ -437,6 +437,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/palette.css" />
 <link rel="stylesheet" href="/web/settings.css" />
 <link rel="stylesheet" href="/web/onboard.css" />
+<link rel="stylesheet" href="/web/friendliness.css" />
 <script>
 /* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
  * opening their own /events stream saturated the browser's 6-connection-per-host
@@ -618,6 +619,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/palette.js" defer></script>
 <script src="/web/settings.js" defer></script>
 <script src="/web/onboard.js" defer></script>
+<script src="/web/friendliness.js" defer></script>
 </head>
 <body>
 <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -625,12 +627,14 @@ document.addEventListener("keydown", function (e) {
   <div class="brand"><span class="logo"></span> Praxis</div>
   <span class="pill modelpill"><span class="dot"></span><span id="modelBadge">—</span></span>
   <span class="spacer"></span>
+  <button id="apprBadge" type="button" hidden title="Jump to approvals"></button>
   <button id="cmdk" class="badge" type="button" title="Command palette (Ctrl/Cmd+K)">⌘K</button>
   <button id="settingsBtn" class="badge" type="button" title="Settings">⚙</button>
   <span id="connPill" class="pill conn conn-connecting" title="Live update stream"><span class="dot"></span><span id="connText">connecting…</span></span>
   <span id="status" class="badge">checking…</span>
   <span id="tickErrors" class="badge bad" hidden title=""></span>
 </header>
+<div id="healthBanner" role="status" aria-live="polite"></div>
 
 <main>
   <nav id="historyRail" class="hist panel">
@@ -643,24 +647,32 @@ document.addEventListener("keydown", function (e) {
 
   <section id="chat" class="panel">
     <div class="chat-top">
-      <div class="segmented">
-        <button id="seg-chat" class="active" onclick="setMode('chat')">Chat</button>
-        <button id="seg-ask" onclick="setMode('ask')">Ask</button>
-        <button id="seg-research" onclick="setMode('research')">Research</button>
-        <button id="seg-do" onclick="setMode('do')">Do</button>
-        <button id="seg-agent" onclick="setMode('agent')">Agent</button>
+      <div class="mode-bar">
+        <button type="button" id="modeAuto" class="mode-auto" onclick="setMode('auto')" title="Auto-route from your message">Auto</button>
+        <div class="mode-more-wrap">
+          <button type="button" id="modeMore" class="mode-more" onclick="toggleModeMenu()" aria-haspopup="true" aria-expanded="false">More ▾</button>
+          <div id="modeMenu" class="mode-menu" role="menu">
+            <div class="mm-hint">Force a specific mode</div>
+            <button type="button" data-mode="chat" role="menuitem" onclick="setMode('chat')">Chat</button>
+            <button type="button" data-mode="ask" role="menuitem" onclick="setMode('ask')">Look up</button>
+            <button type="button" data-mode="research" role="menuitem" onclick="setMode('research')">Research</button>
+            <button type="button" data-mode="do" role="menuitem" onclick="setMode('do')">Work on this</button>
+            <button type="button" data-mode="agent" role="menuitem" onclick="setMode('agent')">Tools</button>
+          </div>
+        </div>
+        <span class="hint" id="modeHint">Auto — Praxis picks Look up / Research / Work on this from your message.</span>
       </div>
-      <span class="hint" id="modeHint">Conversational chat with your model.</span>
       <button class="ghost" onclick="newChat()" title="Start a new chat">New chat</button>
     </div>
     <div id="messages" class="messages"></div>
     <form class="composer" onsubmit="sendMessage(event)">
-      <textarea id="message" rows="1" placeholder="Message Praxis…  (Enter to send, Shift+Enter for newline)" autocomplete="off"></textarea>
+      <textarea id="message" rows="1" placeholder="Message Praxis… Auto routes Look up, Research, and Work on this." autocomplete="off"></textarea>
       <button class="mic-btn" id="mic" type="button" title="Push to talk" onclick="toggleMic()" hidden>🎙</button>
       <button class="send-btn" id="send" type="submit" title="Send">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
       </button>
     </form>
+    <div id="intentChip" aria-live="polite"></div>
   </section>
 
   <aside>
@@ -738,13 +750,14 @@ document.addEventListener("keydown", function (e) {
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
-let mode = 'chat';
+let mode = 'auto';
 let isSending = false;
 let conversations = [];
 let activeId = null;
 const HIST_KEY = 'praxis.chats.v1';
 let providers = [];
 const HINTS = {
+  auto: 'Auto — Praxis picks Look up / Research / Work on this from your message.',
   chat: 'Conversational chat — Praxis can call tools such as fetch_url when helpful.',
   ask: 'Grounded Q&A over the knowledge base — cites sources or abstains.',
   research: 'Live web research — searches the internet, reads results, and answers with citations.',
@@ -827,11 +840,78 @@ function appendTyping(){
 function scrollDown(){ messagesEl.scrollTop = messagesEl.scrollHeight; }
 
 function setMode(m){
-  mode = m;
-  ['chat','ask','research','do','agent'].forEach(x => document.getElementById('seg-'+x).classList.toggle('active', x===m));
-  document.getElementById('modeHint').textContent = HINTS[m];
-  const ph = {do:'Describe a goal to queue…', ask:'Ask a grounded question…', research:'Ask anything — Praxis will search the web…', agent:'Ask Praxis to do something — it can call tools…', chat:'Chat with Praxis — it can call tools when helpful.'};
-  document.getElementById('message').placeholder = ph[m] || 'Message Praxis…  (Enter to send, Shift+Enter for newline)';
+  mode = m || 'auto';
+  const autoBtn = document.getElementById('modeAuto');
+  if(autoBtn) autoBtn.classList.toggle('inactive', mode !== 'auto');
+  const menu = document.getElementById('modeMenu');
+  if(menu){
+    menu.querySelectorAll('button[data-mode]').forEach(function(b){
+      b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+    });
+    menu.classList.remove('show');
+  }
+  const more = document.getElementById('modeMore');
+  if(more){
+    more.classList.remove('open');
+    more.setAttribute('aria-expanded', 'false');
+  }
+  const hint = document.getElementById('modeHint');
+  if(hint) hint.textContent = HINTS[mode] || HINTS.auto;
+  const ph = {
+    auto: 'Message Praxis… Auto routes Look up, Research, and Work on this.',
+    do: 'Describe a goal to queue…',
+    ask: 'Ask a grounded question…',
+    research: 'Ask anything — Praxis will search the web…',
+    agent: 'Ask Praxis to do something — it can call tools…',
+    chat: 'Chat with Praxis — it can call tools when helpful.'
+  };
+  const ta = document.getElementById('message');
+  if(ta) ta.placeholder = ph[mode] || ph.auto;
+  updateIntentChip();
+}
+function toggleModeMenu(){
+  const menu = document.getElementById('modeMenu');
+  const more = document.getElementById('modeMore');
+  if(!menu) return;
+  const open = !menu.classList.contains('show');
+  menu.classList.toggle('show', open);
+  if(more){
+    more.classList.toggle('open', open);
+    more.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+}
+document.addEventListener('click', function(e){
+  const wrap = document.querySelector('.mode-more-wrap');
+  if(wrap && !wrap.contains(e.target)){
+    const menu = document.getElementById('modeMenu');
+    const more = document.getElementById('modeMore');
+    if(menu) menu.classList.remove('show');
+    if(more){ more.classList.remove('open'); more.setAttribute('aria-expanded', 'false'); }
+  }
+});
+function updateIntentChip(){
+  const el = document.getElementById('intentChip');
+  if(!el) return;
+  const ta = document.getElementById('message');
+  const text = (ta && ta.value) || '';
+  const labels = (window.PraxisIntent && window.PraxisIntent.labels) || {
+    auto:'Auto', chat:'Chat', ask:'Look up', research:'Research', do:'Work on this', agent:'Tools'
+  };
+  if(mode !== 'auto'){
+    el.innerHTML = 'Mode: <b>' + escapeHtml(labels[mode] || mode) + '</b>';
+    return;
+  }
+  if(!text.trim()){ el.innerHTML = ''; return; }
+  const resolved = (window.PraxisIntent && window.PraxisIntent.detect)
+    ? window.PraxisIntent.detect(text)
+    : 'chat';
+  el.innerHTML = 'Will use <b>' + escapeHtml(labels[resolved] || resolved) + '</b>';
+}
+function resolveSendMode(text){
+  if(window.PraxisIntent && window.PraxisIntent.resolveMode){
+    return window.PraxisIntent.resolveMode(mode, text);
+  }
+  return mode === 'auto' ? 'chat' : mode;
 }
 function newChat(){
   activeId = null;
@@ -840,6 +920,8 @@ function newChat(){
   renderHistList();
   const ta = document.getElementById('message'); if(ta) ta.focus();
 }
+window.setMode = setMode;
+window.updateIntentChip = updateIntentChip;
 
 /* ---------- chat history (left rail) ---------- */
 const HIST_MAX = 50;
@@ -1198,22 +1280,23 @@ async function sendMessage(ev){
   ev.preventDefault();
   const ta = document.getElementById('message');
   const text = ta.value.trim(); if(!text) return;
-  ta.value=''; autoGrow(ta);
+  ta.value=''; autoGrow(ta); updateIntentChip();
   appendUser(text);
   const typing = appendTyping(); setBusy(true); isSending = true;
+  const effective = resolveSendMode(text);
   try {
     if(voiceMode === 'realtime'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
       await rtSendText(text, typing);
-    } else if(mode === 'chat'){
+    } else if(effective === 'chat' || effective === 'agent'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
       const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
       await agentChat(conv, wire, typing);
-    } else if(mode === 'ask'){
+    } else if(effective === 'ask'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       const res = await api('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: text})});
@@ -1223,7 +1306,7 @@ async function sendMessage(ev){
       appendAgent(out, meta);
       conv.messages.push({role:'assistant', content: out, model: meta || 'ask', ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
-    } else if(mode === 'research'){
+    } else if(effective === 'research'){
       const conv = ensureConversation();
       conv.messages.push({role:'user', content:text, ts: Date.now()});
       const res = await api('/api/research', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query: text})});
@@ -1236,16 +1319,26 @@ async function sendMessage(ev){
       appendAgent(body, meta);
       conv.messages.push({role:'assistant', content: body, model: meta || 'research', ts: Date.now()});
       conv.updated = Date.now(); persistConversations(); renderHistList();
-    } else if(mode === 'agent'){
-      const conv = ensureConversation();
-      conv.messages.push({role:'user', content:text, ts: Date.now()});
-      conv.updated = Date.now(); persistConversations(); renderHistList();
-      const wire = conv.messages.map(m=>({role:m.role, content:m.content}));
-      await agentChat(conv, wire, typing);
     } else {
+      // do — queue autonomous work
       const res = await api('/submit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({goal: text, max_attempts: 3})});
       typing.remove();
-      appendAgent(res.task_id ? ('Queued task **'+res.task_id+'** — watch the Queue panel.') : (res.error || 'Could not queue task.'));
+      const ok = !!res.task_id;
+      appendAgent(ok ? ('Queued task **'+res.task_id+'** — watch the Queue panel.') : (res.error || 'Could not queue task.'));
+      if(ok && window.PraxisOutcome){
+        const wrap = messagesEl.querySelector('.msg.agent:last-child .bubble-wrap');
+        if(wrap){
+          const holder = document.createElement('div');
+          holder.innerHTML = window.PraxisOutcome.renderHtml({
+            title: 'Queued work',
+            status: 'pending',
+            goal: text,
+            task_id: res.task_id,
+            next: 'Watch the Queue panel. Send/destructive steps will pause for approval.'
+          });
+          if(holder.firstChild) wrap.appendChild(holder.firstChild);
+        }
+      }
       refresh();
     }
   } catch(e){ typing.remove(); appendAgent('Error: '+e); }
@@ -1270,8 +1363,9 @@ async function resumeChat(){
 
 /* ---------- composer behavior ---------- */
 function autoGrow(ta){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 144)+'px'; }
+window.autoGrow = autoGrow;
 const _ta = document.getElementById('message');
-_ta.addEventListener('input', ()=>autoGrow(_ta));
+_ta.addEventListener('input', ()=>{ autoGrow(_ta); updateIntentChip(); });
 _ta.addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); } });
 
 /* ---------- model picker ---------- */
@@ -1448,23 +1542,51 @@ async function refresh(){
   taskEl.innerHTML = (tasks && tasks.length) ? '' : '<div class="empty">No tasks yet.</div>';
   (tasks||[]).forEach(t => {
     const div = document.createElement('div'); div.className = 'task ' + t.status;
-    div.innerHTML = '<div class="task-id">'+t.task_id+'</div><div class="task-goal"></div><div class="task-status">'+t.status+'</div>';
+    div.innerHTML = '<div class="task-id">'+escapeHtml(t.task_id)+'</div><div class="task-goal"></div><div class="task-status">'+escapeHtml(t.status)+'</div><div class="task-out"></div>';
     div.querySelector('.task-goal').textContent = t.goal + (t.error ? ' — '+t.error : '');
+    const outEl = div.querySelector('.task-out');
+    if(outEl && t.output) outEl.textContent = t.output;
+    if(t.output && window.PraxisOutcome && (t.status === 'completed' || t.status === 'waiting_approval' || t.status === 'failed')){
+      const holder = document.createElement('div');
+      holder.innerHTML = window.PraxisOutcome.renderHtml({
+        title: 'Task outcome',
+        status: t.status,
+        goal: t.goal,
+        task_id: t.task_id,
+        output: t.output
+      });
+      if(holder.firstChild) div.appendChild(holder.firstChild);
+    }
     taskEl.appendChild(div);
   });
   const appr = await api('/api/approvals');
   const apprEl = document.getElementById('approvals');
   apprEl.innerHTML = (appr && appr.length) ? '' : '<div class="empty">Nothing waiting approval.</div>';
+  const badge = document.getElementById('apprBadge');
+  if(badge){
+    if(appr && appr.length){
+      badge.hidden = false;
+      badge.textContent = appr.length + ' approval' + (appr.length === 1 ? '' : 's');
+      badge.classList.add('has');
+      badge.onclick = function(){ const el = document.getElementById('approvals'); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); };
+    } else {
+      badge.hidden = true;
+      badge.classList.remove('has');
+      badge.textContent = '';
+      badge.onclick = null;
+    }
+  }
   (appr||[]).forEach(a => {
     const div = document.createElement('div'); div.className = 'approval';
     div.innerHTML = '<div class="task-id">'+escapeHtml(a.approval_id)+'</div>'
       + '<div class="task-goal"></div><div class="task-status"></div>'
       + '<div class="approval-actions">'
-      + '<button class="primary once" type="button">Approve once</button>'
-      + '<button class="primary chat" type="button">Approve for this chat</button>'
+      + '<button class="primary once" type="button">Approve once <span class="kbd">A</span></button>'
+      + '<button class="primary chat" type="button">This chat <span class="kbd">C</span></button>'
       + '<button class="primary always" type="button">Always run '+escapeHtml(a.tool)+'</button>'
-      + '<button class="deny" type="button">Deny</button>'
-      + '</div>';
+      + '<button class="deny" type="button">Deny <span class="kbd">D</span></button>'
+      + '</div>'
+      + '<div class="appr-hint">Shortcuts: A once · C this chat · D deny (when focus is not in a field)</div>';
     div.querySelector('.task-goal').textContent = a.tool;
     div.querySelector('.task-status').textContent = a.preview || a.rationale || '';
     div.querySelector('button.once').onclick = () => approve(a.approval_id, 'once');
