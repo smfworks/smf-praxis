@@ -1,4 +1,4 @@
-/* Praxis Friendliness Sprint A — modes, missions, health, outcomes, approvals */
+/* Praxis Friendliness Sprint A/B — modes, missions, health, outcomes, approvals */
 
 /* Health / honesty banner */
 #healthBanner {
@@ -72,12 +72,21 @@
   padding: .7rem .75rem; cursor: pointer; transition: border-color .15s, transform .15s;
 }
 .mission:hover { border-color: var(--accent); transform: translateY(-1px); }
+.mission.done { border-color: rgba(60,207,109,.35); background: rgba(60,207,109,.06); }
 .mission .m-title { font-size: .86rem; font-weight: 600; color: var(--text); margin: 0 0 .2rem; }
+.mission .m-check { color: var(--ok); font-weight: 700; }
 .mission .m-desc { font-size: .74rem; color: var(--muted); line-height: 1.35; margin: 0; }
 .mission .m-tag {
   display: inline-block; margin-top: .4rem; font-size: .65rem; text-transform: uppercase;
   letter-spacing: .04em; color: var(--accent); opacity: .9;
 }
+.tour-hint {
+  margin-top: .85rem; padding: .55rem .7rem; border-radius: .6rem;
+  border: 1px solid var(--border); background: var(--bg2); font-size: .78rem;
+  color: var(--muted); text-align: left; line-height: 1.4;
+}
+.tour-hint b { color: var(--text); }
+.tour-hint em { color: var(--accent); font-style: normal; }
 
 /* Outcome cards in chat + queue */
 .outcome {

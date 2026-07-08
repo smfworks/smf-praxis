@@ -1,5 +1,6 @@
-/* Praxis Friendliness Sprint A — intent routing, missions, health banner,
- * outcome cards, keyboard approval shortcuts. Served from /web/friendliness.js.
+/* Praxis Friendliness Sprint B — Auto routing, missions, health banner,
+ * outcome cards, guided first-run, friendly errors, approval "what next".
+ * Served from /web/friendliness.js.
  */
 (function () {
   "use strict";
@@ -19,6 +20,8 @@
     agent: "Tools"
   };
 
+  var TOUR_KEY = "praxis.friendly.tour.v1";
+
   function detectIntent(text) {
     var t = (text || "").trim();
     if (!t) return "chat";
@@ -31,28 +34,32 @@
 
   var MISSIONS = [
     {
-      title: "Summarize a URL",
+      id: "research",
+      title: "1 · Summarize a URL",
       desc: "Paste any link — Praxis researches and cites sources.",
       prompt: "Summarize https://example.com for me in 5 bullets with sources.",
       tag: "research",
       mode: "auto"
     },
     {
-      title: "Draft an email (held)",
+      id: "hold",
+      title: "2 · Draft an email (held)",
       desc: "Write a professional note. Sending stays behind your approval.",
-      prompt: "Draft a short follow-up email to Alex thanking them for the meeting and proposing next Tuesday.",
+      prompt: "Draft a short follow-up email to Alex thanking them for the meeting and proposing next Tuesday. Do not send it.",
       tag: "safe send",
       mode: "chat"
     },
     {
-      title: "Ask your knowledge base",
+      id: "ask",
+      title: "3 · Ask your knowledge base",
       desc: "Grounded Q&A over notes Praxis already knows.",
       prompt: "According to my knowledge base, what is Praxis and how does governance work?",
       tag: "look up",
       mode: "ask"
     },
     {
-      title: "Queue background work",
+      id: "do",
+      title: "4 · Queue background work",
       desc: "Hand off a goal to the autonomous task queue.",
       prompt: "Queue a task: scan for urgent follow-ups and draft a short status note.",
       tag: "work on this",
@@ -66,6 +73,31 @@
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
+  function loadTour() {
+    try {
+      var raw = localStorage.getItem(TOUR_KEY);
+      var o = raw ? JSON.parse(raw) : null;
+      if (!o || typeof o !== "object") return { done: {} };
+      if (!o.done || typeof o.done !== "object") o.done = {};
+      return o;
+    } catch (_) {
+      return { done: {} };
+    }
+  }
+
+  function saveTour(o) {
+    try { localStorage.setItem(TOUR_KEY, JSON.stringify(o)); } catch (_) {}
+  }
+
+  function markTour(step) {
+    var o = loadTour();
+    o.done[step] = true;
+    o.updated = Date.now();
+    saveTour(o);
+    paintMissions();
+    paintTourHint();
+  }
+
   /* ---------- Intent API for dashboard ---------- */
   window.PraxisIntent = {
     detect: detectIntent,
@@ -77,19 +109,57 @@
     }
   };
 
+  /* ---------- Friendly error copy ---------- */
+  function friendlyError(err) {
+    var s = String(err == null ? "" : (err.message || err));
+    if (!s) return "Something went wrong. Retry in a moment.";
+    if (/overloaded|503/i.test(s)) {
+      return "The model provider is overloaded. Wait a few seconds, or switch models in the Model panel.";
+    }
+    if (/timed out|timeout|remote end closed|Read timed out/i.test(s)) {
+      return "The model provider timed out. Retry the message — idle heartbeats are already backed off.";
+    }
+    if (/api key|401|403|missing api key|Unauthorized/i.test(s)) {
+      return "Provider authentication failed. Open Set up Praxis or Settings and check your API key.";
+    }
+    if (/Failed to fetch|NetworkError|ECONNREFUSED|connection refused/i.test(s)) {
+      return "Could not reach the Praxis daemon or provider. Confirm the daemon is running on this machine.";
+    }
+    if (/HTTP 5\d\d/i.test(s)) {
+      return "The provider returned a server error. Retry shortly or switch models.";
+    }
+    // Strip long stack / URL noise for chat display
+    s = s.replace(/\s+at\s+\S+.*/g, "").replace(/\n+/g, " ").trim();
+    if (s.length > 220) s = s.slice(0, 217) + "…";
+    if (/^Error:\s*/i.test(s)) return s;
+    return "Error: " + s;
+  }
+
+  window.PraxisFriendly = {
+    error: friendlyError,
+    markTour: markTour,
+    loadTour: loadTour
+  };
+
   /* ---------- Outcome card helper ---------- */
   window.PraxisOutcome = {
     renderHtml: function (o) {
       o = o || {};
       var st = o.status || "done";
       var cls = "info";
-      if (st === "completed" || st === "done" || st === "ok") cls = "ok";
-      else if (st === "waiting_approval" || st === "held" || st === "warn") cls = "warn";
+      if (st === "completed" || st === "done" || st === "ok" || st === "answered") cls = "ok";
+      else if (st === "waiting_approval" || st === "held" || st === "warn" || st === "pending") cls = "warn";
       else if (st === "failed" || st === "error" || st === "bad") cls = "bad";
       var rows = "";
       if (o.goal) rows += '<div class="oc-row"><b>Goal</b><span>' + esc(o.goal) + "</span></div>";
       if (o.task_id) rows += '<div class="oc-row"><b>Task</b><span>' + esc(o.task_id) + "</span></div>";
+      if (o.mode) rows += '<div class="oc-row"><b>Mode</b><span>' + esc(o.mode) + "</span></div>";
+      if (o.citations != null && o.citations !== "") {
+        rows += '<div class="oc-row"><b>Sources</b><span>' + esc(String(o.citations)) + "</span></div>";
+      }
       if (o.cost != null) rows += '<div class="oc-row"><b>Cost</b><span>' + esc(String(o.cost)) + "</span></div>";
+      if (o.ran) rows += '<div class="oc-row"><b>Ran</b><span>' + esc(o.ran) + "</span></div>";
+      if (o.changed) rows += '<div class="oc-row"><b>Changed</b><span>' + esc(o.changed) + "</span></div>";
       if (o.next) rows += '<div class="oc-row"><b>Next</b><span>' + esc(o.next) + "</span></div>";
       var body = o.output ? '<div class="oc-body">' + esc(o.output).slice(0, 1200) + "</div>" : "";
       return (
@@ -98,6 +168,19 @@
         esc(o.title || "Outcome") + "</div>" +
         rows + body + "</div>"
       );
+    },
+    attach: function (opts) {
+      var msgs = document.getElementById("messages");
+      if (!msgs) return null;
+      var wrap = msgs.querySelector(".msg.agent:last-child .bubble-wrap");
+      if (!wrap) return null;
+      var holder = document.createElement("div");
+      holder.innerHTML = window.PraxisOutcome.renderHtml(opts || {});
+      if (holder.firstChild) {
+        wrap.appendChild(holder.firstChild);
+        return holder.firstChild;
+      }
+      return null;
     }
   };
 
@@ -147,15 +230,7 @@
         }
         if (errs.length) {
           var last = String(errs[errs.length - 1] || "");
-          var friendly = last;
-          if (/overloaded|503/i.test(last)) {
-            friendly = "The model provider is overloaded. Retry shortly, or switch models in the Model panel.";
-          } else if (/timed out|timeout|remote end closed/i.test(last)) {
-            friendly = "The model provider timed out. Praxis backed off idle heartbeats; chat should still work — retry if a turn failed.";
-          } else if (/api key|401|403|missing api key/i.test(last)) {
-            friendly = "Provider authentication failed. Check your API key in Settings / Set up Praxis.";
-          }
-          setBanner(true, friendly, "bad", "Open model panel", function () {
+          setBanner(true, friendlyError(last), "bad", "Open model panel", function () {
             var p = document.getElementById("prov");
             if (p) p.focus();
           });
@@ -166,20 +241,48 @@
     }
   };
 
-  /* ---------- Missions on welcome ---------- */
+  /* ---------- Missions + guided tour ---------- */
+  function paintTourHint() {
+    var welcome = document.querySelector("#messages .welcome");
+    if (!welcome) return;
+    var existing = welcome.querySelector(".tour-hint");
+    if (existing) existing.remove();
+    var tour = loadTour();
+    var done = tour.done || {};
+    var n = ["research", "hold", "ask", "do"].filter(function (k) { return done[k]; }).length;
+    var hint = document.createElement("div");
+    hint.className = "tour-hint";
+    if (n >= 4) {
+      hint.innerHTML = "<b>Tour complete.</b> Leave mode on Auto — Praxis picks the right path from your words.";
+    } else if (n === 0) {
+      hint.innerHTML = "<b>First five minutes:</b> start with <em>Summarize a URL</em>, then try a held draft so you see approvals.";
+    } else {
+      hint.innerHTML = "<b>Tour progress:</b> " + n + "/4 missions tried. Next: pick an unchecked card below.";
+    }
+    welcome.appendChild(hint);
+  }
+
   function paintMissions() {
     var welcome = document.querySelector("#messages .welcome");
-    if (!welcome || welcome.querySelector(".missions")) return;
+    if (!welcome) return;
+    var old = welcome.querySelector(".missions");
+    if (old) old.remove();
     var chips = welcome.querySelector(".chips");
     if (chips) chips.remove();
+    var tip = welcome.querySelector(".missions-tip");
+    if (tip) tip.remove();
+
+    var tour = loadTour();
+    var done = tour.done || {};
     var grid = document.createElement("div");
     grid.className = "missions";
     MISSIONS.forEach(function (m) {
       var card = document.createElement("button");
       card.type = "button";
-      card.className = "mission";
+      card.className = "mission" + (done[m.id] ? " done" : "");
       card.innerHTML =
-        '<div class="m-title">' + esc(m.title) + "</div>" +
+        '<div class="m-title">' + esc(m.title) +
+        (done[m.id] ? ' <span class="m-check">✓</span>' : "") + "</div>" +
         '<p class="m-desc">' + esc(m.desc) + "</p>" +
         '<span class="m-tag">' + esc(m.tag) + "</span>";
       card.onclick = function () {
@@ -197,10 +300,12 @@
       grid.appendChild(card);
     });
     welcome.appendChild(grid);
-    var tip = document.createElement("p");
-    tip.style.cssText = "margin-top:1rem;font-size:.78rem;color:var(--faint)";
-    tip.textContent = "Tip: leave mode on Auto — Praxis picks Look up / Research / Work on this when your message matches.";
-    welcome.appendChild(tip);
+    var tipEl = document.createElement("p");
+    tipEl.className = "missions-tip";
+    tipEl.style.cssText = "margin-top:1rem;font-size:.78rem;color:var(--faint)";
+    tipEl.textContent = "Tip: leave mode on Auto — Praxis picks Look up / Research / Work on this when your message matches.";
+    welcome.appendChild(tipEl);
+    paintTourHint();
   }
 
   /* ---------- Keyboard shortcuts for approvals ---------- */
@@ -228,7 +333,6 @@
 
   function boot() {
     paintMissions();
-    // Re-paint missions when welcome is recreated
     var msgs = document.getElementById("messages");
     if (msgs && window.MutationObserver) {
       var mo = new MutationObserver(function () { paintMissions(); });

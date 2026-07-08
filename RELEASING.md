@@ -30,6 +30,30 @@ No API token is stored. Configure a Trusted Publisher once on PyPI:
    - Workflow: `release.yml` · Environment: `pypi`
 3. In GitHub, create a repo **Environment** named `pypi` (Settings → Environments).
 
+### Troubleshooting: `invalid-publisher`
+
+If the Release job builds successfully but **Publish to PyPI** fails with:
+
+```text
+invalid-publisher: valid token, but no corresponding publisher
+(Publisher with matching claims was not found)
+```
+
+the GitHub OIDC token is fine — PyPI does not have a Trusted Publisher that matches
+these claims (seen on v0.19.12–v0.19.14):
+
+| Claim | Expected value |
+|-------|----------------|
+| repository | `smfworks/smf-praxis` |
+| workflow | `release.yml` (filename only) |
+| environment | `pypi` |
+| `sub` | `repo:smfworks/smf-praxis:environment:pypi` |
+
+**Fix:** on https://pypi.org/manage/project/praxis-agent/settings/publishing/ add or
+edit the GitHub publisher so owner/repo/workflow/environment match exactly, then
+re-run the failed Release workflow (or push a new tag). Until this is fixed, GitHub
+Releases still publish; `pip install praxis-agent` will not pick up new versions.
+
 ## Build & verify locally
 
 ```bash
