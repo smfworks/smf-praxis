@@ -439,6 +439,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/onboard.css" />
 <link rel="stylesheet" href="/web/friendliness.css" />
 <link rel="stylesheet" href="/web/shell.css" />
+<link rel="stylesheet" href="/web/cron.css" />
 <script>
 /* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
  * opening their own /events stream saturated the browser's 6-connection-per-host
@@ -622,6 +623,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/onboard.js" defer></script>
 <script src="/web/friendliness.js" defer></script>
 <script src="/web/shell.js" defer></script>
+<script src="/web/cron.js" defer></script>
 </head>
 <body>
 <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -711,6 +713,17 @@ document.addEventListener("keydown", function (e) {
         <div class="rail-section">
           <h2>Queue</h2>
           <div id="tasks"><div class="empty">No tasks yet.</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Schedule</h2>
+          <div id="cron-list"><div class="empty">Loading schedules…</div></div>
+          <form id="cronForm">
+            <input id="cronGoal" class="txt" placeholder="Goal (e.g. draft morning status note)" autocomplete="off" />
+            <div class="row">
+              <input id="cronSched" class="txt" placeholder="Schedule (0 9 * * 1-5 or daily@09:00)" value="0 9 * * 1-5" />
+              <button class="primary" type="submit">Add</button>
+            </div>
+          </form>
         </div>
         <div class="rail-section">
           <h2>Files</h2>

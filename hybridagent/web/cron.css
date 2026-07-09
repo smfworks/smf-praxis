@@ -1,0 +1,47 @@
+/* Schedule panel in the Ops rail */
+.cron-job {
+  border: 1px solid var(--border);
+  border-radius: .55rem;
+  padding: .45rem .55rem;
+  margin-bottom: .45rem;
+  background: var(--bg);
+}
+.cron-job.off { opacity: .72; }
+.cron-job .cj-head {
+  display: flex; justify-content: space-between; gap: .4rem;
+  font-size: .68rem; color: var(--faint); margin-bottom: .2rem;
+}
+.cron-job .cj-state {
+  text-transform: uppercase; letter-spacing: .04em;
+  color: var(--ok);
+}
+.cron-job.off .cj-state { color: var(--muted); }
+.cron-job .cj-goal {
+  font-size: .8rem; color: var(--text); line-height: 1.35;
+  max-height: 2.6rem; overflow: hidden;
+}
+.cron-job .cj-meta {
+  font-size: .68rem; color: var(--muted); margin-top: .25rem;
+}
+.cron-job .cj-actions {
+  display: flex; gap: .35rem; margin-top: .4rem;
+}
+.cron-job .cj-actions .ghost {
+  font-size: .72rem; padding: .25rem .45rem;
+}
+#cronForm {
+  display: flex; flex-direction: column; gap: .4rem; margin-top: .45rem;
+}
+#cronForm .txt, #cronForm input.txt {
+  width: 100%;
+}
+#cronForm .row {
+  display: flex; gap: .4rem; margin-top: 0;
+}
+#cronForm .row .txt { flex: 1; }
+#cronForm .primary {
+  padding: .4rem .65rem; font-size: .76rem;
+}
+#cron-list .empty code {
+  font-size: .72rem;
+}

@@ -54,7 +54,18 @@ edit the GitHub publisher so owner/repo/workflow/environment match exactly, then
 re-run the failed Release workflow (or push a new tag). Until this is fixed, GitHub
 Releases still publish; `pip install praxis-agent` will not pick up new versions.
 
+## Local dry-run (recommended)
+
+```bash
+bash scripts/verify-release.sh
+```
+
+Builds sdist+wheel, runs `twine check`, confirms dashboard `web/*` assets are in
+the wheel, then installs the wheel into a **clean venv** and checks `praxis --version`
++ package data. Does **not** publish.
+
 ## Build & verify locally
+
 
 ```bash
 python -m pip install --upgrade build twine
