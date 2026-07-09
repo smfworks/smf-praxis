@@ -8,6 +8,8 @@ fetches against an explicit allowlist:
   ``data:``, etc.);
 * private, loopback, link-local, and multicast hosts are rejected unless the
   operator explicitly opts in via ``PRAXIS_KB_ALLOW_PRIVATE=1``;
+* redirects re-validate every hop against the same allowlist (so a public URL
+  that 302s to metadata/internal hosts cannot bypass the check);
 * responses are read with a hard size cap (default 5 MiB) and timeout (30 s) so
   a hostile or runaway source can't exhaust memory.
 """
@@ -16,11 +18,13 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
+import urllib.error
 import urllib.parse
 import urllib.request
 
 MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_TIMEOUT = 30.0
+MAX_REDIRECTS = 5
 
 
 class UnsafeSourceError(RuntimeError):
@@ -71,14 +75,39 @@ def validate_uri(uri: str) -> str:
     return uri
 
 
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-run :func:`validate_uri` on every redirect hop before following."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        validate_uri(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_SafeRedirectHandler())
+
+
 def fetch_url(uri: str, timeout: float = DEFAULT_TIMEOUT,
               max_bytes: int = MAX_BYTES,
               user_agent: str = "praxis-kb/1.0") -> str:
-    """Fetch a validated URL with size + timeout guards."""
+    """Fetch a validated URL with size + timeout guards and safe redirects."""
     validate_uri(uri)
     req = urllib.request.Request(uri, headers={"User-Agent": user_agent})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read(max_bytes + 1)
+    try:
+        with _opener().open(req, timeout=timeout) as resp:
+            # Final URL after redirects (also re-validated per hop).
+            final = getattr(resp, "geturl", lambda: uri)()
+            if final and final != uri:
+                validate_uri(final)
+            raw = resp.read(max_bytes + 1)
+    except UnsafeSourceError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise UnsafeSourceError(f"HTTP {exc.code} fetching {uri!r}") from exc
+    except urllib.error.URLError as exc:
+        raise UnsafeSourceError(f"failed to fetch {uri!r}: {exc.reason}") from exc
+    except OSError as exc:
+        raise UnsafeSourceError(f"failed to fetch {uri!r}: {exc}") from exc
     if len(raw) > max_bytes:
         raise UnsafeSourceError(
             f"source exceeds maximum size of {max_bytes} bytes"

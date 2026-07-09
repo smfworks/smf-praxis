@@ -278,6 +278,38 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
     updated_ts    REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_cron_enabled ON cron_jobs(enabled);
+
+-- Channel conversation continuity (Telegram/Slack threads) across restarts.
+CREATE TABLE IF NOT EXISTS channel_threads (
+    thread_key  TEXT PRIMARY KEY,
+    channel     TEXT NOT NULL,
+    chat_id     TEXT NOT NULL,
+    messages_json TEXT NOT NULL DEFAULT '[]',
+    updated_ts  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_channel_threads_channel ON channel_threads(channel);
+
+-- Evolution proposals survive daemon restart until applied or rejected.
+CREATE TABLE IF NOT EXISTS evolution_proposals (
+    proposal_id     TEXT PRIMARY KEY,
+    skill_name      TEXT NOT NULL,
+    current_trigger TEXT NOT NULL DEFAULT '',
+    new_trigger     TEXT NOT NULL DEFAULT '',
+    current_body    TEXT NOT NULL DEFAULT '',
+    new_body        TEXT NOT NULL DEFAULT '',
+    current_fitness REAL NOT NULL DEFAULT 0,
+    new_fitness     REAL NOT NULL DEFAULT 0,
+    improves        INTEGER NOT NULL DEFAULT 0,
+    rationale       TEXT NOT NULL DEFAULT '',
+    diff_text       TEXT NOT NULL DEFAULT '',
+    source          TEXT NOT NULL DEFAULT '',
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    created_ts      REAL NOT NULL,
+    updated_ts      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_evo_status ON evolution_proposals(status);
+CREATE INDEX IF NOT EXISTS ix_evo_skill ON evolution_proposals(skill_name);
 """
 
 
@@ -1466,3 +1498,186 @@ class Store:
             self._conn.execute(
                 "DELETE FROM board_cards WHERE card_id=?", (card_id,))
             self._conn.commit()
+
+    # ----------------------------------------------------- channel threads
+    def get_channel_thread(self, thread_key: str) -> list[dict]:
+        """Return the message history for a channel:chat_id key."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT messages_json FROM channel_threads WHERE thread_key=?",
+                (thread_key,),
+            ).fetchone()
+        if not row:
+            return []
+        try:
+            data = json.loads(row["messages_json"] or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        return data if isinstance(data, list) else []
+
+    def set_channel_thread(self, thread_key: str, channel: str, chat_id: str,
+                           messages: list[dict], *, max_messages: int = 40
+                           ) -> None:
+        """Upsert a channel thread, trimming to ``max_messages`` turns."""
+        trimmed = list(messages or [])[-max(1, max_messages):]
+        blob = json.dumps(trimmed, default=str)
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO channel_threads(thread_key,channel,chat_id,"
+                "messages_json,updated_ts) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(thread_key) DO UPDATE SET "
+                "channel=excluded.channel, chat_id=excluded.chat_id, "
+                "messages_json=excluded.messages_json, "
+                "updated_ts=excluded.updated_ts",
+                (thread_key, channel, chat_id, blob, now),
+            )
+            self._conn.commit()
+
+    def list_channel_threads(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT thread_key,channel,chat_id,messages_json,updated_ts "
+                "FROM channel_threads ORDER BY updated_ts DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["messages"] = json.loads(d.pop("messages_json") or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                d["messages"] = []
+            out.append(d)
+        return out
+
+    def delete_channel_thread(self, thread_key: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM channel_threads WHERE thread_key=?", (thread_key,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    # ------------------------------------------------ evolution proposals
+    def upsert_evolution_proposal(self, proposal_id: str, skill_name: str,
+                                  *, current_trigger: str = "",
+                                  new_trigger: str = "",
+                                  current_body: str = "",
+                                  new_body: str = "",
+                                  current_fitness: float = 0.0,
+                                  new_fitness: float = 0.0,
+                                  improves: bool = False,
+                                  rationale: str = "",
+                                  diff_text: str = "",
+                                  source: str = "",
+                                  payload: dict | None = None,
+                                  status: str = "pending") -> None:
+        now = time.time()
+        payload_json = json.dumps(payload or {}, default=str)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO evolution_proposals("
+                "proposal_id,skill_name,current_trigger,new_trigger,"
+                "current_body,new_body,current_fitness,new_fitness,improves,"
+                "rationale,diff_text,source,payload_json,status,"
+                "created_ts,updated_ts) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(proposal_id) DO UPDATE SET "
+                "skill_name=excluded.skill_name,"
+                "current_trigger=excluded.current_trigger,"
+                "new_trigger=excluded.new_trigger,"
+                "current_body=excluded.current_body,"
+                "new_body=excluded.new_body,"
+                "current_fitness=excluded.current_fitness,"
+                "new_fitness=excluded.new_fitness,"
+                "improves=excluded.improves,"
+                "rationale=excluded.rationale,"
+                "diff_text=excluded.diff_text,"
+                "source=excluded.source,"
+                "payload_json=excluded.payload_json,"
+                "status=excluded.status,"
+                "updated_ts=excluded.updated_ts",
+                (proposal_id, skill_name, current_trigger, new_trigger,
+                 current_body, new_body, float(current_fitness),
+                 float(new_fitness), 1 if improves else 0, rationale,
+                 diff_text, source, payload_json, status, now, now),
+            )
+            # Keep only one pending proposal per skill.
+            if status == "pending":
+                self._conn.execute(
+                    "UPDATE evolution_proposals SET status='superseded', "
+                    "updated_ts=? WHERE skill_name=? AND proposal_id!=? "
+                    "AND status='pending'",
+                    (now, skill_name, proposal_id),
+                )
+            self._conn.commit()
+
+    def list_evolution_proposals(self, status: str = "pending",
+                                 limit: int = 50) -> list[dict]:
+        with self._lock:
+            if status:
+                rows = self._conn.execute(
+                    "SELECT proposal_id,skill_name,current_trigger,new_trigger,"
+                    "current_body,new_body,current_fitness,new_fitness,improves,"
+                    "rationale,diff_text,source,payload_json,status,"
+                    "created_ts,updated_ts FROM evolution_proposals "
+                    "WHERE status=? ORDER BY updated_ts DESC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT proposal_id,skill_name,current_trigger,new_trigger,"
+                    "current_body,new_body,current_fitness,new_fitness,improves,"
+                    "rationale,diff_text,source,payload_json,status,"
+                    "created_ts,updated_ts FROM evolution_proposals "
+                    "ORDER BY updated_ts DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["improves"] = bool(d.get("improves"))
+            d["id"] = d["proposal_id"]
+            d["diff"] = d.get("diff_text") or ""
+            try:
+                d["payload"] = json.loads(d.pop("payload_json") or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                d["payload"] = {}
+                d.pop("payload_json", None)
+            out.append(d)
+        return out
+
+    def get_evolution_proposal(self, proposal_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT proposal_id,skill_name,current_trigger,new_trigger,"
+                "current_body,new_body,current_fitness,new_fitness,improves,"
+                "rationale,diff_text,source,payload_json,status,"
+                "created_ts,updated_ts FROM evolution_proposals "
+                "WHERE proposal_id=?", (proposal_id,),
+            ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["improves"] = bool(d.get("improves"))
+        d["id"] = d["proposal_id"]
+        d["diff"] = d.get("diff_text") or ""
+        try:
+            d["payload"] = json.loads(d.pop("payload_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            d["payload"] = {}
+            d.pop("payload_json", None)
+        return d
+
+    def resolve_evolution_proposal(self, proposal_id: str, status: str) -> bool:
+        """Mark a proposal applied/rejected/superseded. Returns True if found."""
+        if status not in ("applied", "rejected", "superseded", "pending"):
+            status = "rejected"
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE evolution_proposals SET status=?, updated_ts=? "
+                "WHERE proposal_id=?",
+                (status, time.time(), proposal_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0

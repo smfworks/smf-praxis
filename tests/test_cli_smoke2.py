@@ -142,4 +142,5 @@ def test_query_knowledge_empty_kb(tmp_path, monkeypatch):
 def test_fetch_url_bad_scheme(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     from hybridagent.real_tools import fetch_url
-    assert "unsupported scheme" in fetch_url("file:///etc/passwd")
+    out = fetch_url("file:///etc/passwd")
+    assert "blocked" in out or "unsupported scheme" in out or "refusing" in out

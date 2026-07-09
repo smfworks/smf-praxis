@@ -90,6 +90,8 @@ def test_risk_class_mapping():
     assert risk_from_annotations("send_email", None) is RiskClass.SEND
     assert risk_from_annotations("delete_file", None) is RiskClass.DESTRUCTIVE
     assert risk_from_annotations("write_file", None) is RiskClass.DRAFT
+    # Unrecognized external tool defaults to SEND (held for approval).
+    assert risk_from_annotations("transfer_funds", None) is RiskClass.SEND
 
 
 class FakeAnnotations:
@@ -103,8 +105,13 @@ class FakeAnnotationsDestructive:
 
 
 def test_risk_class_mapping_from_annotations():
-    assert risk_from_annotations("any", FakeAnnotations()) is RiskClass.READ
+    # readOnlyHint alone on an unrecognized name is untrusted → SEND (held).
+    assert risk_from_annotations("any", FakeAnnotations()) is RiskClass.SEND
     assert risk_from_annotations("any", FakeAnnotationsDestructive()) is RiskClass.DESTRUCTIVE
+    # readOnlyHint + read-ish name is still READ.
+    assert risk_from_annotations("get_status", FakeAnnotations()) is RiskClass.READ
+    # Name DESTRUCTIVE wins over a remote readOnlyHint.
+    assert risk_from_annotations("delete_user", FakeAnnotations()) is RiskClass.DESTRUCTIVE
 
 
 @requires_mcp

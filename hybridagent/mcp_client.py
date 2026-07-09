@@ -348,23 +348,29 @@ _RISK_BY_NAME = {
 
 
 def risk_for_tool(tool_def: dict, override: str | None = None) -> RiskClass:
-    """Classify an MCP tool: explicit override, then annotations, then name."""
+    """Classify an MCP tool: explicit override, then name risk, then annotations.
+
+    SEND/DESTRUCTIVE name heuristics always win over a remote ``readOnlyHint``
+    so an untrusted server cannot demote a high-risk tool to auto-execute.
+    Unrecognized tools default to SEND (held for approval).
+    """
     if override:
         mapped = _RISK_BY_NAME.get(override.lower())
         if mapped is not None:
             return mapped
-    ann = tool_def.get("annotations")
-    if isinstance(ann, dict):
-        if ann.get("readOnlyHint"):
-            return RiskClass.READ
-        if ann.get("destructiveHint"):
-            return RiskClass.DESTRUCTIVE
     name = (tool_def.get("name") or "").lower()
     tokens = set(re.findall(r"[a-z0-9]+", name))
     if tokens & _DESTRUCTIVE_HINTS:
         return RiskClass.DESTRUCTIVE
     if tokens & _SEND_HINTS:
         return RiskClass.SEND
+    ann = tool_def.get("annotations")
+    if isinstance(ann, dict):
+        if ann.get("destructiveHint"):
+            return RiskClass.DESTRUCTIVE
+        # readOnlyHint is advisory: only trust when the name also looks read-ish.
+        if ann.get("readOnlyHint") and (tokens & _READ_HINTS):
+            return RiskClass.READ
     if tokens & _DRAFT_HINTS:
         return RiskClass.DRAFT
     if tokens & _READ_HINTS:
