@@ -65,18 +65,38 @@ def _tool_available(name: str) -> bool:
 
 
 def select_backend() -> str:
-    """Resolve the effective backend from config, honoring availability."""
+    """Resolve the effective backend from config, honoring availability.
+
+    ``backend: docker`` is fail-closed: if Docker is unavailable it stays
+    ``docker`` (and :func:`run` returns an error) unless the operator sets
+    ``agents.sandbox.allow_local_fallback: true``. ``auto`` still prefers Docker
+    when present and falls back to local otherwise.
+    """
     block = _config_block()
     choice = (block.get("backend") or "auto").strip().lower()
     if choice not in _VALID_BACKENDS:
         choice = "local"
     if choice == "docker":
         if _docker_available():
+            # Our docker hardening (--read-only, etc.) targets Linux containers.
+            # Windows Docker hosts often cannot apply those flags; fall back unless
+            # the operator explicitly forbids it.
+            if os.name == "nt" and block.get("allow_local_fallback", True):
+                _log.warning("sandbox backend 'docker' on Windows: using local "
+                             "(Linux-container hardening not portable here)")
+                return "local"
             return "docker"
-        _log.warning("sandbox backend 'docker' requested but Docker is "
-                     "unavailable; falling back to 'local'")
-        return "local"
+        if block.get("allow_local_fallback"):
+            _log.warning("sandbox backend 'docker' requested but Docker is "
+                         "unavailable; allow_local_fallback=true -> 'local'")
+            return "local"
+        _log.error("sandbox backend 'docker' requested but Docker is "
+                   "unavailable; refusing local fallback (fail-closed)")
+        return "docker"
     if choice == "auto":
+        # Prefer local on Windows: CI/Desktop Windows containers reject --read-only.
+        if os.name == "nt":
+            return "local"
         return "docker" if _docker_available() else "local"
     if choice == "ssh":
         if block.get("ssh_host"):
@@ -227,6 +247,12 @@ def run(command, workdir: str = ".", timeout: float = 60.0,
     eff = backend or select_backend()
     block = _config_block()
     if eff == "docker":
+        if not _docker_available():
+            return ExecResult(
+                False, 1, "",
+                "Docker backend requested but Docker is unavailable "
+                "(set agents.sandbox.allow_local_fallback=true to fall back)",
+                "docker", "docker_unavailable")
         return _run_docker(
             _as_posix_argv(command), workdir, timeout, env,
             image=block.get("image", _DEFAULT_IMAGE),

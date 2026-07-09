@@ -115,6 +115,102 @@
     box.appendChild(el("div", "st-note",
       "Keys are stored in your OS keychain when available, otherwise a gitignored " +
       "file. They are sent only to the local daemon and never displayed back."));
+
+    // ---- Telegram one-click enable ----
+    box.appendChild(el("div", "st-section", "Telegram (inbound)"));
+    var tgBox = el("div", "st-tg");
+    tgBox.id = "stTg";
+    tgBox.innerHTML = '<div class="empty">Loading Telegram status…</div>';
+    box.appendChild(tgBox);
+    loadTelegram(tgBox);
+  }
+
+  function loadTelegram(tgBox) {
+    if (!tgBox) tgBox = document.getElementById("stTg");
+    if (!tgBox) return;
+    api("/api/channels/telegram").then(function (st) {
+      paintTelegram(tgBox, st || {});
+    }).catch(function () {
+      tgBox.innerHTML = '<div class="empty">Could not load Telegram status.</div>';
+    });
+  }
+
+  function paintTelegram(tgBox, st) {
+    var live = st.enabled && st.has_token;
+    var probe = st.probe || {};
+    var statusLine = live
+      ? ('<span class="st-tg-ok">● Live</span> ' +
+         (probe.username ? ('@' + esc(probe.username)) : 'polling for messages'))
+      : (st.configured
+        ? '<span class="st-tg-off">○ Configured, disabled</span>'
+        : '<span class="st-tg-off">○ Not configured</span>');
+    tgBox.innerHTML = "";
+    tgBox.appendChild(el("div", "st-tg-status", statusLine));
+    tgBox.appendChild(el("div", "st-note", esc(st.hint || "")));
+
+    var form = el("div", "st-form st-tg-form");
+    var tok = el("input", "st-input");
+    tok.type = "password";
+    tok.placeholder = st.token_is_env_ref
+      ? "Using ${TELEGRAM_BOT_TOKEN} — paste to override"
+      : "Bot token from @BotFather";
+    tok.id = "stTgToken";
+    var chat = el("input", "st-input");
+    chat.type = "text";
+    chat.placeholder = "Your chat id (message the bot, then getUpdates)";
+    chat.id = "stTgChat";
+    chat.value = st.chat_id || "";
+    var envRef = el("label", "st-tg-check");
+    envRef.innerHTML =
+      '<input type="checkbox" id="stTgEnv"' +
+      (st.token_is_env_ref ? " checked" : "") +
+      '> Store as <code>${TELEGRAM_BOT_TOKEN}</code> (recommended)';
+    form.appendChild(tok);
+    form.appendChild(chat);
+    form.appendChild(envRef);
+    tgBox.appendChild(form);
+
+    var actions = el("div", "st-tg-actions");
+    var enable = el("button", "st-btn primary", live ? "Save & keep enabled" : "Enable Telegram");
+    enable.type = "button";
+    enable.onclick = function () {
+      var body = {
+        action: "configure",
+        enabled: true,
+        bot_token: (document.getElementById("stTgToken") || {}).value || "",
+        chat_id: (document.getElementById("stTgChat") || {}).value || "",
+        use_env_ref: !!(document.getElementById("stTgEnv") || {}).checked
+      };
+      // If env-ref checked and field empty, still configure env ref.
+      if (body.use_env_ref && !body.bot_token) body.bot_token = "ENV";
+      api("/api/channels/telegram", body).then(function (r) {
+        if (r.error) { toast(r.error); return; }
+        var p = r.probe || {};
+        if (p.ok === false && r.has_token) {
+          toast("Saved, but probe failed: " + (p.error || "check token"));
+        } else if (p.username) {
+          toast("Telegram live as @" + p.username);
+        } else {
+          toast(r.enabled ? "Telegram enabled" : "Saved");
+        }
+        paintTelegram(tgBox, r);
+      });
+    };
+    var disable = el("button", "st-btn", "Disable");
+    disable.type = "button";
+    disable.onclick = function () {
+      api("/api/channels/telegram", { action: "disable" }).then(function (r) {
+        toast("Telegram disabled");
+        paintTelegram(tgBox, r);
+      });
+    };
+    actions.appendChild(enable);
+    if (st.configured) actions.appendChild(disable);
+    tgBox.appendChild(actions);
+    tgBox.appendChild(el("div", "st-note",
+      "How: create a bot with @BotFather → paste token → message the bot → set chat id " +
+      "(or leave blank to accept any). The daemon polls getUpdates while running. " +
+      "Reply <code>approve &lt;id&gt;</code> to held actions."));
   }
 
   function boot() {

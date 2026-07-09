@@ -49,3 +49,20 @@
 .st-btn:hover { border-color: var(--accent); }
 .st-btn.primary { border-color: var(--accent); color: var(--accent); }
 .st-note { font-size: .72rem; color: var(--faint); margin-top: .6rem; line-height: 1.4; }
+
+/* Telegram enable panel */
+.st-tg {
+  border: 1px solid var(--border); border-radius: .65rem; padding: .65rem .75rem;
+  background: var(--bg2); margin-bottom: .4rem;
+}
+.st-tg-status { font-size: .84rem; margin-bottom: .35rem; }
+.st-tg-ok { color: var(--ok, #3ecf8e); font-weight: 650; }
+.st-tg-off { color: var(--muted); font-weight: 600; }
+.st-tg-form { flex-direction: column; align-items: stretch; margin-top: .45rem; }
+.st-tg-form .st-input { width: 100%; min-width: 0; }
+.st-tg-check {
+  display: flex; align-items: center; gap: .4rem; font-size: .74rem;
+  color: var(--muted); margin: .25rem 0 .15rem;
+}
+.st-tg-check code { font-size: .72rem; }
+.st-tg-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .45rem; }

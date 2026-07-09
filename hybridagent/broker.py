@@ -454,20 +454,27 @@ class GovernanceBroker:
                 self.store.resolve_approval(approval_id, "expired")
             self.log.info("approval %s expired", approval_id)
             return None
+        signer = (approved_by or "").strip()
+        # Four-eyes: dual-approval requires a non-empty distinct identity so two
+        # blank signatures cannot satisfy required_approvals > 1.
+        if pending.required_approvals > 1 and not signer:
+            self.log.info("approval %s: dual-approval requires non-empty approved_by",
+                          approval_id)
+            return None
         # Four-eyes principle: an approver who already signed THIS approval
         # cannot sign it a second time to satisfy the dual-approval requirement.
-        if approved_by and any(a.get("approved_by") == approved_by
-                               for a in pending.approvals):
+        if signer and any(a.get("approved_by") == signer
+                          for a in pending.approvals):
             self.log.info("approval %s: %s already signed; second approver required",
-                          approval_id, approved_by)
+                          approval_id, signer)
             return None
         pending.approvals.append({
-            "approved_by": approved_by, "notes": approval_notes,
+            "approved_by": signer, "notes": approval_notes,
             "ts": time.time(),
         })
         if self.store is not None:
             self.store.add_approval_signature(
-                approval_id, approved_by, approval_notes)
+                approval_id, signer, approval_notes)
         if not pending.fully_approved:
             self.log.info("approval %s: %d/%d signatures collected",
                           approval_id, len(pending.approvals),
@@ -475,7 +482,7 @@ class GovernanceBroker:
             return None
         # All signatures collected -> atomically claim execution.
         if self.store is not None and not self.store.resolve_approval(
-                approval_id, "approved", approved_by=approved_by,
+                approval_id, "approved", approved_by=signer,
                 approval_notes=approval_notes):
             self.pending.pop(approval_id, None)        # already resolved elsewhere
             self.log.info("approval %s already resolved; refusing", approval_id)
@@ -505,10 +512,31 @@ class GovernanceBroker:
         self._session_one_shot_tools.add(name)
         self.log.info("tool %s granted one-shot session allow", name)
 
-    def reject(self, approval_id: str) -> None:
+    def reject(self, approval_id: str) -> bool:
+        """Reject a pending approval. Returns True if it was pending."""
+        existed = approval_id in self.pending
         self.pending.pop(approval_id, None)
         if self.store is not None:
             self.store.resolve_approval(approval_id, "rejected")
+        return existed
+
+    def revoke_tool_once(self, tool: str) -> None:
+        """Drop a previously granted one-shot allow (if still unused)."""
+        name = (tool or "").strip()
+        if name:
+            self._session_one_shot_tools.discard(name)
+
+    def egress_blocked_for(self, args: dict) -> str:
+        """Public egress check: non-empty reason string if the action is blocked.
+
+        Respects compliance mode (permissive disables the firewall) and the
+        policy's ``egress_check`` flag.
+        """
+        if not self.policy.egress_check:
+            return ""
+        if self.effective_mode() is ComplianceMode.PERMISSIVE:
+            return ""
+        return self._egress_blocked(args)
 
     # ------------------------------------------------------------- screening
     def mark_tainted(self, text: str) -> None:
