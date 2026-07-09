@@ -78,6 +78,13 @@ def select_backend() -> str:
         choice = "local"
     if choice == "docker":
         if _docker_available():
+            # Our docker hardening (--read-only, etc.) targets Linux containers.
+            # Windows Docker hosts often cannot apply those flags; fall back unless
+            # the operator explicitly forbids it.
+            if os.name == "nt" and block.get("allow_local_fallback", True):
+                _log.warning("sandbox backend 'docker' on Windows: using local "
+                             "(Linux-container hardening not portable here)")
+                return "local"
             return "docker"
         if block.get("allow_local_fallback"):
             _log.warning("sandbox backend 'docker' requested but Docker is "
@@ -87,6 +94,9 @@ def select_backend() -> str:
                    "unavailable; refusing local fallback (fail-closed)")
         return "docker"
     if choice == "auto":
+        # Prefer local on Windows: CI/Desktop Windows containers reject --read-only.
+        if os.name == "nt":
+            return "local"
         return "docker" if _docker_available() else "local"
     if choice == "ssh":
         if block.get("ssh_host"):
