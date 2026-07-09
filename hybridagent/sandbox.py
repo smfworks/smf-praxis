@@ -65,7 +65,13 @@ def _tool_available(name: str) -> bool:
 
 
 def select_backend() -> str:
-    """Resolve the effective backend from config, honoring availability."""
+    """Resolve the effective backend from config, honoring availability.
+
+    ``backend: docker`` is fail-closed: if Docker is unavailable it stays
+    ``docker`` (and :func:`run` returns an error) unless the operator sets
+    ``agents.sandbox.allow_local_fallback: true``. ``auto`` still prefers Docker
+    when present and falls back to local otherwise.
+    """
     block = _config_block()
     choice = (block.get("backend") or "auto").strip().lower()
     if choice not in _VALID_BACKENDS:
@@ -73,9 +79,13 @@ def select_backend() -> str:
     if choice == "docker":
         if _docker_available():
             return "docker"
-        _log.warning("sandbox backend 'docker' requested but Docker is "
-                     "unavailable; falling back to 'local'")
-        return "local"
+        if block.get("allow_local_fallback"):
+            _log.warning("sandbox backend 'docker' requested but Docker is "
+                         "unavailable; allow_local_fallback=true -> 'local'")
+            return "local"
+        _log.error("sandbox backend 'docker' requested but Docker is "
+                   "unavailable; refusing local fallback (fail-closed)")
+        return "docker"
     if choice == "auto":
         return "docker" if _docker_available() else "local"
     if choice == "ssh":
@@ -227,6 +237,12 @@ def run(command, workdir: str = ".", timeout: float = 60.0,
     eff = backend or select_backend()
     block = _config_block()
     if eff == "docker":
+        if not _docker_available():
+            return ExecResult(
+                False, 1, "",
+                "Docker backend requested but Docker is unavailable "
+                "(set agents.sandbox.allow_local_fallback=true to fall back)",
+                "docker", "docker_unavailable")
         return _run_docker(
             _as_posix_argv(command), workdir, timeout, env,
             image=block.get("image", _DEFAULT_IMAGE),

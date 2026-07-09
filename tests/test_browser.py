@@ -37,7 +37,9 @@ class _Fixture(BaseHTTPRequestHandler):
         pass
 
 
-def test_browser_session_navigate_fallback():
+def test_browser_session_navigate_fallback(monkeypatch):
+    # Local fixture host is private; opt in for the offline smoke path.
+    monkeypatch.setenv("PRAXIS_KB_ALLOW_PRIVATE", "1")
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _Fixture)
     port = srv.server_address[1]
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -53,7 +55,14 @@ def test_browser_session_navigate_fallback():
 
 
 def test_browser_navigate_rejects_bad_scheme():
-    assert "unsupported URL scheme" in BrowserSession().navigate("file:///etc/passwd")
+    out = BrowserSession().navigate("file:///etc/passwd")
+    assert "blocked" in out or "unsupported" in out or "refusing" in out
+
+
+def test_browser_navigate_blocks_private_by_default(monkeypatch):
+    monkeypatch.delenv("PRAXIS_KB_ALLOW_PRIVATE", raising=False)
+    out = BrowserSession(allow_playwright=False).navigate("http://127.0.0.1/")
+    assert "blocked" in out.lower() or "refusing" in out.lower()
 
 
 def test_browser_tools_risk_classes():

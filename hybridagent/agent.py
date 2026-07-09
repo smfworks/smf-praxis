@@ -18,7 +18,13 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from .broker import GovernanceBroker, GovernancePolicy, RiskClass, Verdict
+from .broker import (
+    CONSEQUENTIAL,
+    GovernanceBroker,
+    GovernancePolicy,
+    RiskClass,
+    Verdict,
+)
 from .llm import LLMClient
 from .memory import Memory
 from .perception import Perception, Signal
@@ -204,6 +210,11 @@ class PraxisAgent:
                             "error": str(exc),
                         }, ref_id=decision.decision_id)
                         continue
+                # Tool output is untrusted: taint injection-flagged spans so the
+                # egress firewall can refuse to relay them via SEND/DESTRUCTIVE.
+                if self.broker.is_injection(str(result)):
+                    self.broker.mark_tainted(str(result))
+                    report.injection_flags.append(tool.name)
                 self.memory.note_working(result, provenance=f"action:{tool.name}")
                 report.actions.append(f"[{tool.risk.value}] {step.intent} -> {result}")
                 self._event(report.cycle_id, "action_result", {
@@ -244,6 +255,18 @@ class PraxisAgent:
     # ------------------------------------------------- approval completion
     def approve(self, approval_id: str, approved_by: str = "user",
                 approval_notes: str = "") -> str:
+        # Peek for kill/egress before claiming so dual-approval partials stay
+        # pending; after a full claim we still re-check before execution.
+        peek = self.broker.pending.get(approval_id)
+        if peek is None:
+            return f"no pending approval {approval_id}"
+        tool_peek = self.registry.get(peek.tool)
+        if tool_peek is not None and tool_peek.risk in CONSEQUENTIAL:
+            if self.broker.kill.tripped:
+                return "approved action denied: kill-switch engaged"
+            blocked = self.broker.egress_blocked_for(peek.args)
+            if blocked:
+                return f"approved action denied: {blocked}"
         pending = self.broker.approve(
             approval_id, approved_by=approved_by, approval_notes=approval_notes)
         if not pending:
@@ -251,6 +274,21 @@ class PraxisAgent:
         tool = self.registry.get(pending.tool)
         if not tool:
             return f"tool {pending.tool} missing"
+        # Re-check after claim: kill-switch may trip between peek and run.
+        if tool.risk in CONSEQUENTIAL:
+            if self.broker.kill.tripped:
+                self._event(pending.cycle_id, "approval_execution_denied", {
+                    "approval_id": approval_id, "tool": pending.tool,
+                    "reason": "kill-switch engaged",
+                }, ref_id=approval_id)
+                return "approved action denied: kill-switch engaged"
+            blocked = self.broker.egress_blocked_for(pending.args)
+            if blocked:
+                self._event(pending.cycle_id, "approval_execution_denied", {
+                    "approval_id": approval_id, "tool": pending.tool,
+                    "reason": blocked,
+                }, ref_id=approval_id)
+                return f"approved action denied: {blocked}"
         try:
             result = tool.run(**pending.args)
         except Exception as exc:

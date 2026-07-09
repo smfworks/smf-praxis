@@ -440,6 +440,12 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/friendliness.css" />
 <link rel="stylesheet" href="/web/shell.css" />
 <link rel="stylesheet" href="/web/cron.css" />
+<link rel="stylesheet" href="/web/home.css" />
+<link rel="stylesheet" href="/web/growth.css" />
+<link rel="manifest" href="/web/manifest.webmanifest" />
+<meta name="theme-color" content="#5b8def" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <script>
 /* Shared SSE bus: ONE EventSource for the whole dashboard. Six panels each
  * opening their own /events stream saturated the browser's 6-connection-per-host
@@ -624,6 +630,15 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/friendliness.js" defer></script>
 <script src="/web/shell.js" defer></script>
 <script src="/web/cron.js" defer></script>
+<script src="/web/home.js" defer></script>
+<script src="/web/growth.js" defer></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/web/sw.js').catch(function () {});
+  });
+}
+</script>
 </head>
 <body>
 <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -755,6 +770,26 @@ document.addEventListener("keydown", function (e) {
 
       <div class="rail-pane" data-pane="mind" role="tabpanel">
         <div class="rail-section">
+          <h2>You</h2>
+          <div id="growth-model"><div class="empty">Loading persona…</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Skills</h2>
+          <div id="growth-skills"><div class="empty">Loading skills…</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Evolution inbox</h2>
+          <div id="growth-evolve"><div class="empty">No proposals yet.</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Agent rooms</h2>
+          <div id="growth-rooms"><div class="empty">Loading rooms…</div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Computer use</h2>
+          <div id="browser-snap"><div class="empty">No page loaded yet.</div></div>
+        </div>
+        <div class="rail-section">
           <h2>Memory</h2>
           <div id="memory-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
         </div>
@@ -793,6 +828,7 @@ let isSending = false;
 let conversations = [];
 let activeId = null;
 const HIST_KEY = 'praxis.chats.v1';
+try { if(!sessionStorage.getItem('praxis.ttft.t0')) sessionStorage.setItem('praxis.ttft.t0', String(Date.now())); } catch(_){}
 let providers = [];
 const HINTS = {
   auto: 'Auto — Praxis picks Look up / Research / Work on this from your message.',
@@ -1130,9 +1166,9 @@ async function agentChat(conv, wire, typing){
             addStep('🧠 <b>Recalled</b> <span class="muted">'+escapeHtml(parts.join(', '))+'</span><div class="muted" style="margin-top:.2rem;font-size:.74rem">'+escapeHtml(detail.slice(0,260))+'</div>', 'ok');
           }
         }
-        else if(ev.type === 'tool_call'){ var k = cardKey(ev); cards[ev.tool] = cards[k] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); }
+        else if(ev.type === 'tool_call'){ var k = cardKey(ev); cards[ev.tool] = cards[k] = addStep('🔧 <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> <span class="muted">running…</span>', 'run'); if(window.PraxisPresence) window.PraxisPresence.thinking(ev.tool||'tool'); }
         else if(ev.type === 'tool_result'){ setCard(ev.tool, '✅ <b>'+escapeHtml(ev.tool)+'</b> <span class="muted">'+escapeHtml(ev.preview||'')+'</span>', 'ok'); }
-        else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval<div class="muted" style="margin-top:.25rem;font-size:.74rem">Nothing was sent yet. In Approvals: <b>A</b> once · <b>C</b> this chat · <b>D</b> deny — then Praxis continues automatically.</div>', 'hold'); if(window.PraxisOutcome&&window.PraxisOutcome.attach){ window.PraxisOutcome.attach({title:'Action held', status:'held', ran:ev.tool||'tool', changed:'No external side effect yet', next:'Approve in the Approvals panel (or press A/C). Praxis will resume this chat.'}); } if(window.PraxisFriendly&&window.PraxisFriendly.markTour) window.PraxisFriendly.markTour('hold'); refresh(); }
+        else if(ev.type === 'approval'){ setCard(ev.tool, '⏸ <b>'+escapeHtml(ev.tool)+'</b><span class="rk">'+escapeHtml(ev.risk||'')+'</span> held for your approval<div class="muted" style="margin-top:.25rem;font-size:.74rem">Nothing was sent yet — use the card below or Approvals: <b>A</b> once · <b>C</b> this chat · <b>D</b> deny.</div>', 'hold'); if(window.PraxisInlineApproval) window.PraxisInlineApproval.mount(ev); if(window.PraxisOutcome&&window.PraxisOutcome.attach){ window.PraxisOutcome.attach({title:'Action held', status:'held', ran:ev.tool||'tool', changed:'No external side effect yet', next:'Approve inline or in Approvals (A/C). Praxis resumes this chat.'}); } if(window.PraxisFriendly&&window.PraxisFriendly.markTour) window.PraxisFriendly.markTour('hold'); if(window.PraxisPresence) window.PraxisPresence.waiting(ev.tool||'approval'); refresh(); }
         else if(ev.type === 'denied'){ setCard(ev.tool||'tool', '⛔ <b>'+escapeHtml(ev.tool||'tool')+'</b> denied <span class="muted">'+escapeHtml(ev.reason||'')+'</span>', 'deny'); }
         else if(ev.type === 'final'){ finalText = ev.text || ''; }
         else if(ev.type === 'error'){ finalText = (finalText ? finalText+'\n\n' : '') + '⚠️ ' + (ev.error || 'error'); }
@@ -1146,6 +1182,18 @@ async function agentChat(conv, wire, typing){
   conv.messages.push({role:'assistant', content: out, model: model, ts: Date.now()});
   conv.updated = Date.now(); persistConversations(); renderHistList();
   speak(out);
+  if(window.PraxisPresence) window.PraxisPresence.idle('');
+  if(window.PraxisFirstWin && window.PraxisFriendly){
+    var tour = window.PraxisFriendly.loadTour();
+    var n = Object.keys((tour&&tour.done)||{}).length;
+    if(n >= 1) window.PraxisFirstWin.mark();
+  }
+  try {
+    if(!sessionStorage.getItem('praxis.ttft.sent')){
+      var t0 = Number(sessionStorage.getItem('praxis.ttft.t0')||0);
+      if(t0){ fetch('/api/growth/ttft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seconds:(Date.now()-t0)/1000})}); sessionStorage.setItem('praxis.ttft.sent','1'); }
+    }
+  } catch(_){}
 }
 
 function playAudioB64(b64, mime){
@@ -1694,7 +1742,20 @@ async function refresh(){
   document.getElementById('logs').textContent = logs || '—';
 }
 async function approve(id, mode='once'){
-  const res = await api('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id, mode: mode})});
+  // Distinct approver identity for four-eyes; persisted so dual-approval needs
+  // two different people (or two different stored identities).
+  let approved_by = '';
+  try { approved_by = localStorage.getItem('praxis.approver') || ''; } catch(_){}
+  if(!approved_by){
+    try {
+      approved_by = (prompt('Your name/id for this approval (needed for dual-approval):') || '').trim();
+    } catch(_){ approved_by = ''; }
+    if(approved_by){
+      try { localStorage.setItem('praxis.approver', approved_by); } catch(_){}
+    }
+  }
+  if(!approved_by) approved_by = 'web-ui';
+  const res = await api('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approval_id: id, mode: mode, approved_by})});
   if(res.approved){
     showToast('Approved '+id+(mode && mode!=='once' ? ' ('+mode+')' : ''));
     // Fallback if SSE resume is slow/missed — chat/always/once all emit resume.
@@ -1903,14 +1964,43 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return b""
         return self.rfile.read(min(length, max_bytes))
 
+    def _require_auth(self) -> bool:
+        """Non-loopback clients must present the shared token when configured."""
+        from . import auth_gate
+        if self._is_loopback():
+            return True
+        if not auth_gate.configured_token():
+            return True
+        if auth_gate.token_matches(auth_gate.extract_token(self.headers)):
+            return True
+        self._json_response(
+            {"error": "unauthorized", "auth_required": True,
+             "hint": "Set Authorization: Bearer <token> or X-Praxis-Token"},
+            status=401)
+        return False
+
     def do_POST(self) -> None:
         try:
             if self.path == "/stop":
+                if not self._require_auth():
+                    return
                 self.send_response(202)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"stopping": true}')
                 threading.Thread(target=self.daemon.stop, daemon=True).start()
+                return
+            # Auth gate for all other mutating routes when bound beyond loopback.
+            if self.path not in ("/api/auth/login",) and not self._require_auth():
+                return
+            if self.path == "/api/auth/login":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                from . import auth_gate
+                tok = str(payload.get("token") or "")
+                ok = auth_gate.token_matches(tok)
+                self._json_response({"ok": ok, "auth_required": auth_gate.auth_required(
+                    self.daemon.status_host)})
                 return
             if self.path == "/submit":
                 length = int(self.headers.get("Content-Length", 0))
@@ -1964,7 +2054,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 payload = json.loads(body)
                 approval_id = payload.get("approval_id", "")
                 mode = payload.get("mode", "once")
-                approved = self.daemon.approve(approval_id, mode=mode)
+                approved = self.daemon.approve(
+                    approval_id, mode=mode,
+                    approved_by=str(payload.get("approved_by") or ""))
                 self._json_response({"approved": bool(approved), "approval_id": approval_id, "mode": mode})
                 return
             if self.path == "/api/deny":
@@ -1975,12 +2067,23 @@ class _StatusHandler(BaseHTTPRequestHandler):
                                      "approval_id": aid})
                 return
             if self.path == "/api/killswitch":
+                # Safety-critical: only accept from loopback when no auth exists.
+                if not self._is_loopback():
+                    self._json_response(
+                        {"error": "kill-switch changes are only allowed from localhost"},
+                        status=403)
+                    return
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
                 self._json_response(self.daemon.killswitch_set(
                     bool(payload.get("engaged", False))))
                 return
             if self.path == "/api/compliance":
+                if not self._is_loopback():
+                    self._json_response(
+                        {"error": "compliance changes are only allowed from localhost"},
+                        status=403)
+                    return
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
                 self._json_response(self.daemon.compliance_set(
@@ -1991,14 +2094,14 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
                 action = str(payload.get("action", ""))
+                # Secrets mutations only from localhost — defense in depth for a
+                # 0.0.0.0-bound container (the dashboard has no auth yet).
+                if action in ("set", "delete", "migrate") and not self._is_loopback():
+                    self._json_response(
+                        {"error": "secret changes are only allowed from localhost"},
+                        status=403)
+                    return
                 if action == "set":
-                    # Secrets are only accepted from localhost — defense in depth
-                    # for a 0.0.0.0-bound container (the dashboard has no auth yet).
-                    if not self._is_loopback():
-                        self._json_response(
-                            {"error": "setting keys is only allowed from localhost"},
-                            status=403)
-                        return
                     self._json_response(self.daemon.secrets_set(
                         str(payload.get("provider", "")),
                         str(payload.get("key", ""))))
@@ -2158,6 +2261,67 @@ class _StatusHandler(BaseHTTPRequestHandler):
             if self.path == "/upload":
                 self._handle_upload()
                 return
+            # ---- preeminence sprint: persona / growth / pulse / channels ----
+            if self.path == "/api/persona":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.persona_set(payload))
+                return
+            if self.path == "/api/pulse":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.pulse(
+                    target=payload.get("target")))
+                return
+            if self.path == "/api/growth/evolve":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.growth_evolve(
+                    limit=int(payload.get("limit", 3) or 3)))
+                return
+            if self.path == "/api/growth/apply":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.growth_apply(
+                    str(payload.get("id") or "")))
+                return
+            if self.path == "/api/growth/reject":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.growth_reject(
+                    str(payload.get("id") or "")))
+                return
+            if self.path == "/api/growth/ttft":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.record_ttft(
+                    float(payload.get("seconds") or 0)))
+                return
+            if self.path == "/api/channels/telegram":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                action = str(payload.get("action") or "configure")
+                if action == "disable":
+                    self._json_response(self.daemon.telegram_disable())
+                else:
+                    self._json_response(self.daemon.telegram_configure(
+                        bot_token=str(payload.get("bot_token") or ""),
+                        chat_id=str(payload.get("chat_id") or ""),
+                        enabled=bool(payload.get("enabled", True)),
+                        use_env_ref=bool(payload.get("use_env_ref", False))))
+                return
+            if self.path == "/api/channels/telegram/webhook":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                payload = json.loads(self.rfile.read(length).decode() or "{}")
+                self._json_response(self.daemon.telegram_webhook(payload))
+                return
+            if self.path == "/api/channels/slack/events":
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                raw = self.rfile.read(length)
+                payload = json.loads(raw.decode() or "{}")
+                self._json_response(self.daemon.slack_events(
+                    payload, raw=raw, headers=self.headers))
+                return
             self.send_response(404)
             self.end_headers()
         except Exception as exc:
@@ -2193,6 +2357,52 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/html; charset=utf-8")
             elif self.path == "/api/tasks":
                 body = json.dumps(self.daemon.list_tasks(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/auth/status":
+                from . import auth_gate
+                body = json.dumps(auth_gate.status_dict(
+                    self.daemon.status_host)).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/persona":
+                body = json.dumps(self.daemon.persona_get()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/pulse":
+                body = json.dumps(self.daemon.pulse_preview(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/growth/model":
+                body = json.dumps(self.daemon.growth_model()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/growth/skills":
+                body = json.dumps({"skills": self.daemon.growth_skills()}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/growth/proposals":
+                body = json.dumps({"proposals": self.daemon.growth_proposals()}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/growth/rooms":
+                body = json.dumps({"rooms": self.daemon.growth_rooms()}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/growth/ttft":
+                body = json.dumps(self.daemon.ttft_stats()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/channels/status":
+                body = json.dumps(self.daemon.channels_status()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/channels/telegram":
+                body = json.dumps(self.daemon.telegram_status()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/browser/snapshot":
+                body = json.dumps(self.daemon.browser_snapshot()).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/approvals":
@@ -2320,8 +2530,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return
         ctype = {".js": "text/javascript", ".css": "text/css",
                  ".html": "text/html", ".svg": "image/svg+xml",
-                 ".json": "application/json"}.get(
+                 ".json": "application/json",
+                 ".webmanifest": "application/manifest+json"}.get(
                      target.suffix, "application/octet-stream")
+        if target.name == "manifest.webmanifest":
+            ctype = "application/manifest+json"
         data = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", f"{ctype}; charset=utf-8")
@@ -2680,13 +2893,26 @@ class Daemon:
         self.log.info("shutdown signal received")
         self.stop()
 
+    def _bind_durable_surfaces(self) -> None:
+        """Wire Store into channel threads + evolution proposals (survive restart)."""
+        if self.store is None:
+            return
+        try:
+            from . import channels_inbound, growth
+            channels_inbound.set_thread_store(self.store)
+            growth.set_proposal_store(self.store)
+        except Exception:
+            pass
+
     def _ensure_agent(self) -> None:
         if self.agent is not None:
+            self._bind_durable_surfaces()
             return
         self.agent = PraxisAgent.persistent(llm=self.llm, work_dir=self.work_dir)
         self.store = self.agent.store
         if self.manager is None:
             self.manager = TaskManager(self.store)
+        self._bind_durable_surfaces()
         # First-run bootstrap: enable recall defaults and seed the starter
         # knowledge namespace so even an offline-mock daemon is usable (and the
         # Knowledge panel + grounded ask have content) on first boot. Idempotent.
@@ -2748,6 +2974,18 @@ class Daemon:
         self._stop_event.clear()
         self.state = DaemonState(running=True, started_ts=time.time())
         _write_pid(self.status_port)
+        # Non-loopback binds: ensure a shared token exists so the dashboard is
+        # not accidentally open on the LAN (token is in agents.auth or env).
+        try:
+            from . import auth_gate
+            if auth_gate.auth_required(self.status_host):
+                tok = auth_gate.ensure_token()
+                self._log(
+                    "warning",
+                    "non-loopback bind: session auth required "
+                    f"(token length {len(tok)}; set PRAXIS_AUTH_TOKEN to override)")
+        except Exception as exc:
+            self._log("warning", f"auth setup: {exc}")
         self._start_status_server()
         self._log("info", f"daemon started on {self.status_host}:{self.status_port}")
         try:
@@ -2809,6 +3047,11 @@ class Daemon:
                 self._log("error", f"cron job {jid} failed: {exc}")
                 self.emit_event("cron", {"job_id": jid, "status": "error",
                                          "error": str(exc)})
+        # Inbound Telegram (when enabled) — poll between cron passes.
+        try:
+            self._telegram_poll_tick()
+        except Exception as exc:
+            self._log("warning", f"telegram poll: {exc}")
 
     def _run_cron_job(self, job: dict) -> str:
         """Execute one cron job's goal in its configured mode, deliver the result,
@@ -2825,6 +3068,10 @@ class Daemon:
         elif mode == "agent":
             res = self.agent_run(goal)
             text = res.get("summary", "") or str(res.get("status", ""))
+        elif mode == "pulse":
+            dig = self.pulse(target=job.get("deliver") if job.get("deliver") != "local" else None)
+            text = dig.get("text", "")
+            return text  # pulse already delivers when target set
         else:  # "do" — queue a durable task (the existing autonomy path)
             task_id = self.submit(goal)
             text = f"queued task {task_id}"
@@ -3173,11 +3420,13 @@ class Daemon:
 
     # ----------------------------------------------------------- safety center
     def deny_approval(self, approval_id: str) -> bool:
-        """Reject a held consequential action (it is never executed)."""
+        """Reject a held consequential action (it is never executed).
+
+        Returns True only when the approval id was actually pending.
+        """
         self._ensure_agent()
         assert self.agent is not None
-        self.agent.broker.reject(approval_id)
-        return True
+        return bool(self.agent.broker.reject(approval_id))
 
     def killswitch_status(self) -> dict:
         self._ensure_agent()
@@ -3625,9 +3874,14 @@ class Daemon:
         return {"text": text, "model": cfg.get_default_model() or "mock (offline)"}
 
     def _chat_system(self, system: str | None) -> str:
-        """The chat persona, with the active vertical pack's persona prepended."""
+        """The chat persona, with pack + durable user model prepended."""
         from . import pack
-        return system or pack.compose_system(_CHAT_SYSTEM)
+        from .persona import persona_system_prefix
+        base = system or pack.compose_system(_CHAT_SYSTEM)
+        prefix = persona_system_prefix()
+        if prefix:
+            return prefix + "\n\n" + base
+        return base
 
     def chat_stream(self, messages: list[dict],
                     system: str | None = None) -> Iterator[str]:
@@ -3635,8 +3889,13 @@ class Daemon:
 
         Stateless like :meth:`chat` (the browser owns history). The model label
         is read from config by the HTTP layer and sent as a leading meta event
-        ahead of the first delta.
+        ahead of the first delta. Honors the same budget hard-stop as
+        :meth:`chat` so the streaming UI cannot spend past the cap.
         """
+        block = self._budget_block()
+        if block:
+            yield block["error"]
+            return
         self._ensure_agent()
         assert self.agent is not None
         if hasattr(self.agent.llm, "reset_usage"):
@@ -3916,16 +4175,22 @@ class Daemon:
         self._log("info", f"default model switched to {summary['model']}")
         return {"model": summary["model"], "provider": provider_id}
 
-    def approve(self, approval_id: str, mode: str = "once") -> bool:
+    def approve(self, approval_id: str, mode: str = "once",
+                approved_by: str = "") -> bool:
         """Approve a pending consequential action and resume waiting work.
 
         Two paths share this endpoint:
 
         * **Task queue** — a held plan step. Execute the approved tool with its
           stored args (via ``agent.approve``) and complete the waiting task.
+          No one-shot/session allow is granted (execution does not re-authorize).
         * **Chat** — a held tool call mid-conversation. Do *not* execute here;
-          grant a one-shot or session allow and emit a ``resume`` SSE so the
-          dashboard re-submits the conversation and the model completes the turn.
+          only after a *full* approval claim, grant a one-shot or session allow
+          and emit a ``resume`` SSE so the dashboard re-submits the conversation.
+
+        ``approved_by`` is required for dual-approval tools (four-eyes); defaults
+        to ``web-ui`` for single-signature tools. One-shot/session allows are
+        never granted on a partial dual-approval signature or on the task path.
         """
         self._ensure_agent()
         assert self.agent is not None
@@ -3934,13 +4199,7 @@ class Daemon:
             return False
         tool_name = pending.tool
         mode = (mode or "once").strip().lower()
-        if mode in ("chat", "always"):
-            # Skip re-approval for the rest of this daemon session.
-            self.agent.broker.allow_tool_for_session(tool_name)
-        elif mode == "once":
-            # Chat resume needs exactly one free authorize; task path executes
-            # immediately via agent.approve and does not need the one-shot.
-            self.agent.broker.allow_tool_once(tool_name)
+        signer = (approved_by or "").strip() or "web-ui"
 
         assert self.manager is not None
         waiting: list[Any] = []
@@ -3953,9 +4212,12 @@ class Daemon:
 
         if waiting:
             # Task path: execute the held action, then mark waiters completed.
-            # agent.approve pops the pending approval and runs the tool.
-            exec_result = self.agent.approve(approval_id, approved_by="web-ui")
-            if isinstance(exec_result, str) and exec_result.startswith("no pending"):
+            # Never grant one-shot/session allow — agent.approve runs the tool
+            # with stored args and does not consume a subsequent authorize().
+            exec_result = self.agent.approve(approval_id, approved_by=signer)
+            if isinstance(exec_result, str) and (
+                    exec_result.startswith("no pending")
+                    or exec_result.startswith("approved action denied")):
                 return False
             self._log("info", f"approved+executed {tool_name}: {str(exec_result)[:200]}")
             for task in waiting:
@@ -3985,12 +4247,16 @@ class Daemon:
                     self._log("error", f"failed to complete task {task.task_id}: {exc}")
             return True
 
-        # Chat path: resolve the approval without executing — the dashboard
-        # re-submits the conversation so the model re-requests the tool under
-        # the (one-shot or session) allow grant.
-        approved = self.agent.broker.approve(approval_id, approved_by="web-ui")
+        # Chat path: claim the approval first. Only after a *full* release
+        # (not a partial dual-approval signature) grant one-shot/session allow
+        # so the dashboard can re-submit and the model re-requests the tool.
+        approved = self.agent.broker.approve(approval_id, approved_by=signer)
         if approved is None:
             return False
+        if mode in ("chat", "always"):
+            self.agent.broker.allow_tool_for_session(tool_name)
+        elif mode == "once":
+            self.agent.broker.allow_tool_once(tool_name)
         self.emit_event("resume", {
             "approval_id": approval_id,
             "tool": tool_name,
@@ -4026,9 +4292,251 @@ class Daemon:
             for a in self.agent.broker.pending.values()
         ]
 
+    # ------------------------------------------------ preeminence surfaces
+    def persona_get(self) -> dict:
+        from .growth import user_model_card
+        return user_model_card()
+
+    def persona_set(self, updates: dict) -> dict:
+        from .persona import mirror_to_memory, save_persona
+        p = save_persona(updates or {})
+        self._ensure_agent()
+        if self.agent is not None:
+            mirror_to_memory(getattr(self.agent, "memory", None))
+        return {"persona": p, "ok": True}
+
+    def pulse_preview(self) -> dict:
+        from .pulse import build_digest
+        return build_digest(self)
+
+    def pulse(self, target: str | None = None) -> dict:
+        from .pulse import deliver_digest
+        dig = deliver_digest(self, target=target)
+        self.emit_event("pulse", {"approvals": dig.get("approvals"),
+                                  "delivered": dig.get("delivered")})
+        return dig
+
+    def growth_model(self) -> dict:
+        from .growth import user_model_card
+        return user_model_card()
+
+    def growth_skills(self) -> list:
+        from .growth import list_skills
+        self._ensure_agent()
+        return list_skills(self.agent)
+
+    def growth_proposals(self) -> list:
+        from .growth import list_proposals
+        self._bind_durable_surfaces()
+        return list_proposals(store=self.store)
+
+    def growth_evolve(self, limit: int = 3) -> dict:
+        from .growth import run_evolve
+        self._ensure_agent()
+        llm = getattr(self.agent, "llm", None) if self.agent else None
+        props = run_evolve(self.agent, llm=llm, limit=limit, store=self.store)
+        return {"proposals": props}
+
+    def growth_apply(self, proposal_id: str) -> dict:
+        from .growth import apply_proposal
+        self._ensure_agent()
+        return apply_proposal(self.agent, proposal_id, store=self.store)
+
+    def growth_reject(self, proposal_id: str) -> dict:
+        from .growth import reject_proposal
+        self._bind_durable_surfaces()
+        return reject_proposal(proposal_id, store=self.store)
+
+    def growth_rooms(self) -> list:
+        from .growth import list_rooms
+        return list_rooms()
+
+    def record_ttft(self, seconds: float) -> dict:
+        from .growth import record_ttft
+        return record_ttft(seconds)
+
+    def ttft_stats(self) -> dict:
+        from .growth import ttft_stats
+        return ttft_stats()
+
+    def channels_status(self) -> dict:
+        from . import channels_inbound as ch
+        from .pulse import channel_status
+        st = channel_status()
+        st["telegram_detail"] = ch.telegram_status()
+        return st
+
+    def telegram_configure(self, bot_token: str = "", chat_id: str = "",
+                           enabled: bool = True,
+                           use_env_ref: bool = False) -> dict:
+        """One-click Telegram enable from Settings."""
+        from . import channels_inbound as ch
+        status = ch.configure_telegram(
+            bot_token=bot_token, chat_id=chat_id, enabled=enabled,
+            use_env_ref=use_env_ref)
+        # Probe when token present
+        probe = ch.telegram_get_me() if status.get("has_token") else {}
+        status["probe"] = probe
+        self._log("info", f"telegram configured enabled={status.get('enabled')} "
+                          f"has_token={status.get('has_token')}")
+        return status
+
+    def telegram_disable(self) -> dict:
+        from . import channels_inbound as ch
+        return ch.disable_telegram()
+
+    def telegram_status(self) -> dict:
+        from . import channels_inbound as ch
+        st = ch.telegram_status()
+        if st.get("has_token"):
+            st["probe"] = ch.telegram_get_me()
+        return st
+
+    def browser_snapshot(self) -> dict:
+        """Last browser session view for the computer-use pane."""
+        try:
+            from .browser import _SESSION
+            return {
+                "url": getattr(_SESSION, "url", "") or "",
+                "title": getattr(_SESSION, "title", "") or "",
+                "text_preview": (getattr(_SESSION, "text", "") or "")[:800],
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    def _channel_chat(self, messages: list[dict]) -> str:
+        """Governed reply for inbound messaging (uses chat_agent when possible)."""
+        self._ensure_agent()
+        assert self.agent is not None
+        # Prefer tool-calling agent loop for capability parity with Deck.
+        try:
+            events = list(self.chat_agent(messages))
+            finals = [e for e in events if e.get("type") == "final"]
+            if finals:
+                return str(finals[-1].get("text") or "")
+            texts = [e.get("text") for e in events if e.get("text")]
+            if texts:
+                return str(texts[-1])
+        except Exception:
+            pass
+        res = self.chat(messages)
+        return str(res.get("text") or "")
+
+    def telegram_webhook(self, update: dict) -> dict:
+        from . import channels_inbound as ch
+        msg = ch.parse_telegram_update(update)
+        if msg is None:
+            return {"ok": True, "ignored": True}
+        return self._dispatch_inbound(msg)
+
+    def slack_events(self, payload: dict, raw: bytes = b"",
+                     headers=None) -> dict:
+        from . import channels_inbound as ch
+        from . import config as cfg_mod
+        secret = ((cfg_mod.load_config().get("agents") or {})
+                  .get("gateways") or {}).get("slack", {}).get("signing_secret", "")
+        if secret and headers is not None:
+            ts = headers.get("X-Slack-Request-Timestamp") or headers.get(
+                "x-slack-request-timestamp") or ""
+            sig = headers.get("X-Slack-Signature") or headers.get(
+                "x-slack-signature") or ""
+            if not ch.verify_slack_signature(
+                    secret, str(ts), raw or b"", str(sig)):
+                return {"ok": False, "error": "bad signature"}
+        parsed = ch.parse_slack_event(payload)
+        if isinstance(parsed, dict) and "challenge" in parsed:
+            return parsed
+        if parsed is None:
+            return {"ok": True, "ignored": True}
+        return self._dispatch_inbound(parsed)
+
+    def _dispatch_inbound(self, msg) -> dict:
+        from . import channels_inbound as ch
+        text = msg.text.strip()
+        # Channel-native approve / deny
+        if text.upper().startswith("APPROVE_CMD:") or text.lower().startswith("approve "):
+            # handle_inbound may return APPROVE_CMD — or raw command
+            pass
+        base = f"http://127.0.0.1:{self.status_port}"
+        if self.status_host not in ("127.0.0.1", "0.0.0.0", "::"):
+            base = f"http://{self.status_host}:{self.status_port}"
+
+        def _chat(hist):
+            return self._channel_chat(hist)
+
+        # Direct approve/deny commands
+        import re as _re
+        m = _re.match(r"(?i)^(?:/)?approve(?:\s+|:)(\S+)", text)
+        if m:
+            ok = self.approve(m.group(1), mode="once", approved_by=msg.sender)
+            reply = f"{'Approved' if ok else 'Could not approve'} {m.group(1)}"
+            if msg.channel == "telegram":
+                ch.telegram_send(reply, msg.chat_id)
+            elif msg.channel == "slack":
+                ch.slack_reply(reply, msg.chat_id)
+            return {"ok": ok, "reply": reply}
+        m = _re.match(r"(?i)^(?:/)?deny(?:\s+|:)(\S+)", text)
+        if m:
+            ok = self.deny_approval(m.group(1))
+            reply = f"{'Denied' if ok else 'Could not deny'} {m.group(1)}"
+            if msg.channel == "telegram":
+                ch.telegram_send(reply, msg.chat_id)
+            elif msg.channel == "slack":
+                ch.slack_reply(reply, msg.chat_id)
+            return {"ok": ok, "reply": reply}
+
+        self._ensure_agent()
+        approvals_before = set(self.agent.broker.pending.keys()) if self.agent else set()
+        reply = ch.handle_inbound(
+            msg, _chat, base_url=base,
+            approvals=None, store=self.store)
+        # Attach any newly held approvals
+        new_appr = []
+        if self.agent:
+            for aid, pa in self.agent.broker.pending.items():
+                if aid not in approvals_before:
+                    new_appr.append({
+                        "approval_id": aid, "tool": pa.tool, "preview": pa.preview})
+        if new_appr:
+            links = []
+            for a in new_appr:
+                link = ch.approval_deep_link(base, a["approval_id"])
+                links.append(f"• {a['tool']}: approve {a['approval_id']}\n  {link}")
+            reply += "\n\n⏸ Held for your approval:\n" + "\n".join(links)
+            reply += "\n\nReply `approve <id>` or `deny <id>`."
+        if msg.channel == "telegram":
+            ch.telegram_send(reply, msg.chat_id)
+        elif msg.channel == "slack":
+            ch.slack_reply(reply, msg.chat_id)
+        self.emit_event("channel", {
+            "channel": msg.channel, "chat_id": msg.chat_id,
+            "sender": msg.sender, "preview": text[:120]})
+        return {"ok": True, "reply": reply[:500]}
+
+    def _telegram_poll_tick(self) -> None:
+        """Long-poll free: pull Telegram updates each idle tick when enabled."""
+        from . import channels_inbound as ch
+        if not ch.telegram_enabled():
+            return
+        offset = int(getattr(self, "_tg_offset", 0) or 0)
+        updates = ch.telegram_poll_updates(offset=offset, timeout=0)
+        for u in updates:
+            uid = int(u.get("update_id") or 0)
+            if uid >= offset:
+                self._tg_offset = uid + 1
+            try:
+                self.telegram_webhook(u)
+            except Exception as exc:
+                self._log("warning", f"telegram update failed: {exc}")
+
     def resume(self, task_id: str) -> Any:
-        """Re-process a task that is waiting approval. Called after a human approves
-        held actions so the daemon can continue the cycle."""
+        """Mark a waiting-approval task completed after held actions were approved.
+
+        Never executes still-pending tools. Execution must go through
+        :meth:`approve` / :meth:`PraxisAgent.approve`, which enforce dual-approval,
+        kill-switch, and egress. If any approvals remain pending for this cycle,
+        the task stays ``waiting_approval``.
+        """
         if self.agent is None:
             self._ensure_agent()
         assert self.agent is not None
@@ -4038,32 +4546,19 @@ class Daemon:
             raise KeyError(task_id)
         if task.status != "waiting_approval":
             return task
-        # Execute any fully-approved actions for this task directly before
-        # re-running the agent, because re-running the planner would re-queue
-        # the same consequential approval rather than completing it.
-        report_actions = []
-        for pa in list(self.agent.broker.pending.values()):
-            if pa.cycle_id != task.cycle_id:
-                continue
-            tool = self.agent.registry.get(pa.tool)
-            if tool is None:
-                continue
-            try:
-                result = tool.run(**pa.args)
-            except Exception as exc:
-                assert self.store is not None
-                self.store.update_task(
-                    task_id, status="failed", error=f"{pa.tool} failed: {exc}",
-                )
-                return self.manager.get(task_id)
-            report_actions.append(f"[send] {pa.tool} -> {result}")
-        # Mark the task completed once the approved action has run.
+        pending_for_cycle = [
+            pa for pa in self.agent.broker.pending.values()
+            if pa.cycle_id == task.cycle_id
+        ]
+        if pending_for_cycle:
+            # Still held — do not run unapproved tools.
+            return task
         assert self.store is not None
         self.store.update_task(
             task_id, status="completed", error="",
             result_json=json.dumps({
                 "cycle_id": task.cycle_id,
-                "actions": report_actions,
+                "actions": ["[approved] held action(s) already executed"],
                 "pending_approvals": [],
             })
         )

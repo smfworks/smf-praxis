@@ -61,14 +61,16 @@ def _extract_title(html: str) -> str:
 
 
 def _http_get(url: str) -> str:
-    import urllib.error
-    import urllib.request
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "PraxisAgent/0.19 (+browser)"})
+    """Stdlib fetch used when Playwright is unavailable; SSRF-gated like KB."""
+    from .wiki_safe import UnsafeSourceError, fetch_url as _safe_fetch, validate_uri
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.read(2_000_000).decode("utf-8", errors="replace")
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        validate_uri(url)
+        return _safe_fetch(
+            url, timeout=20.0, max_bytes=2_000_000,
+            user_agent="PraxisAgent/0.19 (+browser)")
+    except UnsafeSourceError as exc:
+        return f"<title>error</title>blocked {url}: {exc}"
+    except OSError as exc:
         return f"<title>error</title>error fetching {url}: {exc}"
 
 
@@ -135,16 +137,28 @@ class BrowserSession:
         return bool(self._on_worker(self._start_playwright))
 
     def navigate(self, url: str) -> str:
-        from urllib.parse import urlparse
-        if urlparse(url).scheme not in ("http", "https"):
-            return f"[browser] unsupported URL scheme: {url!r}"
+        from .wiki_safe import UnsafeSourceError, validate_uri
+        try:
+            validate_uri(url)
+        except UnsafeSourceError as exc:
+            return f"[browser] blocked: {exc}"
         with self._lock:
             if self._have_browser():
                 def _go() -> tuple[str, str, str]:
                     self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    return (self._page.url, self._page.title(),
+                    final = self._page.url
+                    # Re-check after Playwright follows redirects.
+                    try:
+                        validate_uri(final)
+                    except UnsafeSourceError as exc:
+                        return (final, "blocked", f"redirect blocked: {exc}")
+                    return (final, self._page.title(),
                             self._page.inner_text("body")[:20000])
                 self.url, self.title, self.text = self._on_worker(_go)
+                if self.title == "blocked" or (
+                        isinstance(self.text, str)
+                        and self.text.startswith("redirect blocked:")):
+                    return f"[browser] blocked after redirect: {self.text}"
             else:
                 html = _http_get(url)
                 self.url = url

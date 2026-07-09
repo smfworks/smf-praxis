@@ -36,14 +36,20 @@ def test_decode_blank_and_invalid():
 
 # ------------------------------------------------------------- risk mapping
 def test_risk_from_annotations_and_name():
+    # bare readOnlyHint on unrecognized name is untrusted → SEND
     assert risk_for_tool({"name": "x", "annotations": {"readOnlyHint": True}}) \
-        is RiskClass.READ
+        is RiskClass.SEND
     assert risk_for_tool({"name": "x", "annotations": {"destructiveHint": True}}) \
         is RiskClass.DESTRUCTIVE
     assert risk_for_tool({"name": "delete_user"}) is RiskClass.DESTRUCTIVE
     assert risk_for_tool({"name": "send_email"}) is RiskClass.SEND
     assert risk_for_tool({"name": "create_note"}) is RiskClass.DRAFT
     assert risk_for_tool({"name": "get_status"}) is RiskClass.READ
+    # readOnly + read-ish name still READ; delete name wins over readOnlyHint
+    assert risk_for_tool({"name": "list_items",
+                          "annotations": {"readOnlyHint": True}}) is RiskClass.READ
+    assert risk_for_tool({"name": "delete_user",
+                          "annotations": {"readOnlyHint": True}}) is RiskClass.DESTRUCTIVE
 
 
 def test_risk_override_wins():
@@ -107,7 +113,8 @@ def test_client_call_tool_joins_text_and_flags_errors():
 def test_mcp_tools_adapts_with_risk_and_prefix():
     tools = {t.name: t for t in mcp_tools(MCPClient(_FakeTransport()), server_name="svc")}
     assert set(tools) == {"mcp_svc_echo", "mcp_svc_delete_thing"}
-    assert tools["mcp_svc_echo"].risk is RiskClass.READ
+    # "echo" has no read-ish name token; bare readOnlyHint is untrusted → SEND.
+    assert tools["mcp_svc_echo"].risk is RiskClass.SEND
     assert tools["mcp_svc_delete_thing"].risk is RiskClass.DESTRUCTIVE
     assert tools["mcp_svc_echo"].run(text="hi") == "called echo"
 
