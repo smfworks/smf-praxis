@@ -62,7 +62,8 @@ def _extract_title(html: str) -> str:
 
 def _http_get(url: str) -> str:
     """Stdlib fetch used when Playwright is unavailable; SSRF-gated like KB."""
-    from .wiki_safe import UnsafeSourceError, fetch_url as _safe_fetch, validate_uri
+    from .wiki_safe import UnsafeSourceError, validate_uri
+    from .wiki_safe import fetch_url as _safe_fetch
     try:
         validate_uri(url)
         return _safe_fetch(

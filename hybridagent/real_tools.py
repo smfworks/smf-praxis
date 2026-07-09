@@ -271,7 +271,8 @@ def fetch_url(url: str, **_kw) -> str:
     Blocks private/loopback/metadata hosts (same allowlist as KB ingest) and
     re-validates redirect hops so SSRF via open redirects is closed.
     """
-    from .wiki_safe import UnsafeSourceError, fetch_url as _safe_fetch, validate_uri
+    from .wiki_safe import UnsafeSourceError, validate_uri
+    from .wiki_safe import fetch_url as _safe_fetch
 
     try:
         validate_uri(url)

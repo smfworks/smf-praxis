@@ -95,8 +95,8 @@ def build_digest(daemon: "Daemon") -> dict[str, Any]:
 def deliver_digest(daemon: "Daemon", target: str | None = None) -> dict:
     """Build and send a pulse digest to the configured preferred channel."""
     dig = build_digest(daemon)
-    from .persona import load_persona
     from .gateways import deliver
+    from .persona import load_persona
     p = load_persona()
     dest = target or p.get("preferred_channel") or ""
     if dest in ("", "dashboard", "local"):

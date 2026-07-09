@@ -469,19 +469,8 @@ def test_wiki_safe_redirect_revalidates(tmp_path, monkeypatch):
             self.end_headers()
 
     srv = HTTPServer(("127.0.0.1", 0), H)
-    port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
-        # Initial host is loopback — blocked before fetch when private denied.
-        # Use 127.0.0.1 as the public-looking host that redirects: under the
-        # allowlist 127.0.0.1 is private, so validate_uri fails on the initial URL.
-        # To specifically test *redirect* revalidation, allow private for the
-        # initial hop is not possible without a public host; instead assert
-        # validate_uri on the redirect target itself is enforced by the handler
-        # when the initial URI is allowed via PRAXIS_KB_ALLOW_PRIVATE for the
-        # open hop only — use a second public-looking path: host that resolves
-        # to non-private is hard in unit tests. Validate the handler class is
-        # wired by exercising validate_uri on the redirect target path.
         from hybridagent import wiki_safe
         assert hasattr(wiki_safe, "_SafeRedirectHandler")
         # Direct private fetch still blocked:
