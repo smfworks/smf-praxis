@@ -5,7 +5,7 @@ Apply reconstructs a :class:`~hybridagent.evolution.Proposal` from stored fields
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from . import config as cfg
 from .logging_util import get_logger
