@@ -35,35 +35,35 @@
   var MISSIONS = [
     {
       id: "research",
-      title: "1 · Summarize a URL",
-      desc: "Paste any link — Praxis researches and cites sources.",
-      prompt: "Summarize https://example.com for me in 5 bullets with sources.",
-      tag: "research",
+      title: "1 · Research → brief",
+      desc: "Web research with citations — the primary look-up job.",
+      prompt: "Research the latest open-source agent runtimes and summarize in 5 bullets with sources.",
+      tag: "job: research",
       mode: "auto"
     },
     {
       id: "hold",
-      title: "2 · Draft an email (held)",
-      desc: "Write a professional note. Sending stays behind your approval.",
+      title: "2 · Draft behind approval",
+      desc: "Write a professional draft. Send stays held for you.",
       prompt: "Draft a short follow-up email to Alex thanking them for the meeting and proposing next Tuesday. Do not send it.",
-      tag: "safe send",
+      tag: "job: draft",
       mode: "chat"
     },
     {
+      id: "do",
+      title: "3 · Scheduled colleague",
+      desc: "Queue a goal the daemon can also run on a cron schedule.",
+      prompt: "Queue a task: scan for urgent follow-ups and draft a short status note (do not send).",
+      tag: "job: schedule",
+      mode: "do"
+    },
+    {
       id: "ask",
-      title: "3 · Ask your knowledge base",
+      title: "Bonus · Ask your knowledge base",
       desc: "Grounded Q&A over notes Praxis already knows.",
       prompt: "According to my knowledge base, what is Praxis and how does governance work?",
       tag: "look up",
       mode: "ask"
-    },
-    {
-      id: "do",
-      title: "4 · Queue background work",
-      desc: "Hand off a goal to the autonomous task queue.",
-      prompt: "Queue a task: scan for urgent follow-ups and draft a short status note.",
-      tag: "work on this",
-      mode: "do"
     }
   ];
 

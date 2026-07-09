@@ -803,6 +803,94 @@ def cmd_cron(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_jobs(args: argparse.Namespace) -> int:
+    """List or run the three first-class SMF vertical jobs."""
+    from .jobs import get_job, list_jobs, run_research, schedule_colleague
+    action = getattr(args, "jobs_action", None) or "list"
+    if action == "list":
+        for j in list_jobs():
+            print(f"{j['id']:10}  {j['title']}")
+            print(f"            {j['summary']}")
+            print(f"            risk: {j['risk_note']}")
+            print(f"            e.g.  {j['example_prompt'][:70]}...")
+            print()
+        print('run:  praxis jobs run research --query "..."')
+        print('      praxis jobs run draft --prompt "..."   (needs running daemon for tools)')
+        print('      praxis jobs run schedule --goal "..." --schedule "0 9 * * 1-5"')
+        return 0
+    if action == "run":
+        job_id = args.job
+        job = get_job(job_id)
+        if job is None:
+            print(f"unknown job: {job_id} (try: research | draft | schedule)")
+            return 1
+        if job_id == "research":
+            from .daemon import Daemon
+            d = Daemon.from_env()
+            d._ensure_agent()
+            q = args.query or job.example_prompt
+            res = run_research(d, q)
+            print(res.get("text") or res.get("error") or res)
+            if res.get("citations"):
+                print("citations:", ", ".join(res["citations"][:8]))
+            return 0 if not res.get("blocked") else 2
+        if job_id == "draft":
+            from .daemon import Daemon
+            d = Daemon.from_env()
+            d._ensure_agent()
+            prompt = args.prompt or job.example_prompt
+            final = ""
+            for ev in d.chat_agent([{"role": "user", "content": prompt}]):
+                if ev.get("type") == "final":
+                    final = ev.get("text") or final
+                elif ev.get("type") == "approval":
+                    print(f"held: {ev.get('tool')} — approve in the Command Deck")
+                elif ev.get("type") == "error":
+                    print("error:", ev.get("error"))
+                    return 2
+            print(final or "(no final text; check approvals if a send was held)")
+            return 0
+        if job_id == "schedule":
+            from .persistence import Store
+            goal = args.goal or job.example_prompt
+            schedule = args.schedule or "0 9 * * 1-5"
+            job_row = schedule_colleague(Store.open(), goal=goal, schedule=schedule,
+                                         name=args.name or "colleague")
+            if job_row.get("error"):
+                print("error:", job_row["error"])
+                return 1
+            print(f"scheduled {job_row.get('job_id')} '{schedule}' :: {goal[:60]}")
+            print("(daemon must be running for cron ticks)")
+            return 0
+    print("usage: praxis jobs list | praxis jobs run {research|draft|schedule} ...")
+    return 1
+
+
+def cmd_budget(args: argparse.Namespace) -> int:
+    """Show or set the spend budget hard-stop."""
+    from .persistence import Store
+    store = Store.open()
+    action = getattr(args, "budget_action", None) or "status"
+    if action == "set":
+        store.set_budget_limit(float(args.limit))
+        b = store.get_budget()
+        print(f"limit set to ${b['limit_usd']:.2f} (spent ${b['spent_usd']:.4f})")
+        return 0
+    if action == "reset":
+        store.reset_budget()
+        b = store.get_budget()
+        print(f"spend reset (limit ${b['limit_usd']:.2f})")
+        return 0
+    b = store.get_budget()
+    over = b["limit_usd"] > 0 and b["spent_usd"] >= b["limit_usd"]
+    print(f"limit=${b['limit_usd']:.2f}  spent=${b['spent_usd']:.4f}  "
+          f"runs={b['runs']}  over={over}")
+    if b["limit_usd"] <= 0:
+        print("hint: set a cap with  praxis budget set 5")
+    return 0
+
+
 def cmd_describe(args: argparse.Namespace) -> int:
     from .ingest import extract_text
     from .multimodal import MediaClient
@@ -1547,6 +1635,26 @@ def build_parser() -> argparse.ArgumentParser:
     pcre.add_argument("job_id")
     cronsub.add_parser("list", help="list cron jobs (default)")
     pcron.set_defaults(func=cmd_cron)
+
+    pjobs = sub.add_parser("jobs", help="first-class vertical jobs (research/draft/schedule)")
+    jsub = pjobs.add_subparsers(dest="jobs_action")
+    jsub.add_parser("list", help="list jobs (default)")
+    jrun = jsub.add_parser("run", help="run a job")
+    jrun.add_argument("job", choices=["research", "draft", "schedule"])
+    jrun.add_argument("--query", default="", help="research query")
+    jrun.add_argument("--prompt", default="", help="draft prompt")
+    jrun.add_argument("--goal", default="", help="schedule goal")
+    jrun.add_argument("--schedule", default="0 9 * * 1-5", help="cron schedule")
+    jrun.add_argument("--name", default="colleague", help="cron job name")
+    pjobs.set_defaults(func=cmd_jobs)
+
+    pbud = sub.add_parser("budget", help="spend budget hard-stop status/set/reset")
+    bsub = pbud.add_subparsers(dest="budget_action")
+    bsub.add_parser("status", help="show budget (default)")
+    bset = bsub.add_parser("set", help="set USD cap")
+    bset.add_argument("limit", type=float)
+    bsub.add_parser("reset", help="zero spent counter")
+    pbud.set_defaults(func=cmd_budget)
 
     ptc = sub.add_parser("task-create", help="create a persistent resumable task")
     ptc.add_argument("goal", help="goal text")
