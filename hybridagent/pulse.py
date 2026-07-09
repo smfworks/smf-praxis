@@ -76,8 +76,9 @@ def build_digest(daemon: "Daemon") -> dict[str, Any]:
 
     # Skills count
     try:
-        if daemon.agent and getattr(daemon.agent, "skills", None):
-            n = len(list(daemon.agent.skills.list() or []))
+        skills_lib = getattr(daemon.agent, "skills", None) if daemon.agent else None
+        if skills_lib is not None:
+            n = len(list(skills_lib.list() or []))
             lines.append(f"Skills installed: {n}")
     except Exception:
         pass

@@ -176,7 +176,7 @@ async def run_stdio_server(registry: ToolRegistry | None = None,
         try:
             from . import config as cfg
             from .persistence import Store
-            store = Store.open(cfg.home() / "praxis.db")
+            store = Store.open(cfg.home_dir() / "praxis.db")
             broker = GovernanceBroker(
                 policy=GovernancePolicy(allowed_tools=set(registry.names())),
                 store=store)
