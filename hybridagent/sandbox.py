@@ -11,7 +11,7 @@ tool call can run with progressively stronger isolation:
   and a wall-clock timeout. Used automatically when Docker is present and the
   backend is set to ``docker``/``auto``.
 
-Selected via ``agents.sandbox.backend`` (local|docker|auto) in config. ``auto``
+Selected via ``agents.sandbox.backend`` (local|docker|auto) in config. Default is ``auto`` (Docker when available, else local). ``auto``
 prefers Docker when the daemon can reach it, else falls back to local with a
 logged warning — fail-closed in spirit (stronger when possible) without breaking
 a host that has no Docker.
@@ -67,7 +67,7 @@ def _tool_available(name: str) -> bool:
 def select_backend() -> str:
     """Resolve the effective backend from config, honoring availability."""
     block = _config_block()
-    choice = (block.get("backend") or "local").strip().lower()
+    choice = (block.get("backend") or "auto").strip().lower()
     if choice not in _VALID_BACKENDS:
         choice = "local"
     if choice == "docker":
@@ -253,7 +253,7 @@ def backend_status() -> dict:
     """Report the configured + effective backend (for `praxis doctor` / dashboard)."""
     block = _config_block()
     return {
-        "configured": (block.get("backend") or "local"),
+        "configured": (block.get("backend") or "auto"),
         "effective": select_backend(),
         "docker_available": _docker_available(),
         "image": block.get("image", _DEFAULT_IMAGE),

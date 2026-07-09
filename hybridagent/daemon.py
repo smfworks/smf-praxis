@@ -1903,7 +1903,12 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length).decode()
                 payload = json.loads(body)
-                task_id = self.daemon.submit(payload["goal"], max_attempts=payload.get("max_attempts", 3))
+                try:
+                    task_id = self.daemon.submit(
+                        payload["goal"], max_attempts=payload.get("max_attempts", 3))
+                except RuntimeError as exc:
+                    self._json_response({"error": str(exc), "blocked": True})
+                    return
                 result = json.dumps({"task_id": task_id}).encode()
                 self.send_response(202)
                 self.send_header("Content-Type", "application/json")
@@ -2952,6 +2957,19 @@ class Daemon:
 
     def _run_task(self, task) -> None:
         assert self.manager is not None
+        block = self._budget_block()
+        if block:
+            self.manager.store.update_task(
+                task.task_id, status="failed",
+                error=block["error"], output=block["error"])
+            self.state.tasks_failed += 1
+            self.emit_event("task", {
+                "task_id": task.task_id, "status": "failed",
+                "goal": task.goal, "output": block["error"],
+                "error": block["error"],
+            })
+            self._log("warning", f"task {task.task_id} blocked: budget cap")
+            return
         self.emit_event("task", {"task_id": task.task_id, "status": "running", "goal": task.goal})
         self._log("info", f"running task {task.task_id}: {task.goal}")
         updated = self.manager.run_once(task.task_id, self.agent)
@@ -2977,7 +2995,15 @@ class Daemon:
 
     # -------------------------------------------------------------- external API
     def submit(self, goal: str, max_attempts: int = 3) -> str:
-        """Enqueue a new task. Safe to call from the CLI while the daemon runs."""
+        """Enqueue a new task. Safe to call from the CLI while the daemon runs.
+
+        Raises ``RuntimeError`` when the spend budget cap is reached so callers
+        (HTTP / CLI) can surface a clear blocked response without creating a
+        doomed task.
+        """
+        block = self._budget_block()
+        if block:
+            raise RuntimeError(block["error"])
         if self.agent is None:
             self._ensure_agent()
         assert self.manager is not None
@@ -3240,7 +3266,37 @@ class Daemon:
         }
 
     # ------------------------------------------------------- inference control
+    def _budget_block(self) -> dict | None:
+        """Return a blocked payload when the spend cap is reached; else None.
+
+        Used by chat, ask, research, submit, and agent_run so the cap is a hard
+        stop everywhere — not only on A2A agent_run.
+        """
+        if self.store is None:
+            return None
+        try:
+            b = self.store.get_budget()
+        except Exception:
+            return None
+        if not (b.get("limit_usd", 0) > 0 and b.get("spent_usd", 0) >= b["limit_usd"]):
+            return None
+        self.emit_event("alert", {"kind": "budget_exceeded",
+                                  "spent_usd": b["spent_usd"],
+                                  "limit_usd": b["limit_usd"]})
+        self._log("warning", "blocked: budget cap reached")
+        return {
+            "blocked": True,
+            "error": (
+                f"Budget cap reached (${b['spent_usd']:.4f} / "
+                f"${b['limit_usd']:.2f}). Raise or reset the budget in "
+                "Inference Control before continuing."
+            ),
+            "spent_usd": b["spent_usd"],
+            "limit_usd": b["limit_usd"],
+        }
+
     def budget_status(self) -> dict:
+
         if self.store is None:
             return {"limit_usd": 0.0, "spent_usd": 0.0, "runs": 0, "over": False}
         b = self.store.get_budget()
@@ -3447,6 +3503,12 @@ class Daemon:
 
     def ask(self, question: str, k: int = 5) -> Any:
         """Answer a question grounded in the agent's KB and memory."""
+        from types import SimpleNamespace
+        block = self._budget_block()
+        if block:
+            return SimpleNamespace(
+                text=block["error"], abstained=True, citations=[],
+                sources_used=0, contradictions=[], blocked=True)
         self._ensure_agent()
         assert self.agent is not None
         return self.agent.ask(question, k=k, refresh_wiki=False)
@@ -3460,6 +3522,10 @@ class Daemon:
         synthesized answer plus the underlying result list so the UI can show
         both the prose and its sources.
         """
+        block = self._budget_block()
+        if block:
+            return {"text": block["error"], "error": block["error"],
+                    "blocked": True, "abstained": True, "citations": [], "results": []}
         self._ensure_agent()
         assert self.agent is not None
         query = (query or "").strip()
@@ -3511,8 +3577,9 @@ class Daemon:
     def _bill_chat(self) -> None:
         """Accrue an interactive chat's real token cost to the spend budget.
 
-        Like agent_run, but chat is user-driven, so it only *accrues* spend — it
-        does not increment the autonomous-run counter or block on the cap.
+        Accrues spend for interactive turns. Blocking is handled by
+        :meth:`_budget_block` before chat/ask/research/submit start; this only
+        records usage after a turn completes (without incrementing run count).
         """
         if self.store is None or self.agent is None:
             return
@@ -3532,6 +3599,9 @@ class Daemon:
         the daemon is stateless here so the browser owns history. Returns the
         assistant reply plus the model that produced it.
         """
+        block = self._budget_block()
+        if block:
+            return {"text": block["error"], "model": "budget", "blocked": True}
         self._ensure_agent()
         assert self.agent is not None
         if hasattr(self.agent.llm, "reset_usage"):
@@ -3572,6 +3642,10 @@ class Daemon:
         ``tool_call`` / ``tool_result`` / ``approval`` / ``denied`` / ``final`` /
         ``error``.
         """
+        block = self._budget_block()
+        if block:
+            yield {"type": "error", "error": block["error"], "blocked": True}
+            return
         self._ensure_agent()
         assert self.agent is not None
         from .chat_agent import ChatEngine, GovernedChatAgent

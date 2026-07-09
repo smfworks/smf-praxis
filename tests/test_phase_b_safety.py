@@ -99,18 +99,18 @@ def test_sandbox_local_exec(tmp_path, monkeypatch):
     assert r.ok and "hello" in r.stdout
 
 
-def test_sandbox_select_backend_defaults_local(tmp_path, monkeypatch):
+def test_sandbox_select_backend_defaults_auto(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     from hybridagent.sandbox import select_backend
-    # no config -> local
-    assert select_backend() == "local"
+    # no config -> auto (docker when available, else local)
+    assert select_backend() in ("local", "docker")
 
 
 def test_sandbox_status_shape(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     from hybridagent.sandbox import backend_status
     st = backend_status()
-    assert st["configured"] == "local"
+    assert st["configured"] == "auto"
     assert "docker_available" in st
 
 

@@ -131,6 +131,33 @@ def _check_wiki(store=None) -> Check:
                  "or `praxis wiki-add <uri>` / `praxis ingest <file>`.")
 
 
+
+def _check_budget(store=None) -> Check:
+    """Spend cap: set = controlled; unset = unlimited (warn for production)."""
+    try:
+        if store is None:
+            from .persistence import Store
+            store = Store.open()
+        b = store.get_budget()
+    except Exception as exc:  # noqa: BLE001
+        return Check("budget", "Spend budget", "off", f"unavailable: {exc}")
+    limit = float(b.get("limit_usd") or 0)
+    spent = float(b.get("spent_usd") or 0)
+    if limit > 0 and spent >= limit:
+        return Check(
+            "budget", "Spend budget", "warn",
+            f"cap reached (${spent:.4f} / ${limit:.2f}) — inference is blocked",
+            "Raise or reset the budget in Inference Control / `praxis budget`.")
+    if limit > 0:
+        return Check(
+            "budget", "Spend budget", "ok",
+            f"${spent:.4f} spent of ${limit:.2f} cap (hard-stop enforced)")
+    return Check(
+        "budget", "Spend budget", "off",
+        "no cap set (unlimited spend)",
+        "Set a USD cap in the Inference panel or `praxis budget set 5`.")
+
+
 def _check_sandbox() -> Check:
     """Report the execution-isolation backend (G6)."""
     try:
@@ -143,14 +170,13 @@ def _check_sandbox() -> Check:
         return Check("sandbox", "Execution sandbox", "ok",
                      "Docker isolation active (network="
                      f"{st['network']}, image={st['image']})")
-    if st["configured"] in ("docker", "auto") and not st["docker_available"]:
+    if st.get("configured") in ("docker", "auto") and not st.get("docker_available"):
         return Check("sandbox", "Execution sandbox", "warn",
-                     "configured for Docker but Docker is unavailable; "
-                     "running locally (path-confined only)",
-                     "Install/start Docker, or set agents.sandbox.backend=local.")
+                     "auto/docker prefers Docker but it is unavailable; using local",
+                     "Start Docker for isolation, or set agents.sandbox.backend=local.")
     return Check("sandbox", "Execution sandbox", "off",
                  "local backend (path-confined; no process/network isolation)",
-                 "Set agents.sandbox.backend=docker for container isolation.")
+                 "Docker auto-selects when available (agents.sandbox.backend=auto).")
 
 
 def run_checks(store=None) -> list[Check]:
@@ -163,6 +189,7 @@ def run_checks(store=None) -> list[Check]:
         _check_embed(),
         _check_skills(),
         _check_sandbox(),
+        _check_budget(store),
     ]
 
 
