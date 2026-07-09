@@ -114,6 +114,12 @@ def test_daemon_approve_executes_waiting_task(tmp_store, mock_agent):
     assert mock_agent._send_counter["n"] == 1  # type: ignore[attr-defined]
     blob = (task.output or "") + " " + str(getattr(task, "result", "") or "")
     assert "hello-world" in blob or "sent:" in blob
+    # Task path must NOT leave a one-shot grant (execution bypasses authorize).
+    assert "send" not in mock_agent.broker._session_one_shot_tools
+    # Next authorize of the same tool still requires approval.
+    d = mock_agent.broker.authorize(
+        "a", "send", RiskClass.SEND, {"message": "another"})
+    assert d.verdict is Verdict.NEEDS_APPROVAL
 
 
 def test_daemon_approve_chat_path_emits_resume_without_execute(tmp_store, mock_agent):

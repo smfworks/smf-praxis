@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .broker import RiskClass
+from .broker import GovernanceBroker, GovernancePolicy, RiskClass, Verdict
 from .tools import Tool, ToolRegistry
 
 if TYPE_CHECKING:
@@ -57,23 +57,35 @@ _DESTRUCTIVE_HINTS = {"delete", "remove", "drop", "destroy", "kill"}
 
 
 def risk_from_annotations(name: str, annotations: Any | None) -> RiskClass:
-    """Best-effort RiskClass mapping from MCP ToolAnnotations + tool name."""
-    if annotations is not None:
-        if getattr(annotations, "readOnlyHint", False):
-            return RiskClass.READ
-        if getattr(annotations, "destructiveHint", False):
-            return RiskClass.DESTRUCTIVE
-    lowered = name.lower()
+    """Best-effort RiskClass mapping from MCP ToolAnnotations + tool name.
+
+    External tools are untrusted. Name heuristics for SEND/DESTRUCTIVE always
+    win over a remote ``readOnlyHint`` (which cannot demote a high-risk name).
+    Unrecognized tools default to SEND so the broker holds them for approval.
+    """
+    lowered = (name or "").lower()
     for hint in _DESTRUCTIVE_HINTS:
         if hint in lowered:
             return RiskClass.DESTRUCTIVE
     for hint in _SEND_HINTS:
         if hint in lowered:
             return RiskClass.SEND
+    if annotations is not None:
+        if getattr(annotations, "destructiveHint", False):
+            return RiskClass.DESTRUCTIVE
+        # readOnlyHint is advisory: only trust it when the name also looks read-ish.
+        if getattr(annotations, "readOnlyHint", False):
+            for hint in _READ_HINTS:
+                if hint in lowered:
+                    return RiskClass.READ
     for hint in _DRAFT_HINTS:
         if hint in lowered:
             return RiskClass.DRAFT
-    return RiskClass.READ
+    for hint in _READ_HINTS:
+        if hint in lowered:
+            return RiskClass.READ
+    # Unannotated / unrecognized external tool -> hold for approval.
+    return RiskClass.SEND
 
 
 def annotations_from_risk(risk: RiskClass, title: str = "") -> ToolAnnotations:
@@ -102,10 +114,21 @@ def _tool_to_mcp(tool: Tool) -> MCPTool:
 
 
 def build_mcp_server(registry: ToolRegistry, name: str = "praxis",
-                     version: str = "0.19.12") -> MCPServer:
-    """Build an MCP server that advertises and runs every tool in ``registry``."""
+                     version: str = "0.19.12",
+                     broker: GovernanceBroker | None = None) -> MCPServer:
+    """Build an MCP server that advertises and runs every tool in ``registry``.
+
+    When ``broker`` is provided (the default for ``praxis mcp``), every tool
+    call is routed through :meth:`GovernanceBroker.authorize` so SEND/DESTRUCTIVE
+    tools are held for approval rather than executed permissionlessly for an
+    external MCP host.
+    """
     _ensure_mcp()
     server = MCPServer(name=name, version=version)
+    # Fail closed: if the caller omitted a broker, mint a strict one that
+    # allowlists only tools currently in the registry.
+    gov = broker or GovernanceBroker(
+        policy=GovernancePolicy(allowed_tools=set(registry.names())))
 
     @server.list_tools()
     async def list_tools() -> list[MCPTool]:
@@ -117,6 +140,23 @@ def build_mcp_server(registry: ToolRegistry, name: str = "praxis",
         if not tool:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
         args = arguments or {}
+        # Keep the allowlist in sync with live registry registrations.
+        gov.policy.allowed_tools.add(tool.name)
+        decision = gov.authorize(
+            actor="mcp", tool=tool.name, risk=tool.risk, args=args,
+            preview=f"{tool.name}({args})", provenance="mcp-server",
+            rationale=f"MCP host requested {tool.risk.value} tool '{tool.name}'.",
+        )
+        if decision.verdict is Verdict.DENY:
+            return [TextContent(
+                type="text",
+                text=f"DENIED: {gov.redact(decision.reason)}")]
+        if decision.verdict is Verdict.NEEDS_APPROVAL:
+            return [TextContent(
+                type="text",
+                text=(f"HELD for human approval (id={decision.approval_id}); "
+                      "it has NOT executed. Approve via the Praxis dashboard "
+                      "or `praxis approve`."))]
         try:
             result = tool.run(**args)
         except Exception as exc:  # noqa: BLE001 - surface as MCP text error
@@ -127,11 +167,22 @@ def build_mcp_server(registry: ToolRegistry, name: str = "praxis",
 
 
 async def run_stdio_server(registry: ToolRegistry | None = None,
-                           name: str = "praxis") -> None:
+                           name: str = "praxis",
+                           broker: GovernanceBroker | None = None) -> None:
     """Run the Praxis MCP server over stdio (used by ``praxis mcp``)."""
     _ensure_mcp()
     registry = registry or ToolRegistry()
-    server = build_mcp_server(registry, name=name)
+    if broker is None:
+        try:
+            from . import config as cfg
+            from .persistence import Store
+            store = Store.open(cfg.home_dir() / "praxis.db")
+            broker = GovernanceBroker(
+                policy=GovernancePolicy(allowed_tools=set(registry.names())),
+                store=store)
+        except Exception:  # noqa: BLE001 - still serve tools with in-memory broker
+            broker = None
+    server = build_mcp_server(registry, name=name, broker=broker)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

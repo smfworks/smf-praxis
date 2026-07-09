@@ -49,10 +49,60 @@
   function close() { if (overlay) overlay.classList.remove("show"); }
   function skip() { try { sessionStorage.setItem("praxisOnboardDismissed", "1"); } catch (_) { } close(); }
 
+  var step = 0; // 0 = model, 1 = persona
+
   function render() {
     var chosen = sel ? sel.value : "";
     var box = overlay.querySelector(".ob-box");
     box.innerHTML = "";
+    if (step === 1) {
+      box.appendChild(el("div", "ob-head",
+        "<div><b>Who should Praxis help?</b></div>" +
+        "<div class='ob-sub'>Optional persona — saved as durable preferences so " +
+        "tone and never-dos stick across sessions.</div>"));
+      box.appendChild(el("label", "ob-label", "Your name"));
+      var nm = el("input", "ob-input"); nm.id = "obName"; nm.placeholder = "Alex";
+      box.appendChild(nm);
+      box.appendChild(el("label", "ob-label", "Role"));
+      var role = el("input", "ob-input"); role.id = "obRole"; role.placeholder = "Founder / eng lead / …";
+      box.appendChild(role);
+      box.appendChild(el("label", "ob-label", "Tone"));
+      var tone = el("input", "ob-input"); tone.id = "obTone";
+      tone.value = "professional, concise, helpful";
+      box.appendChild(tone);
+      box.appendChild(el("label", "ob-label", "Never do (comma-separated)"));
+      var never = el("input", "ob-input"); never.id = "obNever";
+      never.placeholder = "send email without asking, post publicly";
+      box.appendChild(never);
+      var actions = el("div", "ob-actions");
+      var saveBtn = el("button", "ob-btn primary", "Save & finish");
+      saveBtn.type = "button";
+      saveBtn.onclick = function () {
+        api("/api/persona", {
+          display_name: (document.getElementById("obName") || {}).value || "",
+          role: (document.getElementById("obRole") || {}).value || "",
+          tone: (document.getElementById("obTone") || {}).value || "",
+          never_do: (document.getElementById("obNever") || {}).value || "",
+          onboarding_complete: true
+        }).then(function () {
+          toast("Persona saved");
+          step = 0;
+          close();
+          if (window.PraxisGrowth) window.PraxisGrowth.refresh();
+          if (window.PraxisFirstWin) window.PraxisFirstWin.open(true);
+        });
+      };
+      var skipP = el("button", "ob-btn ghost", "Skip persona");
+      skipP.type = "button";
+      skipP.onclick = function () {
+        step = 0;
+        close();
+        if (window.PraxisFirstWin) window.PraxisFirstWin.open(true);
+      };
+      actions.appendChild(saveBtn); actions.appendChild(skipP);
+      box.appendChild(actions);
+      return;
+    }
     box.appendChild(el("div", "ob-head",
       "<div><b>Set up Praxis</b></div><div class='ob-sub'>Connect a model to go " +
       "from the offline mock to a live colleague.</div>"));
@@ -115,11 +165,13 @@
     }
     var r = await api("/api/onboard", body);
     if (r.error) { toast(r.error); return; }
-    close();
-    toast("Setup complete \u2014 " + (r.model || model));
+    toast("Model ready \u2014 " + (r.model || model));
     if (window.loadModel) window.loadModel();
     if (window.loadProviders) window.loadProviders();
     if (window.refresh) window.refresh();
+    // Continue into persona capture (preeminence onboarding).
+    step = 1;
+    render();
   }
 
   async function boot() {

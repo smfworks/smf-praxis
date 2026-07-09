@@ -227,6 +227,9 @@ class PlanExecutor:
                            {"id": step.id, "tool": step.tool, "reason": step.output},
                            cycle_id)
                 return FAILED
+            # Untrusted tool output: taint injection-flagged spans for egress.
+            if self.broker.is_injection(step.output):
+                self.broker.mark_tainted(step.output)
             step.status = DONE
             self._emit(report, "step_done",
                        {"id": step.id, "intent": step.intent, "tool": step.tool,

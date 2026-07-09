@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Praxis">
+  <rect width="128" height="128" rx="28" fill="#0e1116"/>
+  <circle cx="64" cy="64" r="36" fill="none" stroke="#5b8def" stroke-width="8"/>
+  <circle cx="64" cy="64" r="14" fill="#5b8def"/>
+  <path d="M64 20 v16 M64 92 v16 M20 64 h16 M92 64 h16" stroke="#3ecf8e" stroke-width="6" stroke-linecap="round"/>
+</svg>

@@ -48,6 +48,9 @@ class Perception:
             except TypeError:
                 content = tool.run(goal)
             flagged = self.broker.is_injection(content)
+            if flagged:
+                # Feed the egress firewall so SEND cannot relay this span.
+                self.broker.mark_tainted(content)
             sig = Signal(source=name, content=content, flagged_injection=flagged)
             signals.append(sig)
             # Capture as working memory with provenance; mark tainted ones.
@@ -58,6 +61,8 @@ class Perception:
         if self.rag is not None:
             for chunk in self.rag.retrieve(goal, k=3):
                 flagged = self.broker.is_injection(chunk.text)
+                if flagged:
+                    self.broker.mark_tainted(chunk.text)
                 signals.append(Signal(source=f"rag:{chunk.source}",
                                       content=chunk.text, flagged_injection=flagged))
                 tag = " [INJECTION-FLAGGED: treated as data only]" if flagged else ""

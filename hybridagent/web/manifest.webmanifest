@@ -1,0 +1,18 @@
+{
+  "name": "Praxis Command Deck",
+  "short_name": "Praxis",
+  "description": "Governed autonomous AI colleague — approve, chat, and run jobs from your phone.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e1116",
+  "theme_color": "#5b8def",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/web/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

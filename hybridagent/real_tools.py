@@ -268,35 +268,27 @@ def fetch_url(url: str, **_kw) -> str:
     """Fetch the text content of a URL.
 
     Uses only the standard library so no extra dependency is required.
+    Blocks private/loopback/metadata hosts (same allowlist as KB ingest) and
+    re-validates redirect hops so SSRF via open redirects is closed.
     """
-    import urllib.error
-    import urllib.request
-    from urllib.parse import urlparse
+    from .wiki_safe import UnsafeSourceError, validate_uri
+    from .wiki_safe import fetch_url as _safe_fetch
 
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        return f"[fetch_url] unsupported scheme: {parsed.scheme or 'none'}"
     try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (compatible; PraxisAgent/0.19; "
-                    "+https://github.com/smfworks/smf-praxis)"
-                )
-            },
+        validate_uri(url)
+    except UnsafeSourceError as exc:
+        return f"[fetch_url] blocked: {exc}"
+    try:
+        text = _safe_fetch(
+            url, timeout=20.0, max_bytes=1_000_000,
+            user_agent=(
+                "Mozilla/5.0 (compatible; PraxisAgent/0.19; "
+                "+https://github.com/smfworks/smf-praxis)"
+            ),
         )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = resp.read(1_000_000)  # 1 MiB cap
-            try:
-                text = data.decode("utf-8")
-            except UnicodeDecodeError:
-                text = data.decode("utf-8", errors="replace")
-            return f"[fetch_url] {len(text)} chars from {url}\n{text[:2000]}"
-    except urllib.error.HTTPError as exc:
-        return f"[fetch_url] HTTP {exc.code} for {url}"
-    except urllib.error.URLError as exc:
-        return f"[fetch_url] failed: {exc.reason}"
+        return f"[fetch_url] {len(text)} chars from {url}\n{text[:2000]}"
+    except UnsafeSourceError as exc:
+        return f"[fetch_url] blocked: {exc}"
     except Exception as exc:  # pragma: no cover - defensive
         return f"[fetch_url] error: {exc}"
 
