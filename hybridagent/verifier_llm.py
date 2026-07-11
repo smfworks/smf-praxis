@@ -145,11 +145,22 @@ class LLMVerifierCritic:
         ``[0, 1]``. Wraps the per-call exceptions so a transient backend
         error never fabricates a verdict — it surfaces as a runtime error
         that the caller (AnswerVerifier) catches and treats as APPROVE,
-        matching the existing critic-slot contract."""
+        matching the existing critic-slot contract.
+
+        Note: ``llm_verifier.track()`` uses a built-in skeptical progress
+        prompt ("would the agent's CURRENT state satisfy the task's hidden
+        grader?") and does NOT accept custom criteria — criteria
+        decomposition is a ``select()``/``compare()`` feature. So in the
+        gate path, ``self.config.criteria`` is not used here; it is
+        preserved on the config for the future selection path (H10) and
+        for documentation. The progress prompt's built-in calibration
+        rules ("trust observed output, not narration"; "effort is NOT
+        progress") already encode the anti-premature-victory behavior we
+        want from the harness-engineering course (L9).
+        """
         result = self._llm_verifier.track(
             problem=task,
             steps=[answer],
-            criteria=self.config.criteria,
             n_evaluations=self.config.n_evaluations,
             model=self.config.model,
         )
