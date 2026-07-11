@@ -50,13 +50,24 @@ jobs:
     runs-on: ubuntu-latest
     # Only publish on a real version tag, never on a manual dry-run build.
     if: startsWith(github.ref, 'refs/tags/v')
-    environment: pypi
     permissions:
-      id-token: write   # PyPI Trusted Publishing (OIDC) — no API token stored
+      contents: write   # attach artifacts to the GitHub Release for the tag
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Attach wheel + sdist to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+          generate_release_notes: true
+    # NOTE: PyPI publishing is intentionally not in this workflow. PyPI
+    # trusted publishing requires the project to exist on PyPI first
+    # (first release must use an API token) and there is no stored token.
+    # Until that is set up, releases live on GitHub Releases and users
+    # install from the release URL:
+    #   pip install https://github.com/smfworks/smf-praxis/releases/download/vX.Y.Z/praxis_agent-X.Y.Z-py3-none-any.whl
+    # To switch to PyPI later: create the project on PyPI with an API
+    # token, store PYPI_API_TOKEN as a repo secret, and replace this
+    # publish job with pypa/gh-action-pypi-publish (password-token mode).

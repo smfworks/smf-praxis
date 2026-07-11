@@ -109,6 +109,16 @@ praxis --version
 
 Optional extras work the same way, e.g. `pipx install "praxis-agent[browser,docs]"`.
 
+> **Note:** `praxis-agent` is not yet on PyPI. Until it is, install from the
+> GitHub Release for any version tag:
+> ```bash
+> pip install https://github.com/smfworks/smf-praxis/releases/download/v0.21.6/praxis_agent-0.21.6-py3-none-any.whl
+> # or from git:
+> pip install git+https://github.com/smfworks/smf-praxis.git@v0.21.6
+> ```
+> The wheel and sdist are attached to every release (see the Releases page
+> on the repo). Replace the version in the URL as needed.
+
 ### Manual install
 
 ```bash
