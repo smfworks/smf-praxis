@@ -239,17 +239,27 @@ def test_llm_verifier_config_clamps_out_of_range():
 def test_verification_config_load_falls_back_when_library_missing(monkeypatch, tmp_path):
     """When the operator opts in but llm-verifier is not installed,
     VerificationConfig.load must fall back to deterministic-only (critic=None)
-    rather than break the chat loop."""
+    rather than break the chat loop. Simulates the library being absent even
+    when it happens to be installed in the dev env."""
+    import sys
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
     monkeypatch.delenv("PRAXIS_VERIFY", raising=False)
-    # Write a config that opts in. build_llm_verifier_critic will raise
-    # MissingVerifierBackendError (library absent), which load() catches.
     import json
     home = tmp_path / ".praxis"
     home.mkdir()
     (home / "praxis.json").write_text(json.dumps({
         "agents": {"verification": {"critic": "llm-verifier"}}}))
-    vc = VerificationConfig.load()
+    # Force ImportError on `import llm_verifier` so build_llm_verifier_critic
+    # raises MissingVerifierBackendError, which load() catches -> critic=None.
+    real = sys.modules.get("llm_verifier")
+    sys.modules["llm_verifier"] = None
+    try:
+        vc = VerificationConfig.load()
+    finally:
+        if real is not None:
+            sys.modules["llm_verifier"] = real
+        else:
+            sys.modules.pop("llm_verifier", None)
     assert vc.enabled is True
     assert vc.critic is None  # fell back to deterministic-only
 
