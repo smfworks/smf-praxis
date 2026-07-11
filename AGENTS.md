@@ -37,6 +37,19 @@ python3 -m hybridagent.cli demo                            # demo runs end-to-en
 
 Skipping any level = not complete. Fix the baseline before adding new work.
 
+### Independent verifier (maker-checker)
+
+A model grading its own work is untrustworthy (confidence calibration bias —
+see `docs/harness/evaluator-rubric.md` and `docs/harness/h05-maker-checker-design.md`).
+The deterministic checks in `verifier.py` run first, always, offline-safe.
+When an operator configures `agents.verification.critic: "llm-verifier"` in
+`praxis.json`, an optional `verifier_llm.py` backend upgrades the critic slot
+to a continuous-reward verifier (expectation over score-token logprobs,
+criteria decomposition, K repeated evaluations; arXiv:2607.05391). It is an
+optional extra — `pip install llm-verifier` + a logprob-exposing backend
+(Vertex `VERTEX_API_KEY` or local vLLM `OPENAI_BASE_URL`). Core stays
+dependency-free; missing-library/missing-backend falls back to deterministic-only.
+
 ## Hard constraints (non-negotiable)
 
 - **Dependency-free core.** No third-party imports in `hybridagent/` runtime paths unless behind an optional extra in `pyproject.toml`. Mock LLM must work offline with zero keys.
@@ -91,7 +104,7 @@ Skipping any level = not complete. Fix the baseline before adding new work.
 | Governance broker | `broker.py` · `validation.py` · `content_guard.py` · `compliance.py` |
 | Tools (risk-classified) | `tools.py` · `real_tools.py` · `m365_tools.py` |
 | Memory & RAG | `memory.py` · `rag.py` · `bm25.py` · `vecsim.py` · `embeddings.py` · `ingest.py` |
-| Grounding & verification | `grounding.py` · `verifier.py` · `contradiction.py` |
+| Grounding & verification | `grounding.py` · `verifier.py` · `verifier_llm.py` · `contradiction.py` |
 | Skills & self-improvement | `skills.py` · `skill_evaluator.py` · `evolution.py` |
 | Persistence | `persistence.py` · `task_manager.py` |
 | Daemon + dashboard | `daemon.py` · `agent_service.py` · `web/` |

@@ -1,7 +1,12 @@
 {
   "_meta": {
     "purpose": "Machine-readable scope surface for agents working on Praxis itself. The scheduler picks the next not_started feature; the verifier runs each feature's verification command; pass-state gating means no feature becomes 'passing' without evidence. See docs/harness/ and AGENTS.md for the operating frame.",
-    "status_enum": ["not_started", "in_progress", "blocked", "passing"],
+    "status_enum": [
+      "not_started",
+      "in_progress",
+      "blocked",
+      "passing"
+    ],
     "rules": [
       "Only ONE feature may be in_progress at any time (WIP=1).",
       "A feature moves to 'passing' only when its verification command runs green AND evidence is recorded.",
@@ -62,10 +67,10 @@
       "area": "harness",
       "title": "Maker-checker separation: optional LLM-verifier critic backend",
       "user_visible_behavior": "Agent-contributed changes are reviewed by an independent verifier (ideally a different model), not the agent that wrote them. The deterministic honesty checks run first; when an optional logprob-exposing backend is configured, a continuous-reward critic (expectation over score-token logits, criteria decomposition, K repeated evaluations) upgrades the discrete APPROVE/REVISE verdict. Core stays stdlib-only; the LLM path is an optional extra behind a flag.",
-      "status": "not_started",
-      "verification": "python3 -c 'import hybridagent.verifier' && grep -q 'independent verifier' AGENTS.md && grep -q 'maker-checker' docs/harness/evaluator-rubric.md && test -f docs/harness/h05-maker-checker-design.md && python3 -m pytest tests/test_verifier.py -q",
-      "evidence": "",
-      "notes": "Design doc: docs/harness/h05-maker-checker-design.md. Source: arXiv:2607.05391 (LLM-as-a-Verifier, Kwok et al. 2026), repo github.com/llm-as-a-verifier/llm-as-a-verifier (MIT, pip install llm-verifier). Constraint: hybridagent core deps [] — llm-verifier is an optional extra, lazy-imported, default off. Deterministic checks in verifier.py stay (run first, always). Open questions for Michael: backend choice (Vertex vs local vLLM on AMD box), threshold calibration, scope boundary with H10 (loop engineering). Prototype path: gate path first (track()+threshold), selection path (PPT best-of-N) deferred to H10."
+      "status": "in_progress",
+      "verification": "python3 -c 'import hybridagent.verifier' && grep -qi 'independent verifier' AGENTS.md && grep -qi 'maker-checker' docs/harness/evaluator-rubric.md && test -f docs/harness/h05-maker-checker-design.md && python3 -m pytest tests/test_verifier.py -q",
+      "evidence": "in_progress: prototype phase started 2026-07-11. Design doc committed at v0.21.3 (16f4182).",
+      "notes": "Design doc: docs/harness/h05-maker-checker-design.md. Source: arXiv:2607.05391 (LLM-as-a-Verifier, Kwok et al. 2026), repo github.com/llm-as-a-verifier/llm-as-a-verifier (MIT, pip install llm-verifier). Constraint: hybridagent core deps [] \u2014 llm-verifier is an optional extra, lazy-imported, default off. Deterministic checks in verifier.py stay (run first, always). Open questions for Michael: backend choice (Vertex vs local vLLM on AMD box), threshold calibration, scope boundary with H10 (loop engineering). Prototype path: gate path first (track()+threshold), selection path (PPT best-of-N) deferred to H10."
     },
     {
       "id": "H06",
