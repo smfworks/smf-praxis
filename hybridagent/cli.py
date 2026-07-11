@@ -59,6 +59,31 @@ def cmd_handle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_goal(args: argparse.Namespace) -> int:
+    """Level 1 Goal Runner (H10): loop the agent until the independent
+    verifier confirms the goal is met or the turn budget is spent."""
+    from .goal_runner import GoalRunner
+    from .verifier import VerificationConfig
+    agent = _make_agent(args)
+    vc = VerificationConfig.load()
+    verifier = None
+    if vc.enabled:
+        from .verifier import AnswerVerifier
+        verifier = AnswerVerifier(critic=vc.critic)
+    runner = GoalRunner(agent, max_turns=args.max_turns, verifier=verifier,
+                        threshold=args.threshold)
+    result = runner.run(args.goal, approve_all=args.approve_all)
+    # Surface each turn's progress (fights cognitive surrender).
+    for t in result.turns:
+        print(f"  turn {t.turn}/{result.max_turns}: {t.verdict} "
+              f"progress={t.progress:.3f} ({t.report.summary()})")
+    print(f"\n{result.summary()}")
+    if args.json:
+        print(json.dumps(runner.to_record(result), indent=2))
+    # Exit code: 0 if approved, 1 if max_turns/blocked/error.
+    return 0 if result.stopped_reason == "approved" else 1
+
+
 def cmd_heartbeat(args: argparse.Namespace) -> int:
     agent = _make_agent(args)
     report = agent.heartbeat(args.watch)
@@ -1513,6 +1538,26 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("--m365", action="store_true",
                     help="use live M365 tools via the broker instead of mock tools")
     ph.set_defaults(func=cmd_handle)
+
+    pg = sub.add_parser("goal",
+                        help="Level 1 autonomous loop: run the agent until the "
+                             "verifier confirms the goal is met or the turn "
+                             "budget is spent (H10)")
+    pg.add_argument("goal", help="the goal text to loop on")
+    pg.add_argument("--max-turns", type=int, default=8,
+                   help="hard cap on loop iterations (default 8)")
+    pg.add_argument("--threshold", type=float, default=0.3,
+                   help="verifier score in [0,1] at which the goal is met "
+                        "(default 0.3, H05-calibrated)")
+    pg.add_argument("--approve-all", action="store_true",
+                    help="auto-approve held consequential actions each turn "
+                         "(dev only)")
+    pg.add_argument("--m365", action="store_true",
+                    help="use live M365 tools via the broker instead of mock tools")
+    pg.add_argument("--json", action="store_true",
+                    help="emit the full goal record as JSON (anti-"
+                         "comprehension-rot log)")
+    pg.set_defaults(func=cmd_goal)
 
     pb = sub.add_parser("heartbeat", help="proactive always-on tick")
     pb.add_argument("--watch", default="scan for urgent follow-ups",
