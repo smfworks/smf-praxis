@@ -72,7 +72,12 @@ class LLMVerifierConfig:
     enabled: bool = False
     criteria: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_CRITERIA))
     n_evaluations: int = 8          # K — repeated evaluations (variance reduction)
-    threshold: float = 0.5          # final-score gate; 0.5 is a placeholder
+    threshold: float = 0.3          # calibrated 2026-07-11 on Qwen2.5-7B-Instruct
+    # Q3_K_M (CPU): 9/10 tasks cleanly separated; min_correct=0.46,
+    # max_wrong=0.13 -> threshold 0.3 gives zero false-rejects, zero
+    # false-approvals on the calibration set. Known failure: single-token
+    # number answers on trivial questions (model scores both 3 and 4 as
+    # 1.0). Recalibrate when swapping the verifier model.
     # model: llm-verifier auto-detects the served model when
     # OPENAI_BASE_URL is set (vLLM/SGLang serve exactly one). For Gemini via
     # Vertex, default to the paper's verifier.

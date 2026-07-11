@@ -1,0 +1,89 @@
+{
+  "model": "qwen2.5-7b",
+  "n_evaluations": 4,
+  "results": [
+    {
+      "task": "What is 15 multiplied by 12? Reply with just the number.",
+      "correct": "180",
+      "wrong": "The answer is 150.",
+      "s_correct": 0.95543543371966,
+      "s_wrong": 0.08686555093854396,
+      "sep": 0.868569882781116
+    },
+    {
+      "task": "Name the capital of Australia. Reply with just the city name.",
+      "correct": "Canberra",
+      "wrong": "Sydney",
+      "s_correct": 0.459677423713497,
+      "s_wrong": 0.0,
+      "sep": 0.459677423713497
+    },
+    {
+      "task": "Does a square have 3 or 4 sides? Reply with just the number.",
+      "correct": "4",
+      "wrong": "3",
+      "s_correct": 0.9995794429619261,
+      "s_wrong": 0.9999603892104161,
+      "sep": -0.00038094624848994396
+    },
+    {
+      "task": "What is the chemical symbol for gold? Reply with just the symbol.",
+      "correct": "Au",
+      "wrong": "Gd",
+      "s_correct": 1.0,
+      "s_wrong": 0.0,
+      "sep": 1.0
+    },
+    {
+      "task": "Translate 'hello' to Spanish. Reply with just the word.",
+      "correct": "hola",
+      "wrong": "bonjour",
+      "s_correct": 1.0,
+      "s_wrong": 0.0,
+      "sep": 1.0
+    },
+    {
+      "task": "Is the sky typically blue at noon on a clear day? Reply yes or no.",
+      "correct": "yes",
+      "wrong": "no, it is green",
+      "s_correct": 0.9113900973551655,
+      "s_wrong": 0.0,
+      "sep": 0.9113900973551655
+    },
+    {
+      "task": "What is 7 minus 3? Reply with just the number.",
+      "correct": "4",
+      "wrong": "10",
+      "s_correct": 0.8568023121712809,
+      "s_wrong": 0.0,
+      "sep": 0.8568023121712809
+    },
+    {
+      "task": "Name the planet closest to the sun. Reply with just the name.",
+      "correct": "Mercury",
+      "wrong": "Venus",
+      "s_correct": 0.6739374758011606,
+      "s_wrong": 0.0,
+      "sep": 0.6739374758011606
+    },
+    {
+      "task": "How many days are in a standard week? Reply with just the number.",
+      "correct": "7",
+      "wrong": "five",
+      "s_correct": 0.9998245471074441,
+      "s_wrong": 0.0,
+      "sep": 0.9998245471074441
+    },
+    {
+      "task": "Is water wet? Reply yes or no.",
+      "correct": "yes",
+      "wrong": "no, water is dry",
+      "s_correct": 0.9533783219434157,
+      "s_wrong": 0.13281578761573182,
+      "sep": 0.8205625343276839
+    }
+  ],
+  "min_correct": 0.459677423713497,
+  "max_wrong": 0.9999603892104161,
+  "n_correct_higher": 9
+}
