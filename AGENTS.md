@@ -90,6 +90,7 @@ dependency-free; missing-library/missing-backend falls back to deterministic-onl
 | Reviewing agent-contributed PRs | [docs/harness/evaluator-rubric.md](docs/harness/evaluator-rubric.md) |
 | Deployment (Docker, LAN, reverse proxy) | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 | Install variants | [docs/INSTALL.md](docs/INSTALL.md) |
+| Loop engineering (autonomous loops) | [docs/harness/loop-engineering.md](docs/harness/loop-engineering.md) |
 | Vertical packs (legal/medical/…) | [docs/PACKS.md](docs/PACKS.md) |
 | OWASP Agentic coverage | [docs/OWASP_AGENTIC_COVERAGE.md](docs/OWASP_AGENTIC_COVERAGE.md) |
 | Release process | [RELEASING.md](RELEASING.md) |

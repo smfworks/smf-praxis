@@ -122,10 +122,10 @@
       "area": "harness",
       "title": "Loop engineering maturity ladder documented (Level 1 -> 5)",
       "user_visible_behavior": "Praxis's autonomous loop capabilities (cron, daemon, subagents, fanout, A2A) are documented as the six loop primitives with a maturity progression.",
-      "status": "not_started",
+      "status": "passing",
       "verification": "grep -q 'Loop engineering\\|six primitives\\|maturity ladder' docs/harness/*.md AGENTS.md",
-      "evidence": "",
-      "notes": "Praxis already has all six primitives (Automations=cron/daemon, Worktrees=task isolation, Skills=skill library, Connectors=MCP/A2A/gateways, Sub-agents=orchestrator, External State=persistence). Document the mapping so agents extend the loop deliberately, not accidentally."
+      "evidence": "v0.21.11: hybridagent/goal_runner.py (GoalRunner, Level 1); praxis goal CLI command; tests/test_goal_runner.py (6 tests). docs/harness/loop-engineering.md (six primitives + maturity ladder 0-5). Four silent costs guarded by construction. Verified end-to-end: praxis goal \"list todays events\" stopped=approved in 1 turn.",
+      "notes": "Loop engineering builds one floor above the harness (course L13). Level 1 Goal Runner: loop agent.handle until H05 verifier confirms done (threshold 0.3) or max_turns (default 8). Held actions block the loop (never auto-approve unless --approve-all). to_record() is the anti-comprehension-rot log. Level 2 (scheduled) is a thin cron wrapper. Level 3 (multi-agent) needs PPT best-of-N deferred from H05. Level 4-5 future."
     }
   ]
 }
