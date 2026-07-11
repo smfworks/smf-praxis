@@ -3922,7 +3922,7 @@ class Daemon:
         assert self.agent is not None
         from .chat_agent import ChatEngine, GovernedChatAgent
         from .reflexion import ReflexionConfig, ReflexiveChatAgent
-        from .verifier import VerificationConfig, VerifiedChatAgent
+        from .verifier import AnswerVerifier, VerificationConfig, VerifiedChatAgent
         base = GovernedChatAgent(
             self.agent.llm, self.agent.registry, self.agent.broker,
             memory=self.agent.memory,
@@ -3937,8 +3937,13 @@ class Daemon:
         vc = VerificationConfig.load()
         if vc.enabled and vc.max_revisions > 0:
             # Critic gate (outermost): a confident answer that misreports a held/
-            # denied action is rejected and revised once.
-            engine = VerifiedChatAgent(engine, max_revisions=vc.max_revisions)
+            # denied action is rejected and revised once. When the operator has
+            # configured an optional LLM-verifier critic backend (H05), it
+            # upgrades the discrete APPROVE/REVISE slot to a continuous-reward
+            # verifier; the deterministic honesty checks still run first.
+            verifier = AnswerVerifier(critic=vc.critic)
+            engine = VerifiedChatAgent(
+                engine, verifier=verifier, max_revisions=vc.max_revisions)
         grounded = self._ground_with_memory(system or _AGENT_SYSTEM, messages)
         grounded = self._ground_with_skills(grounded, messages)
         # Surface what persistent memory / skills were recalled INTO this turn so

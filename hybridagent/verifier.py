@@ -100,6 +100,7 @@ class AnswerVerifier:
 class VerificationConfig:
     enabled: bool = True
     max_revisions: int = 1
+    critic: "CriticFn | None" = None  # optional LLM-verifier critic backend
 
     @classmethod
     def load(cls) -> "VerificationConfig":
@@ -111,7 +112,21 @@ class VerificationConfig:
             enabled = False
         elif env in ("1", "true", "on"):
             enabled = True
-        return cls(enabled=enabled, max_revisions=max(0, maxr))
+        # Optional LLM-verifier critic backend (H05). Lazy-built so the core
+        # stays dependency-free when the operator has not opted in. A missing
+        # library surfaces here only when critic == "llm-verifier".
+        critic: "CriticFn | None" = None
+        if enabled and str(v.get("critic", "") or "").lower() in (
+                "llm-verifier", "llm_verifier", "llmverifier"):
+            try:
+                from .verifier_llm import build_llm_verifier_critic
+                critic = build_llm_verifier_critic(v)
+            except Exception:  # noqa: BLE001 — never block the deterministic path
+                # Missing library or backend: fall back to deterministic-only
+                # rather than break the chat loop. The operator sees the error
+                # in the daemon log on first call, and can install/configure.
+                critic = None
+        return cls(enabled=enabled, max_revisions=max(0, maxr), critic=critic)
 
 
 class VerifiedChatAgent:
