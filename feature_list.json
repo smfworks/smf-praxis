@@ -89,10 +89,10 @@
       "area": "harness",
       "title": "Agent-oriented error messages: what + why + how-to-fix",
       "user_visible_behavior": "Praxis error messages surfaced to the model include concrete repair instructions, enabling self-correction loops.",
-      "status": "not_started",
+      "status": "passing",
       "verification": "grep -rn 'WHY\\|FIX\\|how to fix' hybridagent/broker.py hybridagent/validation.py | head -3",
-      "evidence": "",
-      "notes": "Course L9/L10: 'Test failed' -> 'POST /api/reset-password returned 500. Check email service config in env vars.' Audit broker/validation denials and improve where messages are bare. Lower priority than the structural harness pack."
+      "evidence": "v0.21.10: hybridagent/errors.py (agent_error helper); broker.py denials (policy hook, allowlist, pack, kill-switch) upgraded with why+fix; validation.py all ValidationError messages upgraded (type/enum/missing/extra/bounds); real_tools.py path errors upgraded; chat_agent.py unknown-tool upgraded. tests/test_errors.py (7 tests). Arch checker + errors module synced (errors in LOCAL_MODULES).",
+      "notes": "Course L9/L10: error messages must include what + why + how-to-fix so agents self-correct. agent_error(what, why, fix) -> \"<what> -- <why> -- <fix>\". Grep-friendly for the H07 verification command. Convention is now enforced by the test suite."
     },
     {
       "id": "H08",

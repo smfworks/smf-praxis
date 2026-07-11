@@ -27,6 +27,7 @@ from typing import Protocol
 from .broker import GovernanceBroker, Verdict
 from .content_guard import guard_tool_result
 from .context import compact_tool_messages
+from .errors import agent_error
 from .tools import ToolRegistry
 from .validation import ValidationError, validate_tool_args
 
@@ -118,9 +119,14 @@ class GovernedChatAgent:
                 tool = self.registry.get(name)
 
                 if tool is None:
-                    yield AgentEvent("denied", {"tool": name, "reason": "unknown tool"})
+                    reason = agent_error(
+                        what=f"unknown tool '{name}'",
+                        why=f"'{name}' is not in the ToolRegistry",
+                        fix="check the tool name spelling or use one of the "
+                            "registered tools")
+                    yield AgentEvent("denied", {"tool": name, "reason": reason})
                     history.append(_tool_result(cid, name,
-                                                f"ERROR: unknown tool '{name}'"))
+                                                f"ERROR: {reason}"))
                     continue
 
                 try:
