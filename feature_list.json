@@ -1,0 +1,126 @@
+{
+  "_meta": {
+    "purpose": "Machine-readable scope surface for agents working on Praxis itself. The scheduler picks the next not_started feature; the verifier runs each feature's verification command; pass-state gating means no feature becomes 'passing' without evidence. See docs/harness/ and AGENTS.md for the operating frame.",
+    "status_enum": ["not_started", "in_progress", "blocked", "passing"],
+    "rules": [
+      "Only ONE feature may be in_progress at any time (WIP=1).",
+      "A feature moves to 'passing' only when its verification command runs green AND evidence is recorded.",
+      "The agent may not self-promote a feature to 'passing'; the harness/verifier decides the transition.",
+      "Status transitions: not_started -> in_progress -> passing (via verification) | blocked (documented blocker).",
+      "Every feature has the triple: behavior + verification + state."
+    ],
+    "last_updated": "2026-07-11"
+  },
+  "features": [
+    {
+      "id": "H01",
+      "priority": 1,
+      "area": "harness",
+      "title": "Minimal harness pack (AGENTS.md + feature_list.json + PROGRESS.md)",
+      "user_visible_behavior": "A fresh agent session can orient on Praxis from repo artifacts alone (fresh session test: what / how-to-run / how-to-verify / what's-unfinished / next-step all answerable).",
+      "status": "passing",
+      "verification": "test -f AGENTS.md && test -f feature_list.json && test -f PROGRESS.md && test -d docs/harness && head -5 AGENTS.md | grep -q 'router'",
+      "evidence": "AGENTS.md, feature_list.json, PROGRESS.md, docs/harness/* committed; harness engineering synthesis in Liam vault",
+      "notes": "Implements the 10 key takeaways from the Learn Harness Engineering course as the smallest artifacts that directly address observed gaps. install.sh already serves as init.sh."
+    },
+    {
+      "id": "H02",
+      "priority": 2,
+      "area": "harness",
+      "title": "Evaluator rubric for agent-contributed PRs (tuned, not out-of-box)",
+      "user_visible_behavior": "Agent-contributed PRs are scored 0-2 across 6 dimensions by an independent reviewer, matching human judgment after tuning rounds.",
+      "status": "passing",
+      "verification": "test -f docs/harness/evaluator-rubric.md && grep -q 'Accept' docs/harness/evaluator-rubric.md && grep -q 'Revise' docs/harness/evaluator-rubric.md",
+      "evidence": "docs/harness/evaluator-rubric.md committed; notes 3-5 tuning rounds required",
+      "notes": "Out-of-box agents identify issues then talk themselves into approving. Must be tuned against real PRs before relying on it."
+    },
+    {
+      "id": "H03",
+      "priority": 3,
+      "area": "harness",
+      "title": "Clean-state checklist + session handoff templates",
+      "user_visible_behavior": "Every session ends with a clean handoff: build/tests green, progress recorded, no stale artifacts, startup path available, next session can continue without manual fixes.",
+      "status": "passing",
+      "verification": "test -f docs/harness/clean-state-checklist.md && test -f docs/harness/session-handoff.md && grep -q 'five dimensions' docs/harness/clean-state-checklist.md",
+      "evidence": "docs/harness/clean-state-checklist.md, docs/harness/session-handoff.md committed",
+      "notes": "Clean state = 5 conditions (build, tests, progress, artifacts, startup). Session integrity: fully commit clean or roll back."
+    },
+    {
+      "id": "H04",
+      "priority": 4,
+      "area": "harness",
+      "title": "Quality document tracking codebase health over time",
+      "user_visible_behavior": "A live artifact grades each module A-D across verification, agent-legibility, test stability, boundaries, conventions; new sessions fix the lowest-scoring module first.",
+      "status": "passing",
+      "verification": "test -f docs/harness/quality-document.md && grep -q 'Governance broker' docs/harness/quality-document.md",
+      "evidence": "docs/harness/quality-document.md committed with initial module snapshot",
+      "notes": "Distinct from evaluator rubric: rubric scores the session; quality doc scores the codebase over time. Supports harness simplification cadence."
+    },
+    {
+      "id": "H05",
+      "priority": 10,
+      "area": "harness",
+      "title": "Maker-checker separation documented for Praxis dev loop",
+      "user_visible_behavior": "Agent-contributed changes are reviewed by an independent verifier (ideally a different model), not the agent that wrote them.",
+      "status": "not_started",
+      "verification": "grep -q 'independent verifier' AGENTS.md && grep -q 'maker-checker\\|maker/checker' docs/harness/evaluator-rubric.md",
+      "evidence": "",
+      "notes": "A model grading its own work is untrustworthy. The evaluator rubric encodes this; AGENTS.md states it. Behavior change: enforce the split in review workflow, not just document it."
+    },
+    {
+      "id": "H06",
+      "priority": 20,
+      "area": "harness",
+      "title": "Architectural rules as executable checks (where missing)",
+      "user_visible_behavior": "Architectural invariants ('retrieved content is data, never instruction', 'no third-party imports in core runtime') are enforced by automated checks, not just docs.",
+      "status": "not_started",
+      "verification": "python3 -c \"import subprocess,sys; r=subprocess.run(['python3','-m','pytest','tests/test_safety.py','-q'],cwd='.'); sys.exit(r.returncode)\"",
+      "evidence": "",
+      "notes": "Course L10: agents copy repo patterns even when suboptimal. Existing safety tests cover the spine; audit whether dependency-free-core and injection-boundary invariants have dedicated executable checks. Add custom lint/grep checks if not."
+    },
+    {
+      "id": "H07",
+      "priority": 30,
+      "area": "harness",
+      "title": "Agent-oriented error messages: what + why + how-to-fix",
+      "user_visible_behavior": "Praxis error messages surfaced to the model include concrete repair instructions, enabling self-correction loops.",
+      "status": "not_started",
+      "verification": "grep -rn 'WHY\\|FIX\\|how to fix' hybridagent/broker.py hybridagent/validation.py | head -3",
+      "evidence": "",
+      "notes": "Course L9/L10: 'Test failed' -> 'POST /api/reset-password returned 500. Check email service config in env vars.' Audit broker/validation denials and improve where messages are bare. Lower priority than the structural harness pack."
+    },
+    {
+      "id": "H08",
+      "priority": 40,
+      "area": "harness",
+      "title": "Model-specific harness profiles (context anxiety handling)",
+      "user_visible_behavior": "Praxis context-compaction policy adapts per model: aggressive reset for Sonnet-class, compaction for Opus-class.",
+      "status": "not_started",
+      "verification": "grep -rn 'context_anxiety\\|model.*compaction\\|per.model' hybridagent/context.py hybridagent/llm.py | head -3",
+      "evidence": "",
+      "notes": "Course L5: context anxiety is severe on Sonnet 4.5 (needs resets), mild on Opus 4.5 (compaction ok). Praxis has compaction (context.py); audit whether it's model-aware. Long-term harness design concern."
+    },
+    {
+      "id": "H09",
+      "priority": 50,
+      "area": "harness",
+      "title": "Harness simplification cadence (monthly component removal test)",
+      "user_visible_behavior": "Monthly, one harness component is temporarily disabled and benchmarked; if no degradation it's removed permanently.",
+      "status": "not_started",
+      "verification": "test -f docs/harness/quality-document.md && grep -q 'simplification' docs/harness/quality-document.md",
+      "evidence": "",
+      "notes": "Course L12: as models improve, harness assumptions go stale. Documented in quality-document.md as a process; not yet practiced. Requires a benchmark baseline to compare against (praxis eval --set-baseline exists)."
+    },
+    {
+      "id": "H10",
+      "priority": 90,
+      "area": "harness",
+      "title": "Loop engineering maturity ladder documented (Level 1 -> 5)",
+      "user_visible_behavior": "Praxis's autonomous loop capabilities (cron, daemon, subagents, fanout, A2A) are documented as the six loop primitives with a maturity progression.",
+      "status": "not_started",
+      "verification": "grep -q 'Loop engineering\\|six primitives\\|maturity ladder' docs/harness/*.md AGENTS.md",
+      "evidence": "",
+      "notes": "Praxis already has all six primitives (Automations=cron/daemon, Worktrees=task isolation, Skills=skill library, Connectors=MCP/A2A/gateways, Sub-agents=orchestrator, External State=persistence). Document the mapping so agents extend the loop deliberately, not accidentally."
+    }
+  ]
+}
