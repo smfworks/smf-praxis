@@ -85,7 +85,7 @@ def check_wip_one() -> list[str]:
     """At most one feature is `in_progress` in feature_list.json."""
     if not os.path.exists(FEATURE_LIST):
         return ["feature_list.json not found"]
-    data = json.load(open(FEATURE_LIST))
+    data = json.load(open(FEATURE_LIST, encoding="utf-8"))
     in_progress = [f["id"] for f in data.get("features", [])
                    if f.get("status") == "in_progress"]
     if len(in_progress) > 1:
@@ -157,7 +157,7 @@ def check_core_deps_free() -> list[str]:
             path = os.path.join(root, fname)
             rel = os.path.relpath(path, REPO)
             try:
-                tree = ast.parse(open(path).read(), path)
+                tree = ast.parse(open(path, encoding="utf-8").read(), path)
             except SyntaxError as e:
                 violations.append(f"{rel}: parse error: {e}")
                 continue
@@ -202,7 +202,7 @@ def check_governance_modules() -> list[str]:
                               f"module deleted (AGENTS.md: 'Governance spine "
                               f"is sacred')")
             continue
-        src = open(path).read()
+        src = open(path, encoding="utf-8").read()
         # Non-trivial: more than a stub. 50 lines is a floor, not a ceiling.
         if len(src.splitlines()) < 10:
             violations.append(f"hybridagent/{mod} is only "
