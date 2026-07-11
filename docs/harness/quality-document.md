@@ -64,6 +64,7 @@ Record each evaluator-rubric tuning round here (course L11: 3–5 rounds expecte
 Course L12: every month, disable one harness component, run `praxis eval --set-baseline` benchmark. If no degradation, remove permanently. If degradation, restore or replace with a lighter alternative.
 
 | Date | Component disabled | Eval delta | Decision | Notes |
+| 2026-07-11 | verifier | 0 | REMOVE | H09 cadence script |
 |---|---|---|---|---|
 | _ | _ | _ | _ | As models improve, harness assumptions go stale. The interesting combinations don't shrink — they shift. |
 

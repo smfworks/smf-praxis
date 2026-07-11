@@ -111,10 +111,10 @@
       "area": "harness",
       "title": "Harness simplification cadence (monthly component removal test)",
       "user_visible_behavior": "Monthly, one harness component is temporarily disabled and benchmarked; if no degradation it's removed permanently.",
-      "status": "not_started",
+      "status": "passing",
       "verification": "test -f docs/harness/quality-document.md && grep -q 'simplification' docs/harness/quality-document.md",
-      "evidence": "",
-      "notes": "Course L12: as models improve, harness assumptions go stale. Documented in quality-document.md as a process; not yet practiced. Requires a benchmark baseline to compare against (praxis eval --set-baseline exists)."
+      "evidence": "v0.21.13: scripts/harness_simplify.py (--baseline, --component); tests/test_harness_simplify.py (4 tests). Env-toggled components: verifier (PRAXIS_VERIFY=0), reflexion (PRAXIS_REFLECT=0), context_compact (PRAXIS_CTX_BUDGET=0). Auto-logs results to docs/harness/quality-document.md simplification log. Verified: verifier test -> delta 0, decision REMOVE, row appended.",
+      "notes": "Course L12: harness rots like code. Monthly cadence: disable one component, compare eval vs baseline, remove if no degradation. The script automates the compare-and-decide + quality-doc logging. As models improve, run this to find overhead constraints. The verifier test showed delta 0 on the deterministic eval suite (the LLM critic path is not exercised by praxis eval); a real-provider run would be the meaningful test."
     },
     {
       "id": "H10",
