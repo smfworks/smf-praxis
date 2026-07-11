@@ -31,14 +31,26 @@ def _resolve(relative: str) -> Path:
             or PureWindowsPath(relative).is_absolute()
             or PureWindowsPath(relative).drive
             or PurePosixPath(relative).is_absolute()):
-        raise ValueError(f"absolute paths not allowed: {relative}")
+        from .errors import agent_error
+        raise ValueError(agent_error(
+            what=f"absolute paths not allowed: {relative}",
+            why="filesystem tools sandbox to PRAXIS_WORK_DIR for safety",
+            fix="use a path relative to the work directory, e.g. 'data/file.txt'",
+        ))
     # resolve() collapses .. segments; check the final path is still under root.
     resolved = (root / raw).resolve()
     # Use path length check + commonpath for portability.
     try:
         resolved.relative_to(root)
     except ValueError as exc:
-        raise ValueError(f"path escapes work directory: {relative}") from exc
+        from .errors import agent_error
+        raise ValueError(agent_error(
+            what=f"path escapes work directory: {relative}",
+            why="the resolved path lands outside PRAXIS_WORK_DIR after "
+                "collapsing '..' segments",
+            fix="use a path that stays under the work directory root; "
+                "remove '..' segments",
+        )) from exc
     return resolved
 
 

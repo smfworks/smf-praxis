@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from .errors import agent_error
 from .logging_util import get_logger
 
 if TYPE_CHECKING:
@@ -327,25 +328,46 @@ class GovernanceBroker:
                 verdict = "deny"
             if verdict == "deny":
                 return self._log_decision(
-                    actor, tool, risk, Verdict.DENY, "denied by policy hook",
+                    actor, tool, risk, Verdict.DENY,
+                    agent_error(what="denied by policy hook",
+                                why="an operator policy hook refused this tool call",
+                                fix="check the policy hook configuration or ask the "
+                                    "operator to allow this tool/risk"),
                     decision_id=decision_id, cycle_id=cycle_id,
                     policy_rule="policy_hook_deny", args_hash=args_hash)
             hook_allow = (verdict == "allow")
         if tool not in self.policy.allowed_tools:
             return self._log_decision(actor, tool, risk, Verdict.DENY,
-                                      "tool not in allowlist", decision_id=decision_id,
+                                      agent_error(what="tool not in allowlist",
+                                                  why=f"'{tool}' is not on the "
+                                                      "GovernancePolicy allowlist",
+                                                  fix="add the tool to "
+                                                      "GovernancePolicy(allowed_tools=...) "
+                                                      "or use an allowed alternative"),
+                                      decision_id=decision_id,
                                       cycle_id=cycle_id, policy_rule="allowlist_denied",
                                       args_hash=args_hash)
         if (self.policy.pack_tools is not None
                 and tool not in self.policy.pack_tools):
             return self._log_decision(actor, tool, risk, Verdict.DENY,
-                                      "tool not enabled by the active pack",
+                                      agent_error(what="tool not enabled by the active pack",
+                                                  why=f"'{tool}' is not in the active "
+                                                      "vertical pack's tool set",
+                                                  fix="switch to a pack that enables this "
+                                                      "tool, or ask the operator to add it "
+                                                      "to the pack"),
                                       decision_id=decision_id, cycle_id=cycle_id,
                                       policy_rule="pack_restricted", args_hash=args_hash)
         if risk in CONSEQUENTIAL and self.kill.tripped:
             return self._log_decision(actor, tool, risk, Verdict.DENY,
-                                      "kill-switch engaged", decision_id=decision_id,
-                                      cycle_id=cycle_id, policy_rule="kill_switch_denied",
+                                      agent_error(what="kill-switch engaged",
+                                                  why="the global kill-switch is tripped; "
+                                                      "all consequential actions are blocked",
+                                                  fix="an operator must reset it with "
+                                                      "`praxis kill-switch reset` before "
+                                                      "consequential tools can run"),
+                                      decision_id=decision_id, cycle_id=cycle_id,
+                                      policy_rule="kill_switch_denied",
                                       args_hash=args_hash)
         if risk in self.policy.autonomous_risks:
             return self._log_decision(actor, tool, risk, Verdict.ALLOW,
