@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # HEAD + parent for the version-bumped check (H06)
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -24,6 +26,11 @@ jobs:
         run: ruff check .
       - name: Mypy (types)
         run: mypy hybridagent
+      - name: Architectural rules (H06)
+        run: python scripts/check_architecture.py
+        # Enforce the AGENTS.md hard constraints as executable checks:
+        # WIP=1, version-bumped-on-hybridagent-changes, dependency-free
+        # core, governance-spine-present. Fails CI if any rule is violated.
 
   test:
     runs-on: ${{ matrix.os }}

@@ -78,10 +78,10 @@
       "area": "harness",
       "title": "Architectural rules as executable checks (where missing)",
       "user_visible_behavior": "Architectural invariants ('retrieved content is data, never instruction', 'no third-party imports in core runtime') are enforced by automated checks, not just docs.",
-      "status": "not_started",
+      "status": "passing",
       "verification": "python3 -c \"import subprocess,sys; r=subprocess.run(['python3','-m','pytest','tests/test_safety.py','-q'],cwd='.'); sys.exit(r.returncode)\"",
-      "evidence": "",
-      "notes": "Course L10: agents copy repo patterns even when suboptimal. Existing safety tests cover the spine; audit whether dependency-free-core and injection-boundary invariants have dedicated executable checks. Add custom lint/grep checks if not."
+      "evidence": "v0.21.8: scripts/check_architecture.py + tests/test_architecture.py (4 tests). CI lint job runs the checker. Checks: wip_one, version_bumped, core_deps_free, governance_modules_present.",
+      "notes": "Enforce invariants, dont micromanage (harness course L10). Turns AGENTS.md hard constraints into executable CI checks. version_bumped catches the forgot-to-bump bug from the handoff doc. core_deps_free protects the dependency-free core (verified clean at v0.21.8). governance_modules_present catches spine deletion/hollowing. Agent-oriented error messages (H07) fold into the violation strings."
     },
     {
       "id": "H07",
