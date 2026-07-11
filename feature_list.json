@@ -100,10 +100,10 @@
       "area": "harness",
       "title": "Model-specific harness profiles (context anxiety handling)",
       "user_visible_behavior": "Praxis context-compaction policy adapts per model: aggressive reset for Sonnet-class, compaction for Opus-class.",
-      "status": "not_started",
+      "status": "passing",
       "verification": "grep -rn 'context_anxiety\\|model.*compaction\\|per.model' hybridagent/context.py hybridagent/llm.py | head -3",
-      "evidence": "",
-      "notes": "Course L5: context anxiety is severe on Sonnet 4.5 (needs resets), mild on Opus 4.5 (compaction ok). Praxis has compaction (context.py); audit whether it's model-aware. Long-term harness design concern."
+      "evidence": "v0.21.12: hybridagent/context_profile.py (ContextProfile, profile_for); llm.py _maybe_compact now model-aware; tests/test_context_profile.py (9 tests). Profiles: sonnet (16k/reset), opus (32k/compaction), gpt-5 (48k), gemini (40k), qwen (12k/reset), default (24k, backward-compatible). Operator override (PRAXIS_CTX_BUDGET) wins.",
+      "notes": "Course L5: context anxiety is severe on Sonnet-class (needs resets), mild on Opus-class (compaction ok). profile_for(model) matches by substring; unknown models get the backward-compatible default. Recalibrate by running the goal loop (H10) per model and watching the H05 verifier score drop near context limits. PRAXIS_CTX_BUDGET env override wins over the profile so manual tuning is never lost."
     },
     {
       "id": "H09",

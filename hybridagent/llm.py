@@ -214,14 +214,45 @@ class LLMClient:
             return self._tools_messages(messages, tools, system, role, sensitivity)
         return self._mock_chat_tools(messages, tools, system)
 
+    def _active_model_ref(self) -> str:
+        """The model the router would pick for a general-role call right now.
+        Used to select the model-specific compaction profile (H08). Returns
+        the first non-mock candidate, or ``self.model`` if the router has no
+        candidates (e.g. mock mode)."""
+        try:
+            candidates = self.router.select("general", "public", "easy")
+            for ref in candidates:
+                if ref != "mock":
+                    return ref
+        except Exception:  # noqa: BLE001
+            pass
+        return self.model
+
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:
         """Compact an over-budget conversation: keep recent turns, summarize the
         rest. Applied to the chat surfaces only (not the tool loop, where
-        tool-call / tool-result pairing must stay intact)."""
+        tool-call / tool-result pairing must stay intact).
+
+        H08: the compaction budget and keep-recent count adapt to the active
+        model via a :class:`ContextProfile` — Sonnet-class compacts sooner
+        and resets (severe context anxiety), Opus-class keeps more (mild
+        anxiety). An operator override (``PRAXIS_CTX_BUDGET``) wins over the
+        profile, so manual tuning is never lost.
+        """
         from .context import compact_messages
+        from .context_profile import profile_for
+        # Operator override (env var) wins over the model-specific profile.
+        env_budget = os.environ.get("PRAXIS_CTX_BUDGET")
+        if env_budget:
+            budget = int(env_budget)
+            keep_recent = self.keep_recent_turns
+        else:
+            profile = profile_for(self._active_model_ref())
+            budget = profile.context_char_budget
+            keep_recent = profile.keep_recent_turns
         return compact_messages(
-            messages, max_chars=self.context_char_budget,
-            keep_recent=self.keep_recent_turns, summarize=self.summarize)
+            messages, max_chars=budget,
+            keep_recent=keep_recent, summarize=self.summarize)
 
     # -------------------------------------------------------------------- mock
     def _mock_complete(self, prompt: str, system: str | None) -> str:

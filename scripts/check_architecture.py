@@ -54,7 +54,7 @@ LOCAL_MODULES = {
     "skill_evaluator", "skills", "structured", "task_manager", "tools",
     "validation", "vault", "vecsim", "vertical_evals", "voice", "wiki",
     "wiki_safe", "wsutil", "verifier", "verifier_llm", "benchmark", "errors",
- "goal_runner", "a2a_client", "providers",
+ "goal_runner", "context_profile", "a2a_client", "providers",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml
