@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.19` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.20` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -74,7 +74,9 @@ Baseline is **green**. New work must not regress any of these.
     exactly `APPROVE` or `REVISE: <reason>`; malformed values block release.
     `0.25.19` requires exact built-in types at this boundary and full-matches the
     critic grammar, preventing string-subclass method dispatch and malformed REVISE
-    prefixes. Fresh independent maker-checker pending.
+    prefixes. `0.25.20` rejects verdict subclasses and snapshots each exact built-in
+    field once before any retry or release decision, closing stateful descriptor and
+    repeated-read races. Fresh independent maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 
