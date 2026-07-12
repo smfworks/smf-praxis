@@ -14,7 +14,7 @@
       "Status transitions: not_started -> in_progress -> passing (via verification) | blocked (documented blocker).",
       "Every feature has the triple: behavior + verification + state."
     ],
-    "last_updated": "2026-07-11"
+    "last_updated": "2026-07-12"
   },
   "features": [
     {
@@ -136,6 +136,16 @@
       "verification": "python3 -m pytest tests/test_api_contract.py tests/test_workboard.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
       "status": "passing",
       "evidence": "v0.22.0: five accepted ADRs; docs/api-v1.md; hybridagent/api_contract.py; authenticated v1 routes; signed snapshot-bound cursors; conditional ETags; stable error envelopes; bounded durable SQLite idempotency receipts. Verified: API contract 21/21; full pytest; evals 40/40; ruff; mypy 91 modules; architecture checks; clean wheel install. Independent maker-checker PASS, including 8 OS processes against one SQLite DB: 1 create, 7 replays, 0 conflicts/errors, one card; rollback and fingerprint-conflict behavior verified."
+    },
+    {
+      "id": "PP10",
+      "priority": 110,
+      "area": "professional-platform",
+      "title": "Phase 1 organizations, identity and professional access control",
+      "user_visible_behavior": "Praxis isolates organizations and members, authenticates professional users with revocable secure sessions, enforces role/attribute/purpose policy, and governs classified data retention and egress.",
+      "verification": "python3 -m pytest tests/test_organizations.py tests/test_authn.py tests/test_authz.py tests/test_data_policy.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
+      "status": "passing",
+      "evidence": "v0.23.0: tenant-owned organizations/users/memberships/teams, opaque hash-only revocable sessions with CSRF, deny-by-default RBAC/ABAC/purpose controls, authenticated approval actor+role, tenant-owned board cards and approvals, tenant-scoped idempotency/deduplication, durable break-glass audit, and classified retention/export/egress policy. Verified: focused Phase 1/API/persistence/architecture tests; complete non-fuzz pytest; evals 40/40; ruff; mypy 95 modules; architecture checks; demo; wheel/sdist and clean-venv import. Independent adversarial maker-checker PASS after reproducing two-tenant board isolation, reviewer denial, cross-tenant approval 404, tenant idempotency separation, egress fail-closed, durable break glass, disabled-principal denial, and distinct cross-tenant approval deduplication."
     }
   ]
 }

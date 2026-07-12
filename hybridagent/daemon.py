@@ -1993,12 +1993,28 @@ class _StatusHandler(BaseHTTPRequestHandler):
             status=401)
         return False
 
-    def _require_v1_auth(self) -> bool:
-        """Apply the configured remote-access gate using the v1 error contract."""
+    def _require_v1_auth(self, *, mutation: bool = False) -> bool:
+        """Accept a professional session or the legacy deployment token."""
         from . import auth_gate
-        if self._is_loopback() or not auth_gate.configured_token():
+        from .authn import SessionManager, session_token_from_cookie
+
+        self.authenticated_session = None
+        cookie_token = session_token_from_cookie(self.headers.get("Cookie", ""))
+        if cookie_token:
+            self.daemon._ensure_agent()
+            assert self.daemon.store is not None
+            session = SessionManager(self.daemon.store).authenticate(
+                cookie_token,
+                mutation=mutation,
+                csrf_token=self.headers.get("X-CSRF-Token", ""),
+            )
+            if session is not None:
+                self.authenticated_session = session
+                return True
+        if not cookie_token and (self._is_loopback() or not auth_gate.configured_token()):
             return True
-        if auth_gate.token_matches(auth_gate.extract_token(self.headers)):
+        if (auth_gate.configured_token()
+                and auth_gate.token_matches(auth_gate.extract_token(self.headers))):
             return True
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
         self._v1_response(
@@ -2008,6 +2024,25 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 details={"hint": "Set Authorization: Bearer *** or X-Praxis-Token"},
             ), status=401)
         return False
+
+    def _professional_authorize(self, action: str) -> str | None:
+        """Authorize a session-backed action and return its tenant scope."""
+        from .authz import AccessContext, AuthorizationPolicy
+        from .organizations import OrganizationDirectory
+
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            return ""  # legacy token/loopback compatibility scope
+        assert self.daemon.store is not None
+        membership = OrganizationDirectory(self.daemon.store).membership(
+            session.organization_id, session.user_id)
+        if membership is None or membership.status != "active":
+            return None
+        decision = AuthorizationPolicy().authorize(
+            AccessContext(session.user_id, session.organization_id,
+                          frozenset(membership.roles), "service_delivery"),
+            action, resource_organization_id=session.organization_id)
+        return session.organization_id if decision.allowed else None
 
     def do_POST(self) -> None:
         try:
@@ -2020,10 +2055,32 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"stopping": true}')
                 threading.Thread(target=self.daemon.stop, daemon=True).start()
                 return
-            if self.path == "/api/v1/board/cards":
-                if not self._require_v1_auth():
+            if self.path == "/api/v1/auth/session":
+                if not self._require_auth():
                     return
-                self._handle_v1_board_create()
+                self._handle_v1_session_issue()
+                return
+            if self.path == "/api/v1/auth/logout":
+                if not self._require_v1_auth(mutation=True):
+                    return
+                self._handle_v1_session_logout()
+                return
+            if (self.path.startswith("/api/v1/approvals/")
+                    and self.path.endswith("/approve")):
+                if not self._require_v1_auth(mutation=True):
+                    return
+                self._handle_v1_approval()
+                return
+            if self.path == "/api/v1/board/cards":
+                if not self._require_v1_auth(mutation=True):
+                    return
+                organization_id = self._professional_authorize("write")
+                if organization_id is None:
+                    self._v1_response(error_envelope(
+                        "forbidden", "The authenticated role cannot create cards",
+                        request_id=uuid.uuid4().hex), status=403)
+                    return
+                self._handle_v1_board_create(organization_id)
                 return
             # Auth gate for all other mutating routes when bound beyond loopback.
             if self.path not in ("/api/auth/login",) and not self._require_auth():
@@ -2368,7 +2425,14 @@ class _StatusHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/v1/board/cards":
                 if not self._require_v1_auth():
                     return
-                self._handle_v1_board_list(parse_query(parsed.query))
+                organization_id = self._professional_authorize("read")
+                if organization_id is None:
+                    self._v1_response(error_envelope(
+                        "forbidden", "The authenticated role cannot read cards",
+                        request_id=uuid.uuid4().hex), status=403)
+                    return
+                self._handle_v1_board_list(
+                    parse_query(parsed.query), organization_id)
                 return
             if self.path == "/status":
                 mgr = self.daemon.manager
@@ -2800,7 +2864,107 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return
         self._json_response({"uploaded": len(saved), "files": saved, "errors": errors})
 
-    def _handle_v1_board_list(self, query: dict[str, list[str]]) -> None:
+    def _handle_v1_approval(self) -> None:
+        from .authz import AccessContext, AuthorizationPolicy
+        from .organizations import OrganizationDirectory
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            self._v1_response(error_envelope(
+                "professional_session_required", "A professional session is required",
+                request_id=request_id), status=403)
+            return
+        assert self.daemon.store is not None
+        membership = OrganizationDirectory(self.daemon.store).membership(
+            session.organization_id, session.user_id)
+        if membership is None:
+            self._v1_response(error_envelope(
+                "membership_required", "An active membership is required",
+                request_id=request_id), status=403)
+            return
+        approval_id = self.path.removeprefix(
+            "/api/v1/approvals/").removesuffix("/approve")
+        approval = self.daemon.store.get_approval(approval_id)
+        if approval is None or approval.get("organization_id") != session.organization_id:
+            self._v1_response(error_envelope(
+                "approval_not_found", "Approval does not exist in this organization",
+                request_id=request_id), status=404)
+            return
+        decision = AuthorizationPolicy().authorize(
+            AccessContext(session.user_id, session.organization_id,
+                          frozenset(membership.roles), "service_delivery"),
+            "approve_decision", resource_organization_id=session.organization_id)
+        if not decision.allowed:
+            self._v1_response(error_envelope(
+                "approval_forbidden", "The authenticated role cannot approve decisions",
+                request_id=request_id,
+                details={"reason": decision.reason}), status=403)
+            return
+        role = next((name for name in membership.roles if name in {
+            "organization_admin", "workspace_admin", "professional"}), "")
+        approved = self.daemon.approve(
+            approval_id, approved_by=session.user_id, approved_role=role)
+        self._v1_response(success_envelope(
+            {"approval_id": approval_id, "approved": approved,
+             "actor": session.user_id, "role": role}, request_id=request_id),
+            status=200 if approved else 409)
+
+    def _handle_v1_session_issue(self) -> None:
+        from .authn import SessionManager
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        try:
+            payload = json.loads(self._read_body(MAX_JSON_BODY_BYTES).decode() or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("body must be an object")
+            user_id = str(payload.get("user_id") or "").strip()
+            organization_id = str(payload.get("organization_id") or "").strip()
+            if not user_id or not organization_id:
+                raise ValueError("user_id and organization_id are required")
+            self.daemon._ensure_agent()
+            assert self.daemon.store is not None
+            issued = SessionManager(self.daemon.store).issue(
+                user_id, organization_id,
+                ttl_seconds=min(float(payload.get("ttl_seconds", 28800)), 86400),
+                device_id=str(payload.get("device_id") or ""),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            self._v1_response(error_envelope(
+                "invalid_session_request", str(exc), request_id=request_id), status=400)
+            return
+        cookie = (
+            f"praxis_session={issued.token}; HttpOnly; SameSite=Strict; Path=/api/v1; "
+            f"Max-Age={max(0, int(issued.expires_ts - time.time()))}"
+        )
+        if not self._is_loopback():
+            cookie += "; Secure"
+        self._v1_response(success_envelope(
+            {"session_id": issued.session_id, "user_id": issued.user_id,
+             "organization_id": issued.organization_id,
+             "csrf_token": issued.csrf_token, "expires_ts": issued.expires_ts},
+            request_id=request_id), status=201, headers={"Set-Cookie": cookie})
+
+    def _handle_v1_session_logout(self) -> None:
+        from .authn import SessionManager
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            self._v1_response(error_envelope(
+                "professional_session_required", "A professional session is required",
+                request_id=request_id), status=403)
+            return
+        assert self.daemon.store is not None
+        SessionManager(self.daemon.store).revoke(session.session_id)
+        self._v1_response(success_envelope(
+            {"revoked": True}, request_id=request_id),
+            headers={"Set-Cookie": (
+                "praxis_session=; HttpOnly; SameSite=Strict; Path=/api/v1; Max-Age=0")})
+
+    def _handle_v1_board_list(
+        self, query: dict[str, list[str]], organization_id: str = "",
+    ) -> None:
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
         try:
             limit_values = query.get("limit")
@@ -2808,7 +2972,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
             limit_value: str | None = limit_values[0] if limit_values else None
             cursor: str | None = cursor_values[0] if cursor_values else None
             limit = normalize_limit(limit_value)
-            cards = self.daemon.board_list()["cards"]
+            cards = self.daemon.board_list(
+                organization_id if organization_id else None)["cards"]
             version = resource_version(cards)
             items, next_cursor = page_items(
                 cards, limit=limit, cursor=cursor,
@@ -2832,7 +2997,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
         )
         self._v1_response(payload, headers={"ETag": etag(version)})
 
-    def _handle_v1_board_create(self) -> None:
+    def _handle_v1_board_create(self, organization_id: str = "") -> None:
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
         try:
             declared_length = int(self.headers.get("Content-Length", 0) or 0)
@@ -2879,7 +3044,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return
         fingerprint = resource_version({"title": title, "goal": goal})
         result, replayed, conflict = self.daemon.api_idempotent_board_create(
-            key, fingerprint, title, goal)
+            key, fingerprint, title, goal, organization_id)
         if conflict:
             self._v1_response(
                 error_envelope(
@@ -3001,6 +3166,7 @@ class Daemon:
 
     def api_idempotent_board_create(
         self, key: str, fingerprint: str, title: str, goal: str,
+        organization_id: str = "",
     ) -> tuple[dict[str, Any], bool, bool]:
         """Atomically replay or create a board card for an idempotency key.
 
@@ -3008,13 +3174,15 @@ class Daemon:
         store write prevents concurrent HTTP handlers from duplicating effects.
         """
         if not key:
-            return self.board_create(title, goal), False, False
+            return self.board_create(title, goal, organization_id), False, False
         with self._api_idempotency_lock:
             self._ensure_agent()
             assert self.store is not None
             card, replayed, conflict = self.store.idempotent_add_card(
-                key, fingerprint, f"card-{uuid.uuid4().hex[:10]}", title, goal,
+                f"{organization_id}:{key}", fingerprint,
+                f"card-{uuid.uuid4().hex[:10]}", title, goal,
                 max_receipts=MAX_IDEMPOTENCY_RECEIPTS,
+                organization_id=organization_id,
             )
             return ({"card": card} if card else {}), replayed, conflict
 
@@ -3565,13 +3733,15 @@ class Daemon:
     # ------------------------------------------------------------- work board
     _BOARD_LANES = ("backlog", "planned", "running", "held", "done", "failed")
 
-    def board_list(self) -> dict:
+    def board_list(self, organization_id: str | None = None) -> dict:
         """Cards + lane vocabulary for the governed Work Board."""
         if self.store is None:
             return {"cards": [], "lanes": list(self._BOARD_LANES)}
-        return {"cards": self.store.list_cards(), "lanes": list(self._BOARD_LANES)}
+        return {"cards": self.store.list_cards(organization_id=organization_id),
+                "lanes": list(self._BOARD_LANES)}
 
-    def board_create(self, title: str, goal: str = "") -> dict:
+    def board_create(self, title: str, goal: str = "",
+                     organization_id: str = "") -> dict:
         self._ensure_agent()
         assert self.store is not None
         title = (title or goal or "").strip()
@@ -3579,7 +3749,8 @@ class Daemon:
         if not goal:
             return {"error": "title/goal required"}
         card_id = f"card-{uuid.uuid4().hex[:10]}"
-        self.store.add_card(card_id, title, goal, lane="backlog")
+        self.store.add_card(card_id, title, goal, lane="backlog",
+                            organization_id=organization_id)
         return {"card": self.store.get_card(card_id)}
 
     def board_move(self, card_id: str, lane: str) -> dict:
@@ -4377,7 +4548,7 @@ class Daemon:
         return {"model": summary["model"], "provider": provider_id}
 
     def approve(self, approval_id: str, mode: str = "once",
-                approved_by: str = "") -> bool:
+                approved_by: str = "", approved_role: str = "") -> bool:
         """Approve a pending consequential action and resume waiting work.
 
         Two paths share this endpoint:
@@ -4415,7 +4586,8 @@ class Daemon:
             # Task path: execute the held action, then mark waiters completed.
             # Never grant one-shot/session allow — agent.approve runs the tool
             # with stored args and does not consume a subsequent authorize().
-            exec_result = self.agent.approve(approval_id, approved_by=signer)
+            exec_result = self.agent.approve(
+                approval_id, approved_by=signer, approved_role=approved_role)
             if isinstance(exec_result, str) and (
                     exec_result.startswith("no pending")
                     or exec_result.startswith("approved action denied")):
@@ -4451,7 +4623,8 @@ class Daemon:
         # Chat path: claim the approval first. Only after a *full* release
         # (not a partial dual-approval signature) grant one-shot/session allow
         # so the dashboard can re-submit and the model re-requests the tool.
-        approved = self.agent.broker.approve(approval_id, approved_by=signer)
+        approved = self.agent.broker.approve(
+            approval_id, approved_by=signer, approved_role=approved_role)
         if approved is None:
             return False
         if mode in ("chat", "always"):

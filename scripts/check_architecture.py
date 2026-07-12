@@ -41,13 +41,14 @@ INIT_FILE = os.path.join(HYBRIDAGENT, "__init__.py")
 
 # Local intra-package modules (not third-party).
 LOCAL_MODULES = {
-    "agent", "agent_service", "api_contract", "bm25", "bootstrap", "broker", "broker_client",
-    "compliance", "content_guard", "context", "contradiction", "cron",
+    "agent", "agent_service", "api_contract", "authn", "authz", "bm25", "bootstrap",
+    "broker", "broker_client",
+    "compliance", "content_guard", "context", "contradiction", "cron", "data_policy",
     "chat_agent", "debate", "deepthink", "embeddings", "escalation",
     "eval_history", "evals", "gateways", "grounding", "growth", "identity",
     "ingest", "llm", "logging_util", "marketplace", "m365_tools",
     "mcp_adapter", "mcp_client", "memory", "metrics", "multimodal", "notify",
-    "onboard", "orchestrator", "pack", "perception", "persona",
+    "onboard", "orchestrator", "organizations", "pack", "perception", "persona",
     "persistence", "plan_execute", "planner", "plugins", "pricing", "pulse",
     "rag", "readiness", "real_tools", "reflection", "reflexion", "router",
     "router_model", "sandbox", "scratchpad", "search", "security_scan",

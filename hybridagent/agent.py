@@ -254,7 +254,7 @@ class PraxisAgent:
 
     # ------------------------------------------------- approval completion
     def approve(self, approval_id: str, approved_by: str = "user",
-                approval_notes: str = "") -> str:
+                approval_notes: str = "", approved_role: str = "") -> str:
         # Peek for kill/egress before claiming so dual-approval partials stay
         # pending; after a full claim we still re-check before execution.
         peek = self.broker.pending.get(approval_id)
@@ -268,7 +268,8 @@ class PraxisAgent:
             if blocked:
                 return f"approved action denied: {blocked}"
         pending = self.broker.approve(
-            approval_id, approved_by=approved_by, approval_notes=approval_notes)
+            approval_id, approved_by=approved_by, approval_notes=approval_notes,
+            approved_role=approved_role)
         if not pending:
             return f"no pending approval {approval_id}"
         tool = self.registry.get(pending.tool)
