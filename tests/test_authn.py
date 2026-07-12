@@ -9,6 +9,7 @@ from hybridagent.daemon import Daemon
 from hybridagent.llm import LLMClient
 from hybridagent.organizations import OrganizationDirectory
 from hybridagent.persistence import Store
+from hybridagent.workspaces import WorkspaceDirectory
 
 
 def setup_identity(tmp_path):
@@ -71,6 +72,9 @@ def test_cookie_parser_is_strict_and_named():
 
 def test_v1_session_cookie_requires_csrf_for_mutation(tmp_path):
     store, organization, user = setup_identity(tmp_path)
+    workspace = WorkspaceDirectory(store).create(
+        organization.organization_id, "MAT-1", "matter", "Matter",
+        owner_user_id=user.user_id)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = int(sock.getsockname()[1])
@@ -105,7 +109,8 @@ def test_v1_session_cookie_requires_csrf_for_mutation(tmp_path):
             f"{base}/api/v1/board/cards", method="POST",
             data=b'{"title":"Accepted"}',
             headers={"Content-Type": "application/json", "Cookie": cookie,
-                     "X-CSRF-Token": payload["csrf_token"]})
+                     "X-CSRF-Token": payload["csrf_token"],
+                     "X-Praxis-Workspace-ID": workspace.workspace_id})
         with urllib.request.urlopen(accepted, timeout=10) as response:
             assert response.status == 201
     finally:
@@ -122,6 +127,13 @@ def test_professional_http_routes_enforce_tenant_and_role(tmp_path):
     reviewer = directory.create_user("reviewer@example.com")
     directory.add_membership(org_a.organization_id, reviewer.user_id,
                              roles=("reviewer",))
+    workspaces = WorkspaceDirectory(store)
+    workspace_a = workspaces.create(
+        org_a.organization_id, "A-1", "matter", "A",
+        owner_user_id=admin_a.user_id)
+    workspace_b = workspaces.create(
+        org_b.organization_id, "B-1", "matter", "B",
+        owner_user_id=admin_b.user_id)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = int(sock.getsockname()[1])
@@ -140,12 +152,13 @@ def test_professional_http_routes_enforce_tenant_and_role(tmp_path):
             body = json.loads(response.read())["data"]
             return response.headers["Set-Cookie"].split(";", 1)[0], body["csrf_token"]
 
-    def create(cookie: str, csrf: str, title: str) -> int:
+    def create(cookie: str, csrf: str, workspace_id: str, title: str) -> int:
         req = urllib.request.Request(
             f"{base}/api/v1/board/cards", method="POST",
             data=json.dumps({"title": title}).encode(),
             headers={"Content-Type": "application/json", "Cookie": cookie,
-                     "X-CSRF-Token": csrf})
+                     "X-CSRF-Token": csrf,
+                     "X-Praxis-Workspace-ID": workspace_id})
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
                 return response.status
@@ -156,13 +169,18 @@ def test_professional_http_routes_enforce_tenant_and_role(tmp_path):
         cookie_a, csrf_a = session(admin_a.user_id, org_a.organization_id)
         cookie_b, csrf_b = session(admin_b.user_id, org_b.organization_id)
         cookie_r, csrf_r = session(reviewer.user_id, org_a.organization_id)
-        assert create(cookie_a, csrf_a, "Only A") == 201
-        assert create(cookie_b, csrf_b, "Only B") == 201
-        assert create(cookie_r, csrf_r, "Reviewer denied") == 403
+        assert create(cookie_a, csrf_a, workspace_a.workspace_id, "Only A") == 201
+        assert create(cookie_b, csrf_b, workspace_b.workspace_id, "Only B") == 201
+        assert create(
+            cookie_r, csrf_r, workspace_a.workspace_id, "Reviewer denied") == 403
 
-        for cookie, expected in ((cookie_a, "Only A"), (cookie_b, "Only B")):
+        for cookie, workspace_id, expected in (
+                (cookie_a, workspace_a.workspace_id, "Only A"),
+                (cookie_b, workspace_b.workspace_id, "Only B")):
             req = urllib.request.Request(
-                f"{base}/api/v1/board/cards", headers={"Cookie": cookie})
+                f"{base}/api/v1/board/cards",
+                headers={"Cookie": cookie,
+                         "X-Praxis-Workspace-ID": workspace_id})
             with urllib.request.urlopen(req, timeout=10) as response:
                 items = json.loads(response.read())["data"]["items"]
             assert [item["title"] for item in items] == [expected]

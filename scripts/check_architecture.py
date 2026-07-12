@@ -45,7 +45,7 @@ LOCAL_MODULES = {
     "broker", "broker_client",
     "compliance", "content_guard", "context", "contradiction", "cron", "data_policy",
     "chat_agent", "debate", "deepthink", "embeddings", "escalation",
-    "eval_history", "evals", "gateways", "grounding", "growth", "identity",
+    "eval_history", "evals", "external_rooms", "gateways", "grounding", "growth", "identity",
     "ingest", "llm", "logging_util", "marketplace", "m365_tools",
     "mcp_adapter", "mcp_client", "memory", "metrics", "multimodal", "notify",
     "onboard", "orchestrator", "organizations", "pack", "perception", "persona",
@@ -54,7 +54,7 @@ LOCAL_MODULES = {
     "router_model", "sandbox", "scratchpad", "search", "security_scan",
     "skill_evaluator", "skills", "structured", "task_manager", "tools",
     "validation", "vault", "vecsim", "vertical_evals", "voice", "wiki",
-    "wiki_safe", "wsutil", "verifier", "verifier_llm", "benchmark", "errors",
+    "wiki_safe", "workspaces", "workspace_context", "workspace_timeline", "wsutil", "verifier", "verifier_llm", "benchmark", "errors",
  "goal_runner", "context_profile", "a2a_client", "providers",
 }
 

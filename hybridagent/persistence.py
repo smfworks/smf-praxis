@@ -27,6 +27,7 @@ from . import config as cfg
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_items (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL DEFAULT '',
     tier       TEXT NOT NULL,
     text       TEXT NOT NULL,
     provenance TEXT NOT NULL DEFAULT 'agent',
@@ -203,6 +204,7 @@ CREATE TABLE IF NOT EXISTS eval_baseline (
 );
 CREATE TABLE IF NOT EXISTS runs (
     run_id      TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT '',
     goal        TEXT NOT NULL DEFAULT '',
     kind        TEXT NOT NULL DEFAULT 'plan',
     status      TEXT NOT NULL DEFAULT 'running',
@@ -224,6 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
 CREATE TABLE IF NOT EXISTS board_cards (
     card_id    TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL DEFAULT '',
+    workspace_id TEXT NOT NULL DEFAULT '',
     title      TEXT NOT NULL DEFAULT '',
     goal       TEXT NOT NULL DEFAULT '',
     lane       TEXT NOT NULL DEFAULT 'backlog',
@@ -275,6 +278,126 @@ CREATE TABLE IF NOT EXISTS organization_team_members (
     user_id    TEXT NOT NULL REFERENCES organization_users(user_id),
     created_ts REAL NOT NULL,
     PRIMARY KEY (team_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS professional_workspaces (
+    workspace_id        TEXT PRIMARY KEY,
+    organization_id     TEXT NOT NULL REFERENCES organizations(organization_id),
+    human_identifier    TEXT NOT NULL COLLATE NOCASE,
+    kind                TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    client_or_subject   TEXT NOT NULL DEFAULT '',
+    owner_user_id       TEXT NOT NULL REFERENCES organization_users(user_id),
+    team_id             TEXT NOT NULL DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'active',
+    confidentiality     TEXT NOT NULL DEFAULT 'internal',
+    jurisdiction        TEXT NOT NULL DEFAULT '',
+    location            TEXT NOT NULL DEFAULT '',
+    opened_date         TEXT NOT NULL DEFAULT '',
+    target_date         TEXT NOT NULL DEFAULT '',
+    field_schema_json   TEXT NOT NULL DEFAULT '{}',
+    custom_fields_json  TEXT NOT NULL DEFAULT '{}',
+    external_links_json TEXT NOT NULL DEFAULT '[]',
+    legal_hold          INTEGER NOT NULL DEFAULT 0,
+    hold_reason         TEXT NOT NULL DEFAULT '',
+    created_ts          REAL NOT NULL,
+    updated_ts          REAL NOT NULL,
+    UNIQUE (organization_id, human_identifier)
+);
+CREATE INDEX IF NOT EXISTS ix_workspaces_org_status
+    ON professional_workspaces(organization_id, status, created_ts);
+CREATE TABLE IF NOT EXISTS workspace_parties (
+    party_id       TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    workspace_id   TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    kind           TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    role           TEXT NOT NULL DEFAULT '',
+    contacts_json  TEXT NOT NULL DEFAULT '[]',
+    created_ts     REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_workspace_parties_scope
+    ON workspace_parties(organization_id, workspace_id, created_ts);
+CREATE TABLE IF NOT EXISTS workspace_timeline_events (
+    event_id        TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    workspace_id    TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    sequence        INTEGER NOT NULL,
+    event_type      TEXT NOT NULL,
+    summary         TEXT NOT NULL,
+    actor_user_id   TEXT NOT NULL,
+    links_json      TEXT NOT NULL DEFAULT '[]',
+    occurred_ts     REAL NOT NULL,
+    created_ts      REAL NOT NULL,
+    UNIQUE (workspace_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS ix_workspace_timeline_scope
+    ON workspace_timeline_events(organization_id, workspace_id, sequence);
+CREATE TRIGGER IF NOT EXISTS prevent_workspace_timeline_update
+BEFORE UPDATE ON workspace_timeline_events
+BEGIN
+    SELECT RAISE(ABORT, 'workspace timeline events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_workspace_timeline_delete
+BEFORE DELETE ON workspace_timeline_events
+BEGIN
+    SELECT RAISE(ABORT, 'workspace timeline events are append-only');
+END;
+CREATE TABLE IF NOT EXISTS workspace_deadlines (
+    deadline_id       TEXT PRIMARY KEY,
+    organization_id   TEXT NOT NULL,
+    workspace_id      TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    title             TEXT NOT NULL,
+    due_date          TEXT NOT NULL,
+    actor_user_id     TEXT NOT NULL,
+    consequential     INTEGER NOT NULL DEFAULT 0,
+    calculation_source TEXT NOT NULL DEFAULT '',
+    calculation_rule  TEXT NOT NULL DEFAULT '',
+    links_json        TEXT NOT NULL DEFAULT '[]',
+    review_status     TEXT NOT NULL DEFAULT 'not_required',
+    reviewer_user_id  TEXT NOT NULL DEFAULT '',
+    reviewed_ts       REAL,
+    created_ts        REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_workspace_deadlines_scope
+    ON workspace_deadlines(organization_id, workspace_id, due_date);
+CREATE TABLE IF NOT EXISTS workspace_resources (
+    organization_id TEXT NOT NULL,
+    workspace_id    TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    item_type       TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    created_ts      REAL NOT NULL,
+    PRIMARY KEY (workspace_id, item_type, item_id)
+);
+CREATE TABLE IF NOT EXISTS external_rooms (
+    room_id          TEXT PRIMARY KEY,
+    organization_id  TEXT NOT NULL,
+    workspace_id     TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    name             TEXT NOT NULL,
+    permissions_json TEXT NOT NULL DEFAULT '[]',
+    created_by       TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'active',
+    created_ts       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_external_rooms_scope
+    ON external_rooms(organization_id, workspace_id, created_ts);
+CREATE TABLE IF NOT EXISTS external_room_members (
+    room_id      TEXT NOT NULL REFERENCES external_rooms(room_id),
+    user_id      TEXT NOT NULL,
+    invited_by   TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'active',
+    expires_ts   REAL,
+    revoked_by   TEXT NOT NULL DEFAULT '',
+    revoked_ts   REAL,
+    created_ts   REAL NOT NULL,
+    PRIMARY KEY (room_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS external_room_items (
+    room_id      TEXT NOT NULL REFERENCES external_rooms(room_id),
+    item_type    TEXT NOT NULL,
+    item_id      TEXT NOT NULL,
+    shared_by    TEXT NOT NULL,
+    created_ts   REAL NOT NULL,
+    PRIMARY KEY (room_id, item_type, item_id)
 );
 CREATE TABLE IF NOT EXISTS professional_sessions (
     session_id      TEXT PRIMARY KEY,
@@ -420,12 +543,17 @@ class Store:
         })
         self._ensure_columns_locked("board_cards", {
             "organization_id": "TEXT NOT NULL DEFAULT ''",
+            "workspace_id": "TEXT NOT NULL DEFAULT ''",
         })
         self._ensure_columns_locked("memory_items", {
+            "workspace_id": "TEXT NOT NULL DEFAULT ''",
             "salience": "REAL NOT NULL DEFAULT 1.0",
             "access_count": "INTEGER NOT NULL DEFAULT 0",
             "last_access_ts": "REAL",
             "expires_at": "REAL",
+        })
+        self._ensure_columns_locked("runs", {
+            "workspace_id": "TEXT NOT NULL DEFAULT ''",
         })
         self._ensure_columns_locked("tasks", {
             "output": "TEXT NOT NULL DEFAULT ''",
@@ -458,40 +586,46 @@ class Store:
     def add_memory(self, tier: str, text: str, provenance: str,
                    kind: str, ts: float | None = None,
                    salience: float = 1.0,
-                   expires_at: float | None = None) -> int:
+                   expires_at: float | None = None,
+                   workspace_id: str = "") -> int:
         ts = time.time() if ts is None else ts
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO memory_items"
-                "(tier,text,provenance,kind,salience,expires_at,ts) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (tier, text, provenance, kind, salience, expires_at, ts),
+                "(workspace_id,tier,text,provenance,kind,salience,expires_at,ts) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (workspace_id, tier, text, provenance, kind, salience, expires_at, ts),
             )
             self._conn.commit()
             return int(cur.lastrowid or 0)
 
-    def load_memory(self, tier: str) -> list[dict]:
+    def load_memory(self, tier: str, workspace_id: str | None = "") -> list[dict]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT id,text,provenance,kind,salience,access_count,"
-                "last_access_ts,expires_at,ts FROM memory_items "
-                "WHERE tier=? ORDER BY id ASC", (tier,),
-            ).fetchall()
+            sql = ("SELECT id,workspace_id,text,provenance,kind,salience,access_count,"
+                   "last_access_ts,expires_at,ts FROM memory_items WHERE tier=?")
+            params: tuple = (tier,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            rows = self._conn.execute(sql + " ORDER BY id ASC", params).fetchall()
         return [dict(r) for r in rows]
 
-    def list_memory(self, tier: str | None = None, limit: int = 300) -> list[dict]:
+    def list_memory(self, tier: str | None = None, limit: int = 300,
+                    workspace_id: str | None = "") -> list[dict]:
         """All memory items (optionally one tier), newest first — Memory Studio."""
         cols = ("id,tier,text,provenance,kind,salience,access_count,"
                 "last_access_ts,expires_at,ts")
         with self._lock:
+            sql = f"SELECT {cols} FROM memory_items WHERE 1=1"
+            params: tuple = ()
             if tier:
-                rows = self._conn.execute(
-                    f"SELECT {cols} FROM memory_items WHERE tier=? "
-                    "ORDER BY id DESC LIMIT ?", (tier, limit)).fetchall()
-            else:
-                rows = self._conn.execute(
-                    f"SELECT {cols} FROM memory_items ORDER BY id DESC LIMIT ?",
-                    (limit,)).fetchall()
+                sql += " AND tier=?"
+                params += (tier,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            rows = self._conn.execute(
+                sql + " ORDER BY id DESC LIMIT ?", params + (limit,)).fetchall()
         return [dict(r) for r in rows]
 
     def record_memory_access(self, memory_id: int) -> None:
@@ -1232,15 +1366,27 @@ class Store:
             return None
 
     # ------------------------------------------------------------- run traces
-    def start_run(self, run_id: str, goal: str = "", kind: str = "plan") -> None:
+    def start_run(self, run_id: str, goal: str = "", kind: str = "plan",
+                  workspace_id: str = "") -> None:
         """Open a durable, replayable run trace (idempotent on ``run_id``)."""
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO runs(run_id,goal,kind,status,started_ts,event_count) "
-                "VALUES (?,?,?,?,?,0) ON CONFLICT(run_id) DO NOTHING",
-                (run_id, goal, kind, "running", time.time()),
-            )
-            self._conn.commit()
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing = self._conn.execute(
+                    "SELECT workspace_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                if existing is not None:
+                    if existing["workspace_id"] != workspace_id:
+                        raise ValueError("run id already belongs to another workspace")
+                else:
+                    self._conn.execute(
+                        "INSERT INTO runs(run_id,workspace_id,goal,kind,status,"
+                        "started_ts,event_count) VALUES (?,?,?,?,?,?,0)",
+                        (run_id, workspace_id, goal, kind, "running", time.time()),
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def add_run_event(self, run_id: str, kind: str, data: dict | None = None,
                       node_id: str = "", label: str = "") -> int:
@@ -1275,20 +1421,28 @@ class Store:
             )
             self._conn.commit()
 
-    def list_runs(self, limit: int = 50) -> list[dict]:
+    def list_runs(self, limit: int = 50,
+                  workspace_id: str | None = "") -> list[dict]:
         with self._lock:
+            sql = ("SELECT run_id,workspace_id,goal,kind,status,started_ts,ended_ts,"
+                   "event_count FROM runs")
+            params: tuple = ()
+            if workspace_id is not None:
+                sql += " WHERE workspace_id=?"
+                params = (workspace_id,)
             rows = self._conn.execute(
-                "SELECT run_id,goal,kind,status,started_ts,ended_ts,event_count "
-                "FROM runs ORDER BY started_ts DESC LIMIT ?", (limit,),
-            ).fetchall()
+                sql + " ORDER BY started_ts DESC LIMIT ?", params + (limit,)).fetchall()
         return [dict(r) for r in rows]
 
-    def get_run(self, run_id: str) -> dict | None:
+    def get_run(self, run_id: str, workspace_id: str | None = "") -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT run_id,goal,kind,status,started_ts,ended_ts,event_count "
-                "FROM runs WHERE run_id=?", (run_id,),
-            ).fetchone()
+            sql = ("SELECT run_id,workspace_id,goal,kind,status,started_ts,ended_ts,"
+                   "event_count FROM runs WHERE run_id=?")
+            params: tuple = (run_id,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            row = self._conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
     # ------------------------------------------------------------- run routing
@@ -1364,12 +1518,18 @@ class Store:
             "trend": trend,
         }
 
-    def list_run_events(self, run_id: str, limit: int = 2000) -> list[dict]:
+    def list_run_events(self, run_id: str, limit: int = 2000,
+                        workspace_id: str | None = "") -> list[dict]:
         with self._lock:
+            sql = ("SELECT re.seq,re.ts,re.kind,re.node_id,re.label,re.data_json "
+                   "FROM run_events re JOIN runs r ON r.run_id=re.run_id "
+                   "WHERE re.run_id=?")
+            params: tuple = (run_id,)
+            if workspace_id is not None:
+                sql += " AND r.workspace_id=?"
+                params += (workspace_id,)
             rows = self._conn.execute(
-                "SELECT seq,ts,kind,node_id,label,data_json FROM run_events "
-                "WHERE run_id=? ORDER BY seq ASC LIMIT ?", (run_id, limit),
-            ).fetchall()
+                sql + " ORDER BY re.seq ASC LIMIT ?", params + (limit,)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -1515,66 +1675,107 @@ class Store:
 
     # ------------------------------------------------------------- work board
     def add_card(self, card_id: str, title: str, goal: str,
-                 lane: str = "backlog", organization_id: str = "") -> None:
+                 lane: str = "backlog", organization_id: str = "",
+                 workspace_id: str = "", run_id: str = "") -> None:
         now = time.time()
         with self._lock:
             self._conn.execute(
-                "INSERT INTO board_cards(card_id,organization_id,title,goal,lane,run_id,status,"
-                "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?)",
-                (card_id, organization_id, title, goal, lane, "", "", now, now),
+                "INSERT INTO board_cards(card_id,organization_id,workspace_id,title,goal,"
+                "lane,run_id,status,created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (card_id, organization_id, workspace_id, title, goal, lane,
+                 run_id, "", now, now),
             )
             self._conn.commit()
 
     def list_cards(self, limit: int = 200,
-                   organization_id: str | None = None) -> list[dict]:
+                   organization_id: str | None = "",
+                   workspace_id: str | None = "") -> list[dict]:
         with self._lock:
-            if organization_id is None:
-                rows = self._conn.execute(
-                    "SELECT card_id,organization_id,title,goal,lane,run_id,status,created_ts,updated_ts "
-                    "FROM board_cards ORDER BY created_ts ASC LIMIT ?", (limit,),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT card_id,organization_id,title,goal,lane,run_id,status,created_ts,updated_ts "
-                    "FROM board_cards WHERE organization_id=? ORDER BY created_ts ASC LIMIT ?",
-                    (organization_id, limit),
-                ).fetchall()
+            sql = ("SELECT card_id,organization_id,workspace_id,title,goal,lane,run_id,"
+                   "status,created_ts,updated_ts FROM board_cards WHERE 1=1")
+            params: tuple = ()
+            if organization_id is not None:
+                sql += " AND organization_id=?"
+                params += (organization_id,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            rows = self._conn.execute(
+                sql + " ORDER BY created_ts ASC LIMIT ?", params + (limit,)).fetchall()
         return [dict(r) for r in rows]
 
-    def get_card(self, card_id: str) -> dict | None:
+    def list_unowned_cards(self, limit: int = 200) -> list[dict]:
+        """Legacy view that quarantines all tenant/workspace-owned cards."""
+        return self.list_cards(limit, organization_id="", workspace_id="")
+
+    def get_card(self, card_id: str, workspace_id: str | None = None,
+                 organization_id: str | None = None) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT card_id,title,goal,lane,run_id,status,created_ts,updated_ts "
-                "FROM board_cards WHERE card_id=?", (card_id,),
-            ).fetchone()
+            sql = ("SELECT card_id,organization_id,workspace_id,title,goal,lane,run_id,"
+                   "status,created_ts,updated_ts FROM board_cards WHERE card_id=?")
+            params: tuple = (card_id,)
+            if organization_id is not None:
+                sql += " AND organization_id=?"
+                params += (organization_id,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            row = self._conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
-    def move_card(self, card_id: str, lane: str) -> None:
+    def move_card(self, card_id: str, lane: str, *,
+                  organization_id: str | None = None,
+                  workspace_id: str | None = None) -> bool:
         with self._lock:
-            self._conn.execute(
-                "UPDATE board_cards SET lane=?, updated_ts=? WHERE card_id=?",
-                (lane, time.time(), card_id),
-            )
+            sql = "UPDATE board_cards SET lane=?, updated_ts=? WHERE card_id=?"
+            params: tuple = (lane, time.time(), card_id)
+            if organization_id is not None:
+                sql += " AND organization_id=?"
+                params += (organization_id,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            cur = self._conn.execute(sql, params)
             self._conn.commit()
+            return cur.rowcount > 0
 
     def set_card_run(self, card_id: str, run_id: str, status: str,
-                     lane: str) -> None:
+                     lane: str, *, organization_id: str | None = None,
+                     workspace_id: str | None = None) -> bool:
         with self._lock:
-            self._conn.execute(
-                "UPDATE board_cards SET run_id=?, status=?, lane=?, updated_ts=? "
-                "WHERE card_id=?", (run_id, status, lane, time.time(), card_id),
-            )
+            sql = ("UPDATE board_cards SET run_id=?, status=?, lane=?, updated_ts=? "
+                   "WHERE card_id=?")
+            params: tuple = (run_id, status, lane, time.time(), card_id)
+            if organization_id is not None:
+                sql += " AND organization_id=?"
+                params += (organization_id,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            cur = self._conn.execute(sql, params)
             self._conn.commit()
+            return cur.rowcount > 0
 
-    def delete_card(self, card_id: str) -> None:
+    def delete_card(self, card_id: str, *,
+                    organization_id: str | None = None,
+                    workspace_id: str | None = None) -> bool:
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM board_cards WHERE card_id=?", (card_id,))
+            sql = "DELETE FROM board_cards WHERE card_id=?"
+            params: tuple = (card_id,)
+            if organization_id is not None:
+                sql += " AND organization_id=?"
+                params += (organization_id,)
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params += (workspace_id,)
+            cur = self._conn.execute(sql, params)
             self._conn.commit()
+            return cur.rowcount > 0
 
     def idempotent_add_card(
         self, key: str, fingerprint: str, card_id: str, title: str, goal: str,
         *, max_receipts: int = 4096, organization_id: str = "",
+        workspace_id: str = "",
     ) -> tuple[dict, bool, bool]:
         """Atomically replay or create a card across threads and processes.
 
@@ -1599,12 +1800,14 @@ class Store:
 
                 now = time.time()
                 self._conn.execute(
-                    "INSERT INTO board_cards(card_id,organization_id,title,goal,lane,run_id,status,"
-                    "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (card_id, organization_id, title, goal, "backlog", "", "", now, now),
+                    "INSERT INTO board_cards(card_id,organization_id,workspace_id,title,goal,"
+                    "lane,run_id,status,created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (card_id, organization_id, workspace_id, title, goal,
+                     "backlog", "", "", now, now),
                 )
                 card = {
                     "card_id": card_id, "organization_id": organization_id,
+                    "workspace_id": workspace_id,
                     "title": title, "goal": goal,
                     "lane": "backlog", "run_id": "", "status": "",
                     "created_ts": now, "updated_ts": now,
