@@ -1,0 +1,1 @@
+"""Education vertical policy."""
