@@ -41,7 +41,7 @@ INIT_FILE = os.path.join(HYBRIDAGENT, "__init__.py")
 
 # Local intra-package modules (not third-party).
 LOCAL_MODULES = {
-    "agent", "agent_service", "bm25", "bootstrap", "broker", "broker_client",
+    "agent", "agent_service", "api_contract", "bm25", "bootstrap", "broker", "broker_client",
     "compliance", "content_guard", "context", "contradiction", "cron",
     "chat_agent", "debate", "deepthink", "embeddings", "escalation",
     "eval_history", "evals", "gateways", "grounding", "growth", "identity",

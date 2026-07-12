@@ -126,6 +126,16 @@
       "verification": "grep -q 'Loop engineering\\|six primitives\\|maturity ladder' docs/harness/*.md AGENTS.md",
       "evidence": "v0.21.11: hybridagent/goal_runner.py (GoalRunner, Level 1); praxis goal CLI command; tests/test_goal_runner.py (6 tests). docs/harness/loop-engineering.md (six primitives + maturity ladder 0-5). Four silent costs guarded by construction. Verified end-to-end: praxis goal \"list todays events\" stopped=approved in 1 turn.",
       "notes": "Loop engineering builds one floor above the harness (course L13). Level 1 Goal Runner: loop agent.handle until H05 verifier confirms done (threshold 0.3) or max_turns (default 8). Held actions block the loop (never auto-approve unless --approve-all). to_record() is the anti-comprehension-rot log. Level 2 (scheduled) is a thin cron wrapper. Level 3 (multi-agent) needs PPT best-of-N deferred from H05. Level 4-5 future."
+    },
+    {
+      "id": "PP00",
+      "priority": 100,
+      "area": "professional-platform",
+      "title": "Phase 0 architecture baseline and versioned API contract",
+      "user_visible_behavior": "Praxis exposes a backward-compatible, versioned /api/v1 contract with stable envelopes, authenticated remote access, pagination, validators, durable idempotency, and explicit architecture decisions.",
+      "verification": "python3 -m pytest tests/test_api_contract.py tests/test_workboard.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
+      "status": "passing",
+      "evidence": "v0.22.0: five accepted ADRs; docs/api-v1.md; hybridagent/api_contract.py; authenticated v1 routes; signed snapshot-bound cursors; conditional ETags; stable error envelopes; bounded durable SQLite idempotency receipts. Verified: API contract 21/21; full pytest; evals 40/40; ruff; mypy 91 modules; architecture checks; clean wheel install. Independent maker-checker PASS, including 8 OS processes against one SQLite DB: 1 create, 7 replays, 0 conflicts/errors, one card; rollback and fingerprint-conflict behavior verified."
     }
   ]
 }

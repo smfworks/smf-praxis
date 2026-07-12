@@ -6,10 +6,11 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.21.2` (`hybridagent/__init__.py` + `pyproject.toml`)
+- **Version:** `0.22.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Active branch:** `feat/professional-platform-phase-0`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
-- **Highest priority unfinished feature:** H05 — Maker-checker separation documented for the Praxis dev review loop (`feature_list.json`)
+- **Current WIP:** none — PP00 passed; Phase 1 is next
 - **Current blocker:** none
 
 ## Baseline verification (captured 2026-07-11)
@@ -37,7 +38,7 @@ Baseline is **green**. New work must not regress any of these.
 
 ## In Progress
 
-(none — WIP=1 enforced; next pick is H05)
+(none — PP00 passed; Phase 1 is the next WIP=1 increment)
 
 ## Known Issues / Risks
 
@@ -49,12 +50,9 @@ Baseline is **green**. New work must not regress any of these.
 
 ## Next Steps (priority order)
 
-1. **H05** — Maker-checker separation for the dev-review loop. Encode in `AGENTS.md` and `evaluator-rubric.md` that the verifier must be an independent session (ideally a different model). Behavior change, not just docs.
-2. **H06** — Audit whether dependency-free-core and injection-boundary invariants have dedicated executable checks (grep/lint/custom test), not just aggregate test coverage. Add if missing.
-3. **H07** — Improve agent-oriented error messages in `broker.py`/`validation.py` denials: what + why + how-to-fix. Enables self-correction loops.
-4. **H08** — Make `context.py` compaction model-aware (per-model harness profiles).
-5. **H10** — Document Praxis's loop capabilities as the six loop primitives + maturity ladder.
-6. **H09** — First harness simplification pass: disable one component, benchmark with `praxis eval --set-baseline`, decide keep/remove.
+1. Begin **Phase 1**: organization persistence → secure sessions → RBAC/ABAC → classification/retention → isolation gate.
+2. Preserve Hermes and repository WIP=1 throughout the professional-platform sequence.
+3. Require independent maker-checker PASS before every phase promotion.
 
 ## Session Record
 
