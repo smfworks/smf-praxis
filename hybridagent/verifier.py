@@ -223,6 +223,12 @@ class VerifiedChatAgent:
 
             # Only a clean final answer is verified (errors are Reflexion's domain).
             if terminal is None or terminal.type != "final":
+                if self.claim_ledger is not None:
+                    yield AgentEvent("verification", {
+                        "approved": False,
+                        "critique": "Professional output generation failed; release is blocked.",
+                        "checks": ["execution"]})
+                    return
                 if not claims_ready():
                     yield blocked()
                     return
@@ -230,12 +236,21 @@ class VerifiedChatAgent:
                 yield terminal if terminal is not None else AgentEvent(
                     "final", {"text": "(no response)"})
                 return
-            verdict = self.verifier.verify(
-                task, str(terminal.data.get("text", "")),
-                held=traj.held, action_denied=traj.consequential_denied,
-                claim_ledger=self.claim_ledger,
-                organization_id=self.organization_id,
-                workspace_id=self.workspace_id)
+            try:
+                verdict = self.verifier.verify(
+                    task, str(terminal.data.get("text", "")),
+                    held=traj.held, action_denied=traj.consequential_denied,
+                    claim_ledger=self.claim_ledger,
+                    organization_id=self.organization_id,
+                    workspace_id=self.workspace_id)
+            except Exception:
+                if self.claim_ledger is None:
+                    raise
+                yield AgentEvent("verification", {
+                    "approved": False,
+                    "critique": "Professional output verification failed; release is blocked.",
+                    "checks": ["verification"]})
+                return
             last = attempt >= attempts - 1
             # A revision is safe only if the turn executed no side effect AND held
             # nothing for approval. Re-running a *held* turn would re-propose the

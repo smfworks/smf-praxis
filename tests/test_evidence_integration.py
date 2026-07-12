@@ -184,6 +184,47 @@ def test_scoped_generator_exception_is_redacted():
     assert "SECRET" not in str(events)
 
 
+def test_scoped_verifier_exception_is_redacted():
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("critique", {"text": "BUFFERED-SECRET"})
+            yield AgentEvent("final", {"text": "FINAL-SECRET"})
+
+    class BrokenVerifier(AnswerVerifier):
+        def verify(self, *args, **kwargs):
+            raise RuntimeError("VERIFIER-SECRET")
+
+    events = list(VerifiedChatAgent(
+        Inner(), verifier=BrokenVerifier(), claim_ledger=Ready(),
+        organization_id="org", workspace_id="ws").run(
+            [{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["verification"]
+    assert "SECRET" not in str(events)
+
+
+def test_scoped_error_terminal_is_redacted():
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("critique", {"text": "SCOPED-SECRET"})
+            yield AgentEvent("error", {"error": "ERROR-SECRET"})
+
+    events = list(VerifiedChatAgent(
+        Inner(), claim_ledger=Ready(), organization_id="org",
+        workspace_id="ws").run([{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["execution"]
+    assert "SECRET" not in str(events)
+
+
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
     store, org, _owner, workspace = setup_runtime(tmp_path)
     ledger = ClaimLedger(store)

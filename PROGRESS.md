@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.15` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.16` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -64,8 +64,10 @@ Baseline is **green**. New work must not regress any of these.
     every scoped inner event until terminal verification and a final readiness check.
     `0.25.15` extends that atomic boundary across all revision attempts and converts
     scoped generator failures to a generic release block, so critic details and
-    exception text cannot escape before readiness succeeds. Fresh independent
-    maker-checker pending.
+    exception text cannot escape before readiness succeeds. `0.25.16` closes the
+    remaining terminal boundaries: scoped custom-verifier exceptions and error/no-
+    terminal outcomes discard all buffered content and emit generic verification
+    failures. Fresh independent maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 
