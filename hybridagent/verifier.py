@@ -100,7 +100,8 @@ class AnswerVerifier:
         # 3) Optional independent critic model (a genuine second opinion).
         if self.critic is not None:
             try:
-                verdict = (self.critic(task, text) or "").strip()
+                raw_verdict = self.critic(task, text)
+                verdict = raw_verdict.strip() if isinstance(raw_verdict, str) else ""
             except Exception:
                 if claim_ledger is not None:
                     return VerificationVerdict(
@@ -108,11 +109,19 @@ class AnswerVerifier:
                         "Independent professional verification failed; release is blocked.",
                         ["critic_execution"])
                 verdict = "APPROVE"
-            if verdict.upper().startswith("REVISE"):
-                reason = (verdict.split(":", 1)[1].strip()
-                          if ":" in verdict else verdict)
+            normalized = verdict.upper()
+            if normalized.startswith("REVISE"):
+                reason = verdict.split(":", 1)[1].strip() if ":" in verdict else ""
+                if not reason and claim_ledger is not None:
+                    return VerificationVerdict(
+                        False, "Independent professional verification returned an "
+                        "invalid response; release is blocked.", ["critic_protocol"])
                 return VerificationVerdict(
                     False, f"A reviewer flagged: {reason}", ["critic"])
+            if normalized != "APPROVE" and claim_ledger is not None:
+                return VerificationVerdict(
+                    False, "Independent professional verification returned an "
+                    "invalid response; release is blocked.", ["critic_protocol"])
         return VerificationVerdict(True)
 
 
@@ -250,6 +259,13 @@ class VerifiedChatAgent:
                     workspace_id=self.workspace_id)
                 if not isinstance(verdict, VerificationVerdict):
                     raise TypeError("verifier returned an invalid verdict")
+                if type(verdict.approved) is not bool:
+                    raise TypeError("verdict approved must be bool")
+                if not isinstance(verdict.critique, str):
+                    raise TypeError("verdict critique must be str")
+                if (not isinstance(verdict.checks, list)
+                        or any(not isinstance(check, str) for check in verdict.checks)):
+                    raise TypeError("verdict checks must be a list of strings")
             except Exception:
                 if self.claim_ledger is None:
                     raise

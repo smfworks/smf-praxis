@@ -1,5 +1,7 @@
 """Runtime wiring from ingestion/multimodal/verification into evidence substrate."""
 
+import pytest
+
 from hybridagent.chat_agent import AgentEvent
 from hybridagent.claims import ClaimLedger
 from hybridagent.evidence import EvidenceRegistry
@@ -265,6 +267,56 @@ def test_scoped_malformed_verdict_is_redacted():
             [{"role": "user", "content": "release"}]))
     assert [event.type for event in events] == ["verification"]
     assert events[0].data["checks"] == ["verification"]
+    assert "SENSITIVE" not in str(events)
+
+
+def test_scoped_contract_type_confusion_is_blocked():
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "SCOPED-SENSITIVE-OUTPUT"})
+
+    malformed = [
+        VerificationVerdict(approved="yes"),  # type: ignore[arg-type]
+        VerificationVerdict(False, object(), []),  # type: ignore[arg-type]
+        VerificationVerdict(False, "bad", [object()]),  # type: ignore[list-item]
+    ]
+    class MalformedVerifier(AnswerVerifier):
+        def __init__(self, result):
+            super().__init__()
+            self.result = result
+
+        def verify(self, *args, **kwargs) -> VerificationVerdict:
+            return self.result
+
+    for verdict in malformed:
+        events = list(VerifiedChatAgent(
+            Inner(), verifier=MalformedVerifier(verdict), claim_ledger=Ready(),
+            organization_id="org", workspace_id="ws").run(
+                [{"role": "user", "content": "release"}]))
+        assert [event.type for event in events] == ["verification"]
+        assert "SENSITIVE" not in str(events)
+
+
+@pytest.mark.parametrize("critic_result", [None, "", "GARBAGE", [], "REVISE", "REVISE:"])
+def test_scoped_critic_requires_protocol_response(critic_result):
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "SCOPED-SENSITIVE-OUTPUT"})
+
+    events = list(VerifiedChatAgent(
+        Inner(), verifier=AnswerVerifier(critic=lambda *_: critic_result),
+        claim_ledger=Ready(), organization_id="org", workspace_id="ws",
+        max_revisions=0).run([{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["critic_protocol"]
     assert "SENSITIVE" not in str(events)
 
 
