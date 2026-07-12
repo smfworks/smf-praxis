@@ -43,7 +43,7 @@ INIT_FILE = os.path.join(HYBRIDAGENT, "__init__.py")
 LOCAL_MODULES = {
     "agent", "agent_service", "api_contract", "authn", "authz", "bm25", "bootstrap",
     "broker", "broker_client",
-    "compliance", "content_guard", "context", "contradiction", "cron", "custody", "data_policy",
+    "claims", "compliance", "content_guard", "context", "contradiction", "cron", "custody", "data_policy",
     "chat_agent", "debate", "deepthink", "embeddings", "escalation",
     "eval_history", "evals", "evidence", "extraction", "external_rooms", "gateways", "grounding", "growth", "identity",
     "ingest", "llm", "logging_util", "marketplace", "m365_tools",

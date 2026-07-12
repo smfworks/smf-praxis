@@ -434,6 +434,39 @@ CREATE TRIGGER IF NOT EXISTS prevent_custody_delete
 BEFORE DELETE ON evidence_custody_events BEGIN
     SELECT RAISE(ABORT, 'custody events are append-only');
 END;
+CREATE TABLE IF NOT EXISTS professional_claims (
+    claim_id         TEXT PRIMARY KEY,
+    organization_id  TEXT NOT NULL,
+    workspace_id     TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    text             TEXT NOT NULL,
+    material         INTEGER NOT NULL DEFAULT 1,
+    status           TEXT NOT NULL DEFAULT 'unresolved',
+    created_by       TEXT NOT NULL,
+    created_ts       REAL NOT NULL,
+    updated_ts       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_claims_scope
+    ON professional_claims(organization_id, workspace_id, status, created_ts);
+CREATE TABLE IF NOT EXISTS claim_evidence_links (
+    link_id          TEXT PRIMARY KEY,
+    organization_id  TEXT NOT NULL,
+    workspace_id     TEXT NOT NULL,
+    claim_id         TEXT NOT NULL REFERENCES professional_claims(claim_id),
+    span_id          TEXT NOT NULL REFERENCES evidence_spans(span_id),
+    relationship     TEXT NOT NULL,
+    rationale        TEXT NOT NULL,
+    created_by       TEXT NOT NULL,
+    created_ts       REAL NOT NULL,
+    UNIQUE (claim_id, span_id, relationship)
+);
+CREATE TRIGGER IF NOT EXISTS prevent_claim_link_update
+BEFORE UPDATE ON claim_evidence_links BEGIN
+    SELECT RAISE(ABORT, 'claim evidence links are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_claim_link_delete
+BEFORE DELETE ON claim_evidence_links BEGIN
+    SELECT RAISE(ABORT, 'claim evidence links are append-only');
+END;
 CREATE TABLE IF NOT EXISTS workspace_parties (
     party_id       TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
