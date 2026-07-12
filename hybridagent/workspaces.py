@@ -118,7 +118,7 @@ class WorkspaceDirectory:
     def list_for(self, organization_id: str) -> list[Workspace]:
         rows = self.store._directory_all(
             "SELECT * FROM professional_workspaces WHERE organization_id=? "
-            "ORDER BY created_ts,workspace_id", (organization_id,))
+            "ORDER BY created_ts,rowid", (organization_id,))
         return [self._workspace(row) for row in rows]
 
     def set_archived(self, organization_id: str, workspace_id: str, *,
