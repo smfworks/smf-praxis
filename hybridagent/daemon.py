@@ -2052,6 +2052,23 @@ class _StatusHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             declared_length = -1
         if declared_length < 0 or declared_length > MAX_JSON_BODY_BYTES:
+            # Darwin resets a TCP connection closed with unread request bytes, which can
+            # discard the structured 413 response. Drain only a bounded amount: this
+            # preserves the response for normal oversize mistakes without allowing an
+            # attacker-controlled Content-Length to trigger an unbounded read.
+            drain_remaining = min(max(declared_length, 0), MAX_JSON_BODY_BYTES * 4)
+            prior_timeout = self.connection.gettimeout()
+            try:
+                self.connection.settimeout(0.1)
+                while drain_remaining:
+                    chunk = self.rfile.read(min(drain_remaining, 64 * 1024))
+                    if not chunk:
+                        break
+                    drain_remaining -= len(chunk)
+            except OSError:
+                pass
+            finally:
+                self.connection.settimeout(prior_timeout)
             self._v1_response(error_envelope(
                 "payload_too_large",
                 f"JSON body must be at most {MAX_JSON_BODY_BYTES} bytes",
