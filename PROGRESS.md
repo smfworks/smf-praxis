@@ -76,7 +76,8 @@ Baseline is **green**. New work must not regress any of these.
     critic grammar, preventing string-subclass method dispatch and malformed REVISE
     prefixes. `0.25.20` rejects verdict subclasses and snapshots each exact built-in
     field once before any retry or release decision, closing stateful descriptor and
-    repeated-read races. Fresh independent maker-checker pending.
+    repeated-read races. Independent maker-checker PASS on exact commit
+    `ea090056c3515c7650024a0ce9e480dfef42801e`; Phase 3 release gate approved.
 
 ### Phase 2 release-candidate evidence
 

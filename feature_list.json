@@ -164,8 +164,8 @@
       "title": "Phase 3 authority, evidence, claims and chain of custody",
       "user_visible_behavior": "Praxis preserves canonical source versions, exact extraction lineage, append-only custody, claim support state, and applicable authority policy within tenant-owned workspaces.",
       "verification": "python3 -m pytest tests/test_evidence.py tests/test_extraction_lineage.py tests/test_custody.py tests/test_claims.py tests/test_authority.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
-      "status": "in_progress",
-      "evidence": "v0.24.2 release checkpoint passed GitHub CI across Linux 3.10/3.11/3.12, macOS, Windows, Docker, installers, lint, typing and architecture. Phase 3 RC 0.25.5 implements canonical immutable sources/versions, exact extraction lineage, append-only hash-chained custody, material claim release blocking, applicability-first authority policy, and ingestion/media/verifier wiring. Local gate: 66 focused contracts, complete suite, evals 40/40, demo, Ruff, mypy 117 modules, architecture, build and clean-wheel import; independent review pending."
+      "status": "passing",
+      "evidence": "v0.25.20: canonical immutable sources/versions, exact extraction lineage, append-only hash-chained custody, material-claim release blocking, applicability-first authority policy, and ingestion/media/verifier wiring. Scoped professional output is atomically buffered across revisions and fails closed on readiness, generator, verifier, critic-protocol, terminal, malformed-contract, subclass, and repeated-read paths. Complete non-fuzz suite; 134 focused contracts plus one expected skip; evals 40/40; demo; Ruff; mypy 117 modules; architecture; build; clean-wheel import all passed. Independent maker-checker PASS on exact commit ea090056c3515c7650024a0ce9e480dfef42801e."
     }
   ]
 }
