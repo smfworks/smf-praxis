@@ -305,6 +305,67 @@ CREATE TABLE IF NOT EXISTS professional_workspaces (
 );
 CREATE INDEX IF NOT EXISTS ix_workspaces_org_status
     ON professional_workspaces(organization_id, status, created_ts);
+CREATE TABLE IF NOT EXISTS evidence_sources (
+    source_id         TEXT PRIMARY KEY,
+    organization_id   TEXT NOT NULL REFERENCES organizations(organization_id),
+    workspace_id      TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    canonical_uri     TEXT NOT NULL,
+    publisher         TEXT NOT NULL,
+    author            TEXT NOT NULL DEFAULT '',
+    publication_date  TEXT NOT NULL DEFAULT '',
+    revision_date     TEXT NOT NULL DEFAULT '',
+    jurisdiction      TEXT NOT NULL DEFAULT '',
+    authority_tier    TEXT NOT NULL DEFAULT '',
+    created_by        TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts        REAL NOT NULL,
+    UNIQUE (workspace_id, canonical_uri)
+);
+CREATE INDEX IF NOT EXISTS ix_evidence_sources_scope
+    ON evidence_sources(organization_id, workspace_id, created_ts);
+CREATE TABLE IF NOT EXISTS evidence_source_versions (
+    version_id          TEXT PRIMARY KEY,
+    source_id           TEXT NOT NULL REFERENCES evidence_sources(source_id),
+    organization_id     TEXT NOT NULL,
+    workspace_id        TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    content_hash        TEXT NOT NULL,
+    mime_type           TEXT NOT NULL,
+    retrieved_ts        REAL NOT NULL,
+    parser              TEXT NOT NULL,
+    parser_version      TEXT NOT NULL,
+    parser_config_json  TEXT NOT NULL DEFAULT '{}',
+    license             TEXT NOT NULL,
+    original_object_path TEXT NOT NULL,
+    created_by          TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts          REAL NOT NULL,
+    UNIQUE (source_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS ix_evidence_versions_scope
+    ON evidence_source_versions(organization_id, workspace_id, source_id, created_ts);
+CREATE TABLE IF NOT EXISTS evidence_version_supersessions (
+    prior_version_id TEXT PRIMARY KEY REFERENCES evidence_source_versions(version_id),
+    next_version_id  TEXT NOT NULL UNIQUE REFERENCES evidence_source_versions(version_id),
+    created_ts       REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS prevent_evidence_version_update
+BEFORE UPDATE ON evidence_source_versions
+BEGIN
+    SELECT RAISE(ABORT, 'evidence source versions are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_evidence_version_delete
+BEFORE DELETE ON evidence_source_versions
+BEGIN
+    SELECT RAISE(ABORT, 'evidence source versions are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_evidence_supersession_update
+BEFORE UPDATE ON evidence_version_supersessions
+BEGIN
+    SELECT RAISE(ABORT, 'evidence supersession records are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_evidence_supersession_delete
+BEFORE DELETE ON evidence_version_supersessions
+BEGIN
+    SELECT RAISE(ABORT, 'evidence supersession records are append-only');
+END;
 CREATE TABLE IF NOT EXISTS workspace_parties (
     party_id       TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
