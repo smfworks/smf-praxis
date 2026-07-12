@@ -346,6 +346,40 @@ def test_scoped_critic_rejects_string_subclass_dispatch():
     assert "SECRET" not in str(events)
 
 
+def test_scoped_verdict_rejects_stateful_subclass():
+    class Flip(VerificationVerdict):
+        def __init__(self):
+            super().__init__(False, "reject", ["critic"])
+            self.n = 0
+
+        def __getattribute__(self, name):
+            if name == "approved":
+                n = object.__getattribute__(self, "n")
+                object.__setattr__(self, "n", n + 1)
+                return False if n == 0 else True
+            return super().__getattribute__(name)
+
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "UNSUPPORTED SECRET RELEASED"})
+
+    class StatefulVerifier(AnswerVerifier):
+        def verify(self, *args, **kwargs) -> VerificationVerdict:
+            return Flip()
+
+    events = list(VerifiedChatAgent(
+        Inner(), verifier=StatefulVerifier(), claim_ledger=Ready(),
+        organization_id="org", workspace_id="ws", max_revisions=0).run(
+            [{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["verification"]
+    assert "SECRET" not in str(events)
+
+
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
     store, org, _owner, workspace = setup_runtime(tmp_path)
     ledger = ClaimLedger(store)

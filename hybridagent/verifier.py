@@ -255,15 +255,19 @@ class VerifiedChatAgent:
                     claim_ledger=self.claim_ledger,
                     organization_id=self.organization_id,
                     workspace_id=self.workspace_id)
-                if not isinstance(verdict, VerificationVerdict):
+                if type(verdict) is not VerificationVerdict:
                     raise TypeError("verifier returned an invalid verdict")
-                if type(verdict.approved) is not bool:
+                approved = verdict.approved
+                verdict_critique = verdict.critique
+                verdict_checks = verdict.checks
+                if type(approved) is not bool:
                     raise TypeError("verdict approved must be bool")
-                if type(verdict.critique) is not str:
+                if type(verdict_critique) is not str:
                     raise TypeError("verdict critique must be str")
-                if (type(verdict.checks) is not list
-                        or any(type(check) is not str for check in verdict.checks)):
+                if (type(verdict_checks) is not list
+                        or any(type(check) is not str for check in verdict_checks)):
                     raise TypeError("verdict checks must be a list of strings")
+                verdict_checks = list(verdict_checks)
             except Exception:
                 if self.claim_ledger is None:
                     raise
@@ -278,37 +282,35 @@ class VerifiedChatAgent:
             # action and mint a SECOND pending approval (a human could approve both
             # -> double execution), so a held turn is surfaced but never re-run —
             # mirroring ReflexiveChatAgent's retry_safe.
-            if (not last) and (not verdict.approved) and (
+            if (not last) and (not approved) and (
                     not traj.side_effect) and (not traj.held):
-                critique = verdict.critique
+                critique = verdict_critique
                 revision = AgentEvent("verification", {
                     "approved": False, "critique": critique,
-                    "checks": verdict.checks, "attempt": attempt + 1})
+                    "checks": verdict_checks, "attempt": attempt + 1})
                 if self.claim_ledger is None:
                     yield revision
                 else:
                     release_buffer.extend(buffered)
                     release_buffer.append(revision)
                 continue
-            if not verdict.approved:
+            if not approved:
                 # Any scoped professional verification failure is a hard release
                 # barrier. Advisory rejection+final behavior is legacy-only.
                 if self.claim_ledger is not None:
-                    checks = (verdict.checks if isinstance(verdict.checks, list)
-                              else ["verification"])
                     yield AgentEvent("verification", {
                         "approved": False,
                         "critique": "Professional output verification failed; "
                                     "release is blocked.",
-                        "checks": checks})
+                        "checks": verdict_checks})
                     return
                 # Surfaced for legacy callers even when we cannot safely revise.
                 rejection = AgentEvent("verification", {
-                    "approved": False, "critique": verdict.critique,
-                    "checks": verdict.checks})
+                    "approved": False, "critique": verdict_critique,
+                    "checks": verdict_checks})
                 # Unsupported material claims are a release barrier, not an
                 # advisory quality signal. Never emit the rejected terminal text.
-                if "material_claims" in verdict.checks:
+                if "material_claims" in verdict_checks:
                     yield blocked()
                     return
                 if self.claim_ledger is None:
