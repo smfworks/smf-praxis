@@ -102,6 +102,11 @@ class AnswerVerifier:
             try:
                 verdict = (self.critic(task, text) or "").strip()
             except Exception:
+                if claim_ledger is not None:
+                    return VerificationVerdict(
+                        False,
+                        "Independent professional verification failed; release is blocked.",
+                        ["critic_execution"])
                 verdict = "APPROVE"
             if verdict.upper().startswith("REVISE"):
                 reason = (verdict.split(":", 1)[1].strip()
@@ -243,6 +248,8 @@ class VerifiedChatAgent:
                     claim_ledger=self.claim_ledger,
                     organization_id=self.organization_id,
                     workspace_id=self.workspace_id)
+                if not isinstance(verdict, VerificationVerdict):
+                    raise TypeError("verifier returned an invalid verdict")
             except Exception:
                 if self.claim_ledger is None:
                     raise
@@ -270,7 +277,18 @@ class VerifiedChatAgent:
                     release_buffer.append(revision)
                 continue
             if not verdict.approved:
-                # Surfaced for the operator even when we cannot safely revise.
+                # Any scoped professional verification failure is a hard release
+                # barrier. Advisory rejection+final behavior is legacy-only.
+                if self.claim_ledger is not None:
+                    checks = (verdict.checks if isinstance(verdict.checks, list)
+                              else ["verification"])
+                    yield AgentEvent("verification", {
+                        "approved": False,
+                        "critique": "Professional output verification failed; "
+                                    "release is blocked.",
+                        "checks": checks})
+                    return
+                # Surfaced for legacy callers even when we cannot safely revise.
                 rejection = AgentEvent("verification", {
                     "approved": False, "critique": verdict.critique,
                     "checks": verdict.checks})

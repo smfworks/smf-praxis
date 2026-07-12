@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.16` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.17` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -67,7 +67,10 @@ Baseline is **green**. New work must not regress any of these.
     exception text cannot escape before readiness succeeds. `0.25.16` closes the
     remaining terminal boundaries: scoped custom-verifier exceptions and error/no-
     terminal outcomes discard all buffered content and emit generic verification
-    failures. Fresh independent maker-checker pending.
+    failures. `0.25.17` also makes built-in critic failures and malformed verifier
+    returns fail closed, and treats every non-approved scoped verdict as a hard block;
+    advisory rejection-plus-final behavior is legacy-only. Fresh independent
+    maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 

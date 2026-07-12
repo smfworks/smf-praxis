@@ -7,7 +7,7 @@ from hybridagent.ingest import ExtractedDoc, register_evidence
 from hybridagent.multimodal import MediaClient
 from hybridagent.organizations import OrganizationDirectory
 from hybridagent.persistence import Store
-from hybridagent.verifier import AnswerVerifier, VerifiedChatAgent
+from hybridagent.verifier import AnswerVerifier, VerificationVerdict, VerifiedChatAgent
 from hybridagent.workspaces import WorkspaceDirectory
 
 
@@ -223,6 +223,49 @@ def test_scoped_error_terminal_is_redacted():
     assert [event.type for event in events] == ["verification"]
     assert events[0].data["checks"] == ["execution"]
     assert "SECRET" not in str(events)
+
+
+def test_scoped_builtin_critic_exception_blocks_release():
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "SCOPED-SENSITIVE-OUTPUT"})
+
+    def broken_critic(task, answer):
+        raise RuntimeError("critic unavailable")
+
+    events = list(VerifiedChatAgent(
+        Inner(), verifier=AnswerVerifier(critic=broken_critic),
+        claim_ledger=Ready(), organization_id="org", workspace_id="ws",
+        max_revisions=0).run([{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["critic_execution"]
+    assert "SENSITIVE" not in str(events)
+
+
+def test_scoped_malformed_verdict_is_redacted():
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "SCOPED-SENSITIVE-OUTPUT"})
+
+    class MalformedVerifier(AnswerVerifier):
+        def verify(self, *args, **kwargs) -> VerificationVerdict:
+            return None  # type: ignore[return-value]
+
+    events = list(VerifiedChatAgent(
+        Inner(), verifier=MalformedVerifier(), claim_ledger=Ready(),
+        organization_id="org", workspace_id="ws").run(
+            [{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["verification"]
+    assert "SENSITIVE" not in str(events)
 
 
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
