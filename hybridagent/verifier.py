@@ -59,10 +59,18 @@ class AnswerVerifier:
         self.critic = critic
 
     def verify(self, task: str, answer: str, *, held: bool = False,
-               action_denied: bool = False) -> VerificationVerdict:
+               action_denied: bool = False, claim_ledger=None,
+               organization_id: str = "", workspace_id: str = "") -> VerificationVerdict:
         text = (answer or "").strip()
         failed: list[str] = []
         critiques: list[str] = []
+
+        if claim_ledger is not None and not claim_ledger.release_ready(
+                organization_id, workspace_id):
+            failed.append("material_claims")
+            critiques.append(
+                "Material claims are not fully supported by workspace evidence; "
+                "professional release is blocked.")
 
         # 1) Honesty: never claim completion of a held/denied consequential action.
         if (held or action_denied) and _CLAIM_DONE.search(text):
