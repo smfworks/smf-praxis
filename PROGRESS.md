@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.24.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.24.1` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `main`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -53,6 +53,9 @@ Baseline is **green**. New work must not regress any of these.
   workspace concealment, and closed external-room permissions.
 - Independent maker-checker `deleg_8c417aea` returned PASS after 10 synchronized
   two-process ownership races, rollback checks, and same-workspace idempotence.
+- `0.24.1` transport hotfix drains oversized request bodies with a strict bounded
+  timeout so macOS clients reliably receive the structured `413` envelope rather
+  than a TCP reset; the two affected HTTP scenarios passed five repeated runs.
 
 ## Known Issues / Risks
 
