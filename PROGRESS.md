@@ -42,12 +42,15 @@ Baseline is **green**. New work must not regress any of these.
 
 - [ ] **PP30** — Professional platform Phase 3: canonical sources and versions,
   extraction lineage, append-only custody, claim support states, and authority policy.
-  - Canonical evidence slice implemented: tenant/workspace-scoped sources, immutable
-    hash-addressed versions, parser/configuration lineage, durable supersession edges,
-    active-actor validation, and SQLite update/delete prevention.
-  - Verified: 6/6 evidence contracts, 78/78 professional/API isolation contracts,
-    complete non-fuzz suite, evals 40/40, governed demo, Ruff, mypy across 100
-    modules, architecture checks, and clean diff validation.
+  - Canonical evidence, extraction lineage, custody, claims, authority, and runtime
+    wiring are implemented. Tenant/workspace-owned source versions and exact spans
+    are append-only; custody is transactionally sequenced and hash-chained; material
+    claims fail closed at professional release; authority applicability filters run
+    before similarity; ingestion/media/verifier paths use the substrate.
+  - Verified: 66/66 focused Phase 3/professional/API contracts, complete non-fuzz
+    suite, evals 40/40, governed demo, whole-repository Ruff, mypy across 117
+    modules, architecture checks, package build, clean-wheel `0.25.5` import, and
+    clean diff validation. Independent maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 
