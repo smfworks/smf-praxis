@@ -166,6 +166,16 @@
       "verification": "python3 -m pytest tests/test_evidence.py tests/test_extraction_lineage.py tests/test_custody.py tests/test_claims.py tests/test_authority.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
       "status": "passing",
       "evidence": "v0.25.20: canonical immutable sources/versions, exact extraction lineage, append-only hash-chained custody, material-claim release blocking, applicability-first authority policy, and ingestion/media/verifier wiring. Scoped professional output is atomically buffered across revisions and fails closed on readiness, generator, verifier, critic-protocol, terminal, malformed-contract, subclass, and repeated-read paths. Complete non-fuzz suite; 134 focused contracts plus one expected skip; evals 40/40; demo; Ruff; mypy 117 modules; architecture; build; clean-wheel import all passed. Independent maker-checker PASS on exact commit ea090056c3515c7650024a0ce9e480dfef42801e."
+    },
+    {
+      "id": "PP40",
+      "priority": 140,
+      "area": "professional-platform",
+      "title": "Phase 4 durable professional workflows",
+      "user_visible_behavior": "Praxis provides durable resumable workflow runs, JSON-safe checkpoints, typed interrupts and effect receipts, role-bound professional reviews, and a structured research supervisor.",
+      "verification": "python3 -m pytest tests/test_checkpoints.py tests/test_reviews.py tests/test_research_run.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
+      "status": "in_progress",
+      "evidence": "Activated after v0.25.20 Phase 3 CI and release workflows passed on exact main commit 371a4ebcf47692ea2e4e01acd1c46c5b43925061."
     }
   ]
 }
