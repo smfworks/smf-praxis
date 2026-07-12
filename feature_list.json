@@ -146,6 +146,16 @@
       "verification": "python3 -m pytest tests/test_organizations.py tests/test_authn.py tests/test_authz.py tests/test_data_policy.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
       "status": "passing",
       "evidence": "v0.23.0: tenant-owned organizations/users/memberships/teams, opaque hash-only revocable sessions with CSRF, deny-by-default RBAC/ABAC/purpose controls, authenticated approval actor+role, tenant-owned board cards and approvals, tenant-scoped idempotency/deduplication, durable break-glass audit, and classified retention/export/egress policy. Verified: focused Phase 1/API/persistence/architecture tests; complete non-fuzz pytest; evals 40/40; ruff; mypy 95 modules; architecture checks; demo; wheel/sdist and clean-venv import. Independent adversarial maker-checker PASS after reproducing two-tenant board isolation, reviewer denial, cross-tenant approval 404, tenant idempotency separation, egress fail-closed, durable break glass, disabled-principal denial, and distinct cross-tenant approval deduplication."
+    },
+    {
+      "id": "PP20",
+      "priority": 120,
+      "area": "professional-platform",
+      "title": "Phase 2 professional workspaces and context isolation",
+      "user_visible_behavior": "Praxis provides tenant-owned professional workspaces, immutable timelines, isolated context boundaries, and controlled external collaboration rooms.",
+      "verification": "python3 -m pytest tests/test_workspaces.py tests/test_workspace_timeline.py tests/test_workspace_isolation.py tests/test_external_rooms.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
+      "status": "passing",
+      "evidence": "v0.24.0: tenant-owned professional workspaces; parties, reviewed deadlines, and SQLite-enforced append-only timelines; workspace-scoped memory/RAG/runs/traces/board/context keys; authenticated workspace/list/create, board, timeline, and external-room v1 routes; owned-record quarantine from legacy routes; controlled external rooms with active-principal RBAC and authoritative item ownership; bounded stable v1 JSON errors; atomic organization+workspace idempotency and BEGIN IMMEDIATE run ownership. Verified: complete non-fuzz suite, evals 40/40, governed demo, Ruff, mypy 99 modules, architecture, package/clean-venv import. Independent PASS deleg_8c417aea reproduced 10 synchronized two-process rounds with one creator/one rejection, correct persisted owner, rollback reuse, and same-workspace idempotence."
     }
   ]
 }

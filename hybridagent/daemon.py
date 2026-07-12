@@ -23,7 +23,7 @@ import socket
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -2044,6 +2044,62 @@ class _StatusHandler(BaseHTTPRequestHandler):
             action, resource_organization_id=session.organization_id)
         return session.organization_id if decision.allowed else None
 
+    def _read_v1_json_object(self) -> dict | None:
+        """Read one bounded v1 JSON object with stable transport errors."""
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        try:
+            declared_length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            declared_length = -1
+        if declared_length < 0 or declared_length > MAX_JSON_BODY_BYTES:
+            self._v1_response(error_envelope(
+                "payload_too_large",
+                f"JSON body must be at most {MAX_JSON_BODY_BYTES} bytes",
+                request_id=request_id), status=413)
+            return None
+        try:
+            payload = json.loads(self.rfile.read(declared_length).decode() or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._v1_response(error_envelope(
+                "invalid_json", "Request body must be valid JSON",
+                request_id=request_id), status=400)
+            return None
+        if not isinstance(payload, dict):
+            self._v1_response(error_envelope(
+                "invalid_request", "Request body must be a JSON object",
+                request_id=request_id), status=400)
+            return None
+        return payload
+
+    def _professional_workspace_scope(
+        self, action: str,
+    ) -> tuple[str, str] | None:
+        """Authorize and resolve the workspace selected by a professional request."""
+        organization_id = self._professional_authorize(action)
+        if organization_id is None:
+            self._v1_response(error_envelope(
+                "forbidden", "The authenticated role cannot perform this action",
+                request_id=uuid.uuid4().hex), status=403)
+            return None
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            return organization_id, ""  # legacy token/loopback compatibility
+        workspace_id = str(self.headers.get("X-Praxis-Workspace-ID") or "").strip()
+        if not workspace_id:
+            self._v1_response(error_envelope(
+                "workspace_required", "X-Praxis-Workspace-ID is required",
+                request_id=uuid.uuid4().hex), status=400)
+            return None
+        assert self.daemon.store is not None
+        from .workspaces import WorkspaceDirectory
+        if WorkspaceDirectory(self.daemon.store).get(
+                organization_id, workspace_id) is None:
+            self._v1_response(error_envelope(
+                "workspace_not_found", "Workspace was not found",
+                request_id=uuid.uuid4().hex), status=404)
+            return None
+        return organization_id, workspace_id
+
     def do_POST(self) -> None:
         try:
             if self.path == "/stop":
@@ -2074,13 +2130,37 @@ class _StatusHandler(BaseHTTPRequestHandler):
             if self.path == "/api/v1/board/cards":
                 if not self._require_v1_auth(mutation=True):
                     return
+                scope = self._professional_workspace_scope("write")
+                if scope is None:
+                    return
+                self._handle_v1_board_create(*scope)
+                return
+            if self.path == "/api/v1/workspaces":
+                if not self._require_v1_auth(mutation=True):
+                    return
                 organization_id = self._professional_authorize("write")
                 if organization_id is None:
                     self._v1_response(error_envelope(
-                        "forbidden", "The authenticated role cannot create cards",
+                        "forbidden", "The authenticated role cannot create workspaces",
                         request_id=uuid.uuid4().hex), status=403)
                     return
-                self._handle_v1_board_create(organization_id)
+                self._handle_v1_workspace_create(organization_id)
+                return
+            if self.path == "/api/v1/workspace/timeline":
+                if not self._require_v1_auth(mutation=True):
+                    return
+                scope = self._professional_workspace_scope("write")
+                if scope is None:
+                    return
+                self._handle_v1_timeline_append(*scope)
+                return
+            if self.path == "/api/v1/workspace/rooms":
+                if not self._require_v1_auth(mutation=True):
+                    return
+                scope = self._professional_workspace_scope("manage_external_room")
+                if scope is None:
+                    return
+                self._handle_v1_room_create(*scope)
                 return
             # Auth gate for all other mutating routes when bound beyond loopback.
             if self.path not in ("/api/auth/login",) and not self._require_auth():
@@ -2425,14 +2505,29 @@ class _StatusHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/v1/board/cards":
                 if not self._require_v1_auth():
                     return
+                scope = self._professional_workspace_scope("read")
+                if scope is None:
+                    return
+                self._handle_v1_board_list(parse_query(parsed.query), *scope)
+                return
+            if parsed.path == "/api/v1/workspaces":
+                if not self._require_v1_auth():
+                    return
                 organization_id = self._professional_authorize("read")
                 if organization_id is None:
                     self._v1_response(error_envelope(
-                        "forbidden", "The authenticated role cannot read cards",
+                        "forbidden", "The authenticated role cannot read workspaces",
                         request_id=uuid.uuid4().hex), status=403)
                     return
-                self._handle_v1_board_list(
-                    parse_query(parsed.query), organization_id)
+                self._handle_v1_workspace_list(organization_id)
+                return
+            if parsed.path == "/api/v1/workspace/timeline":
+                if not self._require_v1_auth():
+                    return
+                scope = self._professional_workspace_scope("read")
+                if scope is None:
+                    return
+                self._handle_v1_timeline_list(*scope)
                 return
             if self.path == "/status":
                 mgr = self.daemon.manager
@@ -2543,7 +2638,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/board":
-                body = json.dumps(self.daemon.board_list(), default=str).encode()
+                body = json.dumps(
+                    self.daemon.board_list("", ""), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Deprecation", "true")
@@ -2962,8 +3058,131 @@ class _StatusHandler(BaseHTTPRequestHandler):
             headers={"Set-Cookie": (
                 "praxis_session=; HttpOnly; SameSite=Strict; Path=/api/v1; Max-Age=0")})
 
+    def _handle_v1_workspace_list(self, organization_id: str) -> None:
+        from .workspaces import WorkspaceDirectory
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        assert self.daemon.store is not None
+        items = [asdict(workspace) for workspace in
+                 WorkspaceDirectory(self.daemon.store).list_for(organization_id)]
+        version = resource_version(items)
+        self._v1_response(success_envelope(
+            {"items": items}, request_id=request_id,
+            meta={"resource_version": version}), headers={"ETag": etag(version)})
+
+    def _handle_v1_workspace_create(self, organization_id: str) -> None:
+        from .workspaces import WorkspaceDirectory, WorkspaceError
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            self._v1_response(error_envelope(
+                "professional_session_required", "A professional session is required",
+                request_id=request_id), status=403)
+            return
+        try:
+            payload = self._read_v1_json_object()
+            if payload is None:
+                return
+            assert self.daemon.store is not None
+            workspace = WorkspaceDirectory(self.daemon.store).create(
+                organization_id,
+                str(payload.get("human_identifier") or ""),
+                str(payload.get("kind") or ""),
+                str(payload.get("title") or ""),
+                owner_user_id=str(payload.get("owner_user_id") or session.user_id),
+                team_id=str(payload.get("team_id") or ""),
+                client_or_subject=str(payload.get("client_or_subject") or ""),
+                confidentiality=str(payload.get("confidentiality") or "internal"),
+                jurisdiction=str(payload.get("jurisdiction") or ""),
+                location=str(payload.get("location") or ""),
+                custom_fields=dict(payload.get("custom_fields") or {}),
+                external_links=tuple(payload.get("external_links") or []),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError,
+                WorkspaceError) as exc:
+            self._v1_response(error_envelope(
+                "invalid_workspace", str(exc), request_id=request_id), status=400)
+            return
+        self._v1_response(success_envelope(
+            {"workspace": asdict(workspace)}, request_id=request_id,
+            meta={"resource_version": resource_version(asdict(workspace))}), status=201)
+
+    def _handle_v1_timeline_list(
+        self, organization_id: str, workspace_id: str,
+    ) -> None:
+        from .workspace_timeline import WorkspaceTimeline
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        assert self.daemon.store is not None
+        items = [asdict(event) for event in WorkspaceTimeline(
+            self.daemon.store).events(organization_id, workspace_id)]
+        self._v1_response(success_envelope({"items": items}, request_id=request_id))
+
+    def _handle_v1_timeline_append(
+        self, organization_id: str, workspace_id: str,
+    ) -> None:
+        from .workspace_timeline import TimelineError, WorkspaceTimeline
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            self._v1_response(error_envelope(
+                "professional_session_required", "A professional session is required",
+                request_id=request_id), status=403)
+            return
+        try:
+            payload = self._read_v1_json_object()
+            if payload is None:
+                return
+            assert self.daemon.store is not None
+            event = WorkspaceTimeline(self.daemon.store).append_event(
+                organization_id, workspace_id,
+                str(payload.get("event_type") or ""),
+                str(payload.get("summary") or ""),
+                actor_user_id=session.user_id,
+                links=tuple(payload.get("links") or []))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError,
+                TimelineError) as exc:
+            self._v1_response(error_envelope(
+                "invalid_timeline_event", str(exc), request_id=request_id), status=400)
+            return
+        self._v1_response(success_envelope(
+            {"event": asdict(event)}, request_id=request_id), status=201)
+
+    def _handle_v1_room_create(
+        self, organization_id: str, workspace_id: str,
+    ) -> None:
+        from .external_rooms import ExternalRoomDirectory, ExternalRoomError
+
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        session = getattr(self, "authenticated_session", None)
+        if session is None:
+            self._v1_response(error_envelope(
+                "professional_session_required", "A professional session is required",
+                request_id=request_id), status=403)
+            return
+        try:
+            payload = self._read_v1_json_object()
+            if payload is None:
+                return
+            assert self.daemon.store is not None
+            room = ExternalRoomDirectory(self.daemon.store).create(
+                organization_id, workspace_id, str(payload.get("name") or ""),
+                created_by=session.user_id,
+                permissions=tuple(payload.get("permissions") or
+                                  ("read_shared", "comment")))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError,
+                ExternalRoomError) as exc:
+            self._v1_response(error_envelope(
+                "invalid_external_room", str(exc), request_id=request_id), status=400)
+            return
+        self._v1_response(success_envelope(
+            {"room": asdict(room)}, request_id=request_id), status=201)
+
     def _handle_v1_board_list(
         self, query: dict[str, list[str]], organization_id: str = "",
+        workspace_id: str = "",
     ) -> None:
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
         try:
@@ -2973,7 +3192,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
             cursor: str | None = cursor_values[0] if cursor_values else None
             limit = normalize_limit(limit_value)
             cards = self.daemon.board_list(
-                organization_id if organization_id else None)["cards"]
+                organization_id if organization_id else None,
+                workspace_id if workspace_id else None)["cards"]
             version = resource_version(cards)
             items, next_cursor = page_items(
                 cards, limit=limit, cursor=cursor,
@@ -2997,7 +3217,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
         )
         self._v1_response(payload, headers={"ETag": etag(version)})
 
-    def _handle_v1_board_create(self, organization_id: str = "") -> None:
+    def _handle_v1_board_create(
+        self, organization_id: str = "", workspace_id: str = "",
+    ) -> None:
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
         try:
             declared_length = int(self.headers.get("Content-Length", 0) or 0)
@@ -3044,7 +3266,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return
         fingerprint = resource_version({"title": title, "goal": goal})
         result, replayed, conflict = self.daemon.api_idempotent_board_create(
-            key, fingerprint, title, goal, organization_id)
+            key, fingerprint, title, goal, organization_id, workspace_id)
         if conflict:
             self._v1_response(
                 error_envelope(
@@ -3166,7 +3388,7 @@ class Daemon:
 
     def api_idempotent_board_create(
         self, key: str, fingerprint: str, title: str, goal: str,
-        organization_id: str = "",
+        organization_id: str = "", workspace_id: str = "",
     ) -> tuple[dict[str, Any], bool, bool]:
         """Atomically replay or create a board card for an idempotency key.
 
@@ -3174,15 +3396,17 @@ class Daemon:
         store write prevents concurrent HTTP handlers from duplicating effects.
         """
         if not key:
-            return self.board_create(title, goal, organization_id), False, False
+            return self.board_create(
+                title, goal, organization_id, workspace_id), False, False
         with self._api_idempotency_lock:
             self._ensure_agent()
             assert self.store is not None
             card, replayed, conflict = self.store.idempotent_add_card(
-                f"{organization_id}:{key}", fingerprint,
+                f"{organization_id}:{workspace_id}:{key}", fingerprint,
                 f"card-{uuid.uuid4().hex[:10]}", title, goal,
                 max_receipts=MAX_IDEMPOTENCY_RECEIPTS,
                 organization_id=organization_id,
+                workspace_id=workspace_id,
             )
             return ({"card": card} if card else {}), replayed, conflict
 
@@ -3733,15 +3957,17 @@ class Daemon:
     # ------------------------------------------------------------- work board
     _BOARD_LANES = ("backlog", "planned", "running", "held", "done", "failed")
 
-    def board_list(self, organization_id: str | None = None) -> dict:
+    def board_list(self, organization_id: str | None = "",
+                   workspace_id: str | None = "") -> dict:
         """Cards + lane vocabulary for the governed Work Board."""
         if self.store is None:
             return {"cards": [], "lanes": list(self._BOARD_LANES)}
-        return {"cards": self.store.list_cards(organization_id=organization_id),
+        return {"cards": self.store.list_cards(
+                    organization_id=organization_id, workspace_id=workspace_id),
                 "lanes": list(self._BOARD_LANES)}
 
     def board_create(self, title: str, goal: str = "",
-                     organization_id: str = "") -> dict:
+                     organization_id: str = "", workspace_id: str = "") -> dict:
         self._ensure_agent()
         assert self.store is not None
         title = (title or goal or "").strip()
@@ -3750,40 +3976,50 @@ class Daemon:
             return {"error": "title/goal required"}
         card_id = f"card-{uuid.uuid4().hex[:10]}"
         self.store.add_card(card_id, title, goal, lane="backlog",
-                            organization_id=organization_id)
-        return {"card": self.store.get_card(card_id)}
+                            organization_id=organization_id,
+                            workspace_id=workspace_id)
+        return {"card": self.store.get_card(card_id, workspace_id=workspace_id or None)}
 
-    def board_move(self, card_id: str, lane: str) -> dict:
+    def board_move(self, card_id: str, lane: str,
+                   organization_id: str = "", workspace_id: str = "") -> dict:
         if self.store is None:
             return {"error": "no store"}
         if lane not in self._BOARD_LANES:
             return {"error": f"invalid lane '{lane}'"}
-        if self.store.get_card(card_id) is None:
+        if self.store.get_card(card_id, workspace_id, organization_id) is None:
             return {"error": "card not found"}
-        self.store.move_card(card_id, lane)
-        return {"card": self.store.get_card(card_id)}
+        self.store.move_card(card_id, lane, organization_id=organization_id,
+                             workspace_id=workspace_id)
+        return {"card": self.store.get_card(card_id, workspace_id, organization_id)}
 
-    def board_run(self, card_id: str) -> dict:
+    def board_run(self, card_id: str, organization_id: str = "",
+                  workspace_id: str = "") -> dict:
         """Execute a card's goal under governance and reflect the verdict back onto
         the card's lane (done / held / failed) — the kanban *is* the workflow."""
         self._ensure_agent()
         assert self.store is not None
-        card = self.store.get_card(card_id)
+        card = self.store.get_card(card_id, workspace_id, organization_id)
         if card is None:
             return {"error": "card not found"}
-        self.store.move_card(card_id, "running")
+        self.store.move_card(card_id, "running", organization_id=organization_id,
+                             workspace_id=workspace_id)
         result = self.agent_run(card["goal"])
         lane = {"completed": "done", "partial": "done", "needs_approval": "held",
                 "failed": "failed"}.get(str(result.get("status", "")), "done")
-        self.store.set_card_run(card_id, str(result.get("run_id", "")),
-                                str(result.get("status", "")), lane)
-        return {"card": self.store.get_card(card_id), "result": result}
+        self.store.set_card_run(
+            card_id, str(result.get("run_id", "")),
+            str(result.get("status", "")), lane,
+            organization_id=organization_id, workspace_id=workspace_id)
+        return {"card": self.store.get_card(
+            card_id, workspace_id, organization_id), "result": result}
 
-    def board_delete(self, card_id: str) -> dict:
+    def board_delete(self, card_id: str, organization_id: str = "",
+                     workspace_id: str = "") -> dict:
         if self.store is None:
             return {"error": "no store"}
-        self.store.delete_card(card_id)
-        return {"deleted": card_id}
+        deleted = self.store.delete_card(
+            card_id, organization_id=organization_id, workspace_id=workspace_id)
+        return {"deleted": card_id if deleted else ""}
 
     # ----------------------------------------------------------- safety center
     def deny_approval(self, approval_id: str) -> bool:

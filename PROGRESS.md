@@ -6,12 +6,12 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.23.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
-- **Active branch:** `feat/professional-platform-phase-1` (ready to merge)
+- **Version:** `0.24.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Active branch:** `feat/professional-platform-phase-2`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
-- **Current WIP:** none — PP10 passed; Phase 2 is next
-- **Current blocker:** none
+- **Current WIP:** none; PP20 released and Phase 3 has not started
+- **Current blocker:** none; Phase 2 passed independent maker-checker review
 
 ## Baseline verification (captured 2026-07-11)
 
@@ -36,10 +36,23 @@ Baseline is **green**. New work must not regress any of these.
 - [x] **H03** — Clean-state checklist + session handoff templates
 - [x] **H04** — Quality document with initial module snapshot
 - [x] **PP10** — Professional platform Phase 1: tenant isolation, revocable sessions, RBAC/ABAC/purpose controls, authenticated approvals, and classified-data lifecycle/egress — independently verified 2026-07-12
+- [x] **PP20** — Professional platform Phase 2: tenant-owned workspaces, immutable timelines, workspace-isolated context and board/runtime records, and controlled external collaboration rooms — independently verified 2026-07-12
 
 ## In Progress
 
-(none — PP10 passed; Phase 2 is the next WIP=1 increment)
+- No active professional-platform phase. Phase 3 remains inactive pending explicit kickoff.
+
+### Phase 2 release-candidate evidence
+
+- 66 focused workspace/auth/API/security contracts pass.
+- Complete non-fuzz repository suite, 40/40 capability evaluations, and governed
+  offline demo pass.
+- Ruff, mypy across 99 modules, architecture invariants, and diff checks pass.
+- Authenticated two-workspace HTTP verification confirms isolated board/timeline
+  data, workspace-scoped idempotency, missing-selector denial, cross-tenant
+  workspace concealment, and closed external-room permissions.
+- Independent maker-checker `deleg_8c417aea` returned PASS after 10 synchronized
+  two-process ownership races, rollback checks, and same-workspace idempotence.
 
 ## Known Issues / Risks
 
@@ -51,7 +64,7 @@ Baseline is **green**. New work must not regress any of these.
 
 ## Next Steps (priority order)
 
-1. Begin **Phase 2**: professional workspaces → timelines → context isolation → controlled external rooms.
+1. Begin **Phase 3** only after an explicit kickoff; preserve WIP=1.
 2. Preserve Hermes and repository WIP=1 throughout the professional-platform sequence.
 3. Require independent maker-checker PASS before every phase promotion.
 

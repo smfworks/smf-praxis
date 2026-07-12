@@ -28,15 +28,15 @@ class AuthorizationDecision:
 _ROLE_ACTIONS = {
     "organization_admin": frozenset({
         "read", "write", "execute_tool", "manage_members", "approve_content",
-        "approve_decision", "attest_evidence",
+        "approve_decision", "attest_evidence", "manage_external_room",
     }),
     "workspace_admin": frozenset({
         "read", "write", "execute_tool", "approve_content", "approve_decision",
-        "attest_evidence",
+        "attest_evidence", "manage_external_room",
     }),
     "professional": frozenset({
         "read", "write", "execute_tool", "approve_content", "approve_decision",
-        "attest_evidence",
+        "attest_evidence", "manage_external_room",
     }),
     "reviewer": frozenset({"read", "comment", "approve_content"}),
     "member": frozenset({"read", "write"}),
