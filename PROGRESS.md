@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.11` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.12` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -55,8 +55,10 @@ Baseline is **green**. New work must not regress any of these.
     values. Subsequent reviews exposed boolean/range, textual-field, and nested
     non-finite JSON gaps across locators; `0.25.11` now enforces strict scalar types,
     valid ranges, finite numbers, nonempty identifiers, and RFC-compatible JSON for
-    locator, parser, derived-artifact, and custody metadata. Fresh independent
-    maker-checker pending.
+    locator, parser, derived-artifact, and custody metadata. A later critical review
+    proved rejected material-claim text was still emitted after its verification
+    event; `0.25.12` now treats `material_claims` as a hard terminal barrier and
+    suppresses the rejected final payload. Fresh independent maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 

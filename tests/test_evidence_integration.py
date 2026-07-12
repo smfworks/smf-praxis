@@ -78,6 +78,8 @@ def test_verified_chat_runtime_propagates_material_claim_scope(tmp_path):
     assert any(event.type == "verification"
                and "material_claims" in event.data.get("checks", [])
                for event in events)
+    assert all(event.type != "final" for event in events)
+    assert all("Professional conclusion" not in str(event.data) for event in events)
 
 
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
