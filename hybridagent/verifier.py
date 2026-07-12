@@ -65,8 +65,15 @@ class AnswerVerifier:
         failed: list[str] = []
         critiques: list[str] = []
 
-        if claim_ledger is not None and not claim_ledger.release_ready(
-                organization_id, workspace_id):
+        if claim_ledger is not None:
+            try:
+                claims_ready = claim_ledger.release_ready(
+                    organization_id, workspace_id)
+            except Exception:  # readiness infrastructure failures deny release
+                claims_ready = False
+        else:
+            claims_ready = True
+        if not claims_ready:
             failed.append("material_claims")
             critiques.append(
                 "Material claims are not fully supported by workspace evidence; "
@@ -163,13 +170,24 @@ class VerifiedChatAgent:
         # Professional claim readiness is a preflight release boundary. Running
         # the inner engine first could leak unsupported content through streaming
         # critique/tool/error events before a final answer reaches verification.
-        if self.claim_ledger is not None and not self.claim_ledger.release_ready(
-                self.organization_id, self.workspace_id):
-            yield AgentEvent("verification", {
+        def claims_ready() -> bool:
+            if self.claim_ledger is None:
+                return True
+            try:
+                return bool(self.claim_ledger.release_ready(
+                    self.organization_id, self.workspace_id))
+            except Exception:
+                return False
+
+        def blocked() -> AgentEvent:
+            return AgentEvent("verification", {
                 "approved": False,
                 "critique": "Material claims are not fully supported by workspace "
                             "evidence; professional release is blocked.",
                 "checks": ["material_claims"]})
+
+        if not claims_ready():
+            yield blocked()
             return
         task = next((str(m.get("content", "")) for m in reversed(messages)
                      if m.get("role") == "user"), "")
@@ -182,15 +200,23 @@ class VerifiedChatAgent:
                 aug_system = ((system + "\n\n") if system else "") + preface
             traj = _Trajectory()
             terminal: AgentEvent | None = None
+            buffered: list[AgentEvent] = []
             for ev in self.inner.run(messages, system=aug_system):
                 traj.observe(ev)
                 if ev.type in ("final", "error"):
                     terminal = ev
                     break  # hold the terminal: verify before emitting
-                yield ev
+                if self.claim_ledger is None:
+                    yield ev
+                else:
+                    buffered.append(ev)
 
             # Only a clean final answer is verified (errors are Reflexion's domain).
             if terminal is None or terminal.type != "final":
+                if not claims_ready():
+                    yield blocked()
+                    return
+                yield from buffered
                 yield terminal if terminal is not None else AgentEvent(
                     "final", {"text": "(no response)"})
                 return
@@ -222,5 +248,9 @@ class VerifiedChatAgent:
                 # advisory quality signal. Never emit the rejected terminal text.
                 if "material_claims" in verdict.checks:
                     return
+            if not claims_ready():
+                yield blocked()
+                return
+            yield from buffered
             yield terminal
             return
