@@ -107,6 +107,26 @@ def test_numeric_locators_reject_booleans_and_invalid_ranges(
             created_by=owner.user_id)
 
 
+@pytest.mark.parametrize(("locator_type", "locator"), [
+    ("table", {"table": 1, "cell": 2}),
+    ("table", {"table": ["A"], "cell": {"row": 1}}),
+    ("table", {"table": " ", "cell": "A1"}),
+    ("repository", {"commit": 1, "path": 2,
+                    "line_start": 1, "line_end": 1}),
+    ("repository", {"commit": ["abc"], "path": {"file": "x.py"},
+                    "line_start": 1, "line_end": 1}),
+    ("repository", {"commit": " ", "path": "x.py",
+                    "line_start": 1, "line_end": 1}),
+])
+def test_text_locators_require_non_empty_strings(tmp_path, locator_type, locator):
+    _, org, owner, workspace, version, registry = setup_lineage(tmp_path)
+    with pytest.raises(ExtractionError):
+        registry.add_span(
+            org.organization_id, workspace.workspace_id, version.version_id,
+            locator_type=locator_type, locator=locator, extracted_text="bad",
+            created_by=owner.user_id)
+
+
 @pytest.mark.parametrize("locator", [
     {"page": None}, {"page": -1}, {"section": ""}, {"paragraph": True},
 ])
