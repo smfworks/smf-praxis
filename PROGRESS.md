@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.24.1` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.24.2` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `main`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -56,6 +56,9 @@ Baseline is **green**. New work must not regress any of these.
 - `0.24.1` transport hotfix drains oversized request bodies with a strict bounded
   timeout so macOS clients reliably receive the structured `413` envelope rather
   than a TCP reset; the two affected HTTP scenarios passed five repeated runs.
+- `0.24.2` adds explicit JSON `Content-Length` framing and deterministic
+  creation-order workspace listing after remote CI exposed macOS EOF resets and
+  Windows timestamp ties; both platform regressions passed five repeated runs.
 
 ## Known Issues / Risks
 
