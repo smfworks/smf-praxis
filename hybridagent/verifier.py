@@ -160,6 +160,17 @@ class VerifiedChatAgent:
 
     def run(self, messages: list[dict],
             system: str | None = None) -> Iterator[AgentEvent]:
+        # Professional claim readiness is a preflight release boundary. Running
+        # the inner engine first could leak unsupported content through streaming
+        # critique/tool/error events before a final answer reaches verification.
+        if self.claim_ledger is not None and not self.claim_ledger.release_ready(
+                self.organization_id, self.workspace_id):
+            yield AgentEvent("verification", {
+                "approved": False,
+                "critique": "Material claims are not fully supported by workspace "
+                            "evidence; professional release is blocked.",
+                "checks": ["material_claims"]})
+            return
         task = next((str(m.get("content", "")) for m in reversed(messages)
                      if m.get("role") == "user"), "")
         critique: str | None = None

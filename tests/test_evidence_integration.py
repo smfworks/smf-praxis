@@ -82,6 +82,29 @@ def test_verified_chat_runtime_propagates_material_claim_scope(tmp_path):
     assert all("Professional conclusion" not in str(event.data) for event in events)
 
 
+def test_material_claim_preflight_blocks_all_inner_channels():
+    class Blocked:
+        def release_ready(self, organization_id, workspace_id):
+            return False
+
+    class Inner:
+        called = False
+
+        def run(self, messages, system=None):
+            self.called = True
+            yield AgentEvent("critique", {"text": "UNSUPPORTED MATERIAL CLAIM"})
+            yield AgentEvent("error", {"error": "UNSUPPORTED MATERIAL CLAIM"})
+
+    inner = Inner()
+    events = list(VerifiedChatAgent(
+        inner, claim_ledger=Blocked(), organization_id="org", workspace_id="ws",
+        max_revisions=1).run([{"role": "user", "content": "release"}]))
+    assert not inner.called
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["material_claims"]
+    assert "UNSUPPORTED MATERIAL CLAIM" not in str(events)
+
+
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
     store, org, _owner, workspace = setup_runtime(tmp_path)
     ledger = ClaimLedger(store)
