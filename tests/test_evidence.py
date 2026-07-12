@@ -50,8 +50,15 @@ def test_source_versions_are_immutable_and_hash_verified(tmp_path):
         parser_config={"encoding": "utf-8"}, license="permitted",
         original_object_path="objects/source-v1.txt", created_by=owner.user_id)
     assert len(version.content_hash) == 64
-    assert registry.verify_content(version.version_id, b"authoritative bytes")
-    assert not registry.verify_content(version.version_id, b"tampered")
+    assert registry.verify_content(
+        organization.organization_id, workspace.workspace_id,
+        version.version_id, b"authoritative bytes")
+    assert not registry.verify_content(
+        organization.organization_id, workspace.workspace_id,
+        version.version_id, b"tampered")
+    assert not registry.verify_content(
+        organization.organization_id, "ws-forged",
+        version.version_id, b"authoritative bytes")
     with pytest.raises(EvidenceError, match="immutable"):
         registry.update_version(version.version_id, mime_type="text/html")
 
@@ -112,7 +119,9 @@ def test_versions_survive_restart_and_reject_cross_workspace_supersession(tmp_pa
         parser="plain", parser_version="1", parser_config={}, license="public",
         original_object_path="objects/durable", created_by=owner.user_id)
     restarted = EvidenceRegistry(Store(store.path))
-    assert restarted.verify_content(first.version_id, b"durable")
+    assert restarted.verify_content(
+        organization.organization_id, workspace.workspace_id,
+        first.version_id, b"durable")
     other = WorkspaceDirectory(restarted.store).create(
         organization.organization_id, "MAT-2", "matter", "Other matter",
         owner_user_id=owner.user_id)
