@@ -81,6 +81,28 @@ def test_derived_artifact_links_to_original_span_and_extractor(tmp_path):
             (derived.artifact_id,))
 
 
+@pytest.mark.parametrize(("locator_type", "locator"), [
+    ("document", {"char_start": False, "char_end": 1}),
+    ("document", {"char_start": 0, "char_end": True}),
+    ("image", {"bbox": [False, 0, 1, 1]}),
+    ("image", {"bbox": [1, 1, 0, 0]}),
+    ("media", {"start_seconds": False, "end_seconds": 1}),
+    ("media", {"start_seconds": 0, "end_seconds": True}),
+    ("repository", {"commit": "abc", "path": "x.py",
+                    "line_start": False, "line_end": 1}),
+    ("repository", {"commit": "abc", "path": "x.py",
+                    "line_start": -1, "line_end": 1}),
+])
+def test_numeric_locators_reject_booleans_and_invalid_ranges(
+        tmp_path, locator_type, locator):
+    _, org, owner, workspace, version, registry = setup_lineage(tmp_path)
+    with pytest.raises(ExtractionError):
+        registry.add_span(
+            org.organization_id, workspace.workspace_id, version.version_id,
+            locator_type=locator_type, locator=locator, extracted_text="bad",
+            created_by=owner.user_id)
+
+
 @pytest.mark.parametrize("locator", [
     {"page": None}, {"page": -1}, {"section": ""}, {"paragraph": True},
 ])
