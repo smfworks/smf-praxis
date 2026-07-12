@@ -45,7 +45,7 @@ LOCAL_MODULES = {
     "broker", "broker_client",
     "compliance", "content_guard", "context", "contradiction", "cron", "data_policy",
     "chat_agent", "debate", "deepthink", "embeddings", "escalation",
-    "eval_history", "evals", "evidence", "external_rooms", "gateways", "grounding", "growth", "identity",
+    "eval_history", "evals", "evidence", "extraction", "external_rooms", "gateways", "grounding", "growth", "identity",
     "ingest", "llm", "logging_util", "marketplace", "m365_tools",
     "mcp_adapter", "mcp_client", "memory", "metrics", "multimodal", "notify",
     "onboard", "orchestrator", "organizations", "pack", "perception", "persona",

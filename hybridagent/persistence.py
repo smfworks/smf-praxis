@@ -366,6 +366,48 @@ BEFORE DELETE ON evidence_version_supersessions
 BEGIN
     SELECT RAISE(ABORT, 'evidence supersession records are append-only');
 END;
+CREATE TABLE IF NOT EXISTS evidence_spans (
+    span_id           TEXT PRIMARY KEY,
+    organization_id   TEXT NOT NULL,
+    workspace_id      TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    version_id        TEXT NOT NULL REFERENCES evidence_source_versions(version_id),
+    locator_type      TEXT NOT NULL,
+    locator_json      TEXT NOT NULL,
+    extracted_text    TEXT NOT NULL DEFAULT '',
+    created_by        TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts        REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_evidence_spans_scope
+    ON evidence_spans(organization_id, workspace_id, version_id, created_ts);
+CREATE TABLE IF NOT EXISTS evidence_derived_artifacts (
+    artifact_id       TEXT PRIMARY KEY,
+    organization_id   TEXT NOT NULL,
+    workspace_id      TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    parent_span_id    TEXT NOT NULL REFERENCES evidence_spans(span_id),
+    kind              TEXT NOT NULL,
+    content           TEXT NOT NULL,
+    extractor         TEXT NOT NULL,
+    extractor_version TEXT NOT NULL,
+    configuration_json TEXT NOT NULL DEFAULT '{}',
+    created_by        TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts        REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS prevent_evidence_span_update
+BEFORE UPDATE ON evidence_spans BEGIN
+    SELECT RAISE(ABORT, 'evidence spans are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_evidence_span_delete
+BEFORE DELETE ON evidence_spans BEGIN
+    SELECT RAISE(ABORT, 'evidence spans are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_derived_artifact_update
+BEFORE UPDATE ON evidence_derived_artifacts BEGIN
+    SELECT RAISE(ABORT, 'derived evidence artifacts are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_derived_artifact_delete
+BEFORE DELETE ON evidence_derived_artifacts BEGIN
+    SELECT RAISE(ABORT, 'derived evidence artifacts are append-only');
+END;
 CREATE TABLE IF NOT EXISTS workspace_parties (
     party_id       TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
