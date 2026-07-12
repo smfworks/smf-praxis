@@ -24,7 +24,10 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
 
+from .evidence import EvidenceRegistry, EvidenceSource, EvidenceVersion
+from .extraction import EvidenceSpan, ExtractionRegistry
 from .logging_util import get_logger
+from .persistence import Store
 
 _log = get_logger("praxis.ingest")
 
@@ -39,6 +42,37 @@ class ExtractedDoc:
     source: str
     kind: str = "document"
     metadata: dict = field(default_factory=dict)
+
+
+def register_evidence(
+    document: ExtractedDoc, original: bytes, *, store: Store,
+    organization_id: str, workspace_id: str, created_by: str,
+    canonical_uri: str, publisher: str, locator: dict,
+) -> tuple[EvidenceSource, EvidenceVersion, EvidenceSpan]:
+    """Persist one extracted document through canonical evidence lineage."""
+    evidence = EvidenceRegistry(store)
+    source = evidence.create_source(
+        organization_id, workspace_id, canonical_uri=canonical_uri,
+        publisher=publisher, created_by=created_by)
+    suffix = Path(document.source).suffix.lower()
+    mime_type = {
+        ".txt": "text/plain", ".md": "text/markdown", ".pdf": "application/pdf",
+        ".html": "text/html", ".json": "application/json",
+    }.get(suffix, "application/octet-stream")
+    version = evidence.add_version(
+        organization_id, workspace_id, source.source_id, content=original,
+        mime_type=mime_type, retrieved_ts=float(document.metadata.get("retrieved_ts", 0.0)),
+        parser=str(document.metadata.get("parser", document.kind)),
+        parser_version=str(document.metadata.get("parser_version", "1")),
+        parser_config=dict(document.metadata.get("parser_config", {})),
+        license=str(document.metadata.get("license", "unspecified")),
+        original_object_path=str(document.metadata.get("path", document.source)),
+        created_by=created_by)
+    span = ExtractionRegistry(store).add_span(
+        organization_id, workspace_id, version.version_id,
+        locator_type="document", locator=locator,
+        extracted_text=document.text, created_by=created_by)
+    return source, version, span
 
 
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".log", ".rst", ".csv", ".tsv", ".json"}

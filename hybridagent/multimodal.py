@@ -84,6 +84,39 @@ class MediaClient:
         return ExtractedDoc(text=text, source=p.name, kind=kind,
                             metadata={"path": str(p), "suffix": suffix})
 
+    def process_with_lineage(self, path: str | Path, *, store, organization_id: str,
+                             workspace_id: str, created_by: str, publisher: str):
+        """Process media and persist the output as a derived evidence artifact."""
+        from .evidence import EvidenceRegistry
+        from .extraction import ExtractionRegistry
+        document = self.process(path)
+        evidence = EvidenceRegistry(store)
+        source = evidence.create_source(
+            organization_id, workspace_id, canonical_uri=Path(path).resolve().as_uri(),
+            publisher=publisher, created_by=created_by)
+        version = evidence.add_version(
+            organization_id, workspace_id, source.source_id,
+            content=Path(path).read_bytes(),
+            mime_type=mimetypes.guess_type(str(path))[0] or "application/octet-stream",
+            retrieved_ts=0.0, parser="multimodal", parser_version="1",
+            parser_config={"mode": self.mode}, license="unspecified",
+            original_object_path=str(path), created_by=created_by)
+        extraction = ExtractionRegistry(store)
+        locator_type = "image" if document.kind == "image" else "media"
+        locator = ({"page": 1, "bbox": [0, 0, 1, 1]} if locator_type == "image"
+                   else {"start_seconds": 0.0, "end_seconds": 0.001})
+        span = extraction.add_span(
+            organization_id, workspace_id, version.version_id,
+            locator_type=locator_type, locator=locator, extracted_text="",
+            created_by=created_by)
+        kind = "caption" if document.kind in {"image", "video"} else "transcript"
+        derived = extraction.add_derived_artifact(
+            organization_id, workspace_id, span.span_id, kind=kind,
+            content=document.text, extractor="praxis-media-client",
+            extractor_version="1", configuration={"mode": self.mode},
+            created_by=created_by)
+        return document, derived
+
     # -------------------------------------------------------------------- image
     def describe_image(self, path: str | Path,
                        prompt: str = "Describe this image in detail for search "
