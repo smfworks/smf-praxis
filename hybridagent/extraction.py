@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -123,7 +124,8 @@ class ExtractionRegistry:
         result = dict(locator)
 
         def number(value: Any) -> bool:
-            return isinstance(value, (int, float)) and not isinstance(value, bool)
+            return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value))
 
         def integer(value: Any) -> bool:
             return isinstance(value, int) and not isinstance(value, bool)
