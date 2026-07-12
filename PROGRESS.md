@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.13` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.14` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -59,9 +59,11 @@ Baseline is **green**. New work must not regress any of these.
     proved rejected material-claim text was still emitted after its verification
     event; `0.25.12` suppressed rejected final payloads, and a subsequent critical
     review found intermediate critique/error channels could run before verification.
-    `0.25.13` moves claim readiness to a preflight barrier: blocked workspaces never
-    invoke the inner engine, while post-final verification remains defense in depth.
-    Fresh independent maker-checker pending.
+    `0.25.13` added preflight enforcement; a readiness-flip review then proved
+    already-streamed intermediate events could not be recalled. `0.25.14` buffers
+    every scoped inner event until terminal verification and a final readiness check;
+    a flip or readiness exception discards the entire trajectory. Fresh independent
+    maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 

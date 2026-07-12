@@ -105,6 +105,45 @@ def test_material_claim_preflight_blocks_all_inner_channels():
     assert "UNSUPPORTED MATERIAL CLAIM" not in str(events)
 
 
+def test_material_claim_readiness_flip_discards_buffered_trajectory():
+    class FlipLedger:
+        calls = 0
+
+        def release_ready(self, organization_id, workspace_id):
+            self.calls += 1
+            return self.calls == 1
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent(
+                "critique", {"nested": {"arbitrary": ["UNSUPPORTED MATERIAL CLAIM"]}})
+            yield AgentEvent("final", {"text": "UNSUPPORTED MATERIAL CLAIM"})
+
+    events = list(VerifiedChatAgent(
+        Inner(), claim_ledger=FlipLedger(), organization_id="org",
+        workspace_id="ws", max_revisions=0).run(
+            [{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert "UNSUPPORTED MATERIAL CLAIM" not in str(events)
+
+
+def test_material_claim_readiness_error_fails_closed():
+    class BrokenLedger:
+        def release_ready(self, organization_id, workspace_id):
+            raise RuntimeError("database unavailable")
+
+    class Inner:
+        def run(self, messages, system=None):
+            raise AssertionError("inner engine must not run")
+            yield
+
+    events = list(VerifiedChatAgent(
+        Inner(), claim_ledger=BrokenLedger(), organization_id="org",
+        workspace_id="ws").run([{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["material_claims"]
+
+
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
     store, org, _owner, workspace = setup_runtime(tmp_path)
     ledger = ClaimLedger(store)
