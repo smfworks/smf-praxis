@@ -144,6 +144,46 @@ def test_material_claim_readiness_error_fails_closed():
     assert events[0].data["checks"] == ["material_claims"]
 
 
+def test_scoped_revision_feedback_is_discarded_when_readiness_flips():
+    class FlipLedger:
+        calls = 0
+
+        def release_ready(self, organization_id, workspace_id):
+            self.calls += 1
+            return self.calls < 3
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {
+                "text": "REVISE: UNSUPPORTED-CRITIC-DETAIL"})
+
+    events = list(VerifiedChatAgent(
+        Inner(), claim_ledger=FlipLedger(), organization_id="org",
+        workspace_id="ws", max_revisions=1).run(
+            [{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["material_claims"]
+    assert "UNSUPPORTED-CRITIC-DETAIL" not in str(events)
+
+
+def test_scoped_generator_exception_is_redacted():
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("critique", {"text": "BUFFERED-SECRET"})
+            raise RuntimeError("GENERATOR-SECRET")
+
+    events = list(VerifiedChatAgent(
+        Inner(), claim_ledger=Ready(), organization_id="org",
+        workspace_id="ws").run([{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["execution"]
+    assert "SECRET" not in str(events)
+
+
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
     store, org, _owner, workspace = setup_runtime(tmp_path)
     ledger = ClaimLedger(store)

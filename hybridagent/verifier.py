@@ -193,6 +193,7 @@ class VerifiedChatAgent:
                      if m.get("role") == "user"), "")
         critique: str | None = None
         attempts = self.max_revisions + 1
+        release_buffer: list[AgentEvent] = []
         for attempt in range(attempts):
             aug_system = system
             if critique:
@@ -201,15 +202,24 @@ class VerifiedChatAgent:
             traj = _Trajectory()
             terminal: AgentEvent | None = None
             buffered: list[AgentEvent] = []
-            for ev in self.inner.run(messages, system=aug_system):
-                traj.observe(ev)
-                if ev.type in ("final", "error"):
-                    terminal = ev
-                    break  # hold the terminal: verify before emitting
+            try:
+                for ev in self.inner.run(messages, system=aug_system):
+                    traj.observe(ev)
+                    if ev.type in ("final", "error"):
+                        terminal = ev
+                        break  # hold the terminal: verify before emitting
+                    if self.claim_ledger is None:
+                        yield ev
+                    else:
+                        buffered.append(ev)
+            except Exception:
                 if self.claim_ledger is None:
-                    yield ev
-                else:
-                    buffered.append(ev)
+                    raise
+                yield AgentEvent("verification", {
+                    "approved": False,
+                    "critique": "Professional output generation failed; release is blocked.",
+                    "checks": ["execution"]})
+                return
 
             # Only a clean final answer is verified (errors are Reflexion's domain).
             if terminal is None or terminal.type != "final":
@@ -235,22 +245,33 @@ class VerifiedChatAgent:
             if (not last) and (not verdict.approved) and (
                     not traj.side_effect) and (not traj.held):
                 critique = verdict.critique
-                yield AgentEvent("verification", {
+                revision = AgentEvent("verification", {
                     "approved": False, "critique": critique,
                     "checks": verdict.checks, "attempt": attempt + 1})
+                if self.claim_ledger is None:
+                    yield revision
+                else:
+                    release_buffer.extend(buffered)
+                    release_buffer.append(revision)
                 continue
             if not verdict.approved:
                 # Surfaced for the operator even when we cannot safely revise.
-                yield AgentEvent("verification", {
+                rejection = AgentEvent("verification", {
                     "approved": False, "critique": verdict.critique,
                     "checks": verdict.checks})
                 # Unsupported material claims are a release barrier, not an
                 # advisory quality signal. Never emit the rejected terminal text.
                 if "material_claims" in verdict.checks:
+                    yield blocked()
                     return
+                if self.claim_ledger is None:
+                    yield rejection
+                else:
+                    buffered.append(rejection)
             if not claims_ready():
                 yield blocked()
                 return
+            yield from release_buffer
             yield from buffered
             yield terminal
             return
