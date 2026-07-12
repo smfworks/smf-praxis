@@ -301,7 +301,11 @@ def test_scoped_contract_type_confusion_is_blocked():
         assert "SENSITIVE" not in str(events)
 
 
-@pytest.mark.parametrize("critic_result", [None, "", "GARBAGE", [], "REVISE", "REVISE:"])
+@pytest.mark.parametrize(
+    "critic_result",
+    [None, "", "GARBAGE", [], "REVISE", "REVISE:",
+     "REVISEX: reason", "REVISE later: reason"],
+)
 def test_scoped_critic_requires_protocol_response(critic_result):
     class Ready:
         def release_ready(self, organization_id, workspace_id):
@@ -318,6 +322,28 @@ def test_scoped_critic_requires_protocol_response(critic_result):
     assert [event.type for event in events] == ["verification"]
     assert events[0].data["checks"] == ["critic_protocol"]
     assert "SENSITIVE" not in str(events)
+
+
+def test_scoped_critic_rejects_string_subclass_dispatch():
+    class EvilStr(str):
+        def strip(self, *args, **kwargs):
+            return "APPROVE"
+
+    class Ready:
+        def release_ready(self, organization_id, workspace_id):
+            return True
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "SCOPED-SECRET"})
+
+    events = list(VerifiedChatAgent(
+        Inner(), verifier=AnswerVerifier(critic=lambda *_: EvilStr("GARBAGE")),
+        claim_ledger=Ready(), organization_id="org", workspace_id="ws",
+        max_revisions=0).run([{"role": "user", "content": "release"}]))
+    assert [event.type for event in events] == ["verification"]
+    assert events[0].data["checks"] == ["critic_protocol"]
+    assert "SECRET" not in str(events)
 
 
 def test_release_readiness_fails_for_disabled_organization(tmp_path):
