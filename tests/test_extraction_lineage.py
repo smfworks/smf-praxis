@@ -137,3 +137,32 @@ def test_document_locator_rejects_non_exact_values(tmp_path, locator):
             org.organization_id, workspace.workspace_id, version.version_id,
             locator_type="document", locator=locator, extracted_text="bad",
             created_by=owner.user_id)
+
+
+@pytest.mark.parametrize("extra", [
+    float("nan"), float("inf"), float("-inf"),
+    {"nested": float("nan")}, [0, float("inf")],
+])
+def test_locator_rejects_non_standard_json_anywhere(tmp_path, extra):
+    _, org, owner, workspace, version, registry = setup_lineage(tmp_path)
+    with pytest.raises(ExtractionError, match="JSON serializable"):
+        registry.add_span(
+            org.organization_id, workspace.workspace_id, version.version_id,
+            locator_type="repository",
+            locator={"commit": "abc", "path": "x.py", "line_start": 1,
+                     "line_end": 1, "extra": extra},
+            extracted_text="bad", created_by=owner.user_id)
+
+
+def test_derived_configuration_rejects_non_standard_json(tmp_path):
+    _, org, owner, workspace, version, registry = setup_lineage(tmp_path)
+    span = registry.add_span(
+        org.organization_id, workspace.workspace_id, version.version_id,
+        locator_type="document", locator={"page": 1}, extracted_text="text",
+        created_by=owner.user_id)
+    with pytest.raises(ExtractionError, match="JSON serializable"):
+        registry.add_derived_artifact(
+            org.organization_id, workspace.workspace_id, span.span_id,
+            kind="extraction", content="derived", extractor="test",
+            extractor_version="1", configuration={"threshold": float("nan")},
+            created_by=owner.user_id)

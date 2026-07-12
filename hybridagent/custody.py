@@ -58,7 +58,8 @@ class CustodyLedger:
         if not tool_id.strip():
             raise CustodyError("tool identity is required")
         try:
-            details_json = json.dumps(details, sort_keys=True, separators=(",", ":"))
+            details_json = json.dumps(
+                details, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise CustodyError("custody details must be JSON serializable") from exc
         event_id = f"custody-{uuid.uuid4().hex}"
@@ -110,7 +111,8 @@ class CustodyLedger:
         previous = ""
         for expected, event in enumerate(
                 self.list_for(organization_id, workspace_id, version_id), start=1):
-            details_json = json.dumps(event.details, sort_keys=True, separators=(",", ":"))
+            details_json = json.dumps(
+                event.details, sort_keys=True, separators=(",", ":"), allow_nan=False)
             calculated = self._hash(
                 event.organization_id, event.workspace_id, event.version_id,
                 event.sequence, event.event_type, event.actor_id, event.tool_id,
