@@ -5,7 +5,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from .evidence import EvidenceRegistry
 from .persistence import Store
@@ -121,21 +121,29 @@ class ExtractionRegistry:
         if not isinstance(locator, dict):
             raise ExtractionError("locator must be an object")
         result = dict(locator)
+
+        def number(value: Any) -> bool:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+        def integer(value: Any) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool)
+
         if locator_type == "document":
             if not any(key in result for key in ("page", "section", "paragraph",
                                                   "char_start", "char_end")):
                 raise ExtractionError("document locator requires an exact location")
             if "char_start" in result or "char_end" in result:
                 start, end = result.get("char_start"), result.get("char_end")
-                if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
+                if not integer(start) or not integer(end):
+                    raise ExtractionError("character range is invalid")
+                start_int, end_int = cast(int, start), cast(int, end)
+                if start_int < 0 or end_int <= start_int:
                     raise ExtractionError("character range is invalid")
             if "page" in result and (
-                    isinstance(result["page"], bool)
-                    or not isinstance(result["page"], int) or result["page"] < 1):
+                    not integer(result["page"]) or result["page"] < 1):
                 raise ExtractionError("page must be a positive integer")
             if "paragraph" in result and (
-                    isinstance(result["paragraph"], bool)
-                    or not isinstance(result["paragraph"], int)
+                    not integer(result["paragraph"])
                     or result["paragraph"] < 1):
                 raise ExtractionError("paragraph must be a positive integer")
             if "section" in result and (
@@ -148,17 +156,22 @@ class ExtractionRegistry:
         elif locator_type == "image":
             box = result.get("bbox")
             if (not isinstance(box, list) or len(box) != 4
-                    or not all(isinstance(value, (int, float)) for value in box)):
+                    or not all(number(value) for value in box)
+                    or box[2] <= box[0] or box[3] <= box[1]):
                 raise ExtractionError("image locator requires a four-value bounding box")
         elif locator_type == "media":
             start, end = result.get("start_seconds"), result.get("end_seconds")
-            if (not isinstance(start, (int, float)) or not isinstance(end, (int, float))
-                    or start < 0 or end <= start):
+            if not number(start) or not number(end):
+                raise ExtractionError("media locator requires a valid time range")
+            start_num = cast(int | float, start)
+            end_num = cast(int | float, end)
+            if start_num < 0 or end_num <= start_num:
                 raise ExtractionError("media locator requires a valid time range")
         elif locator_type == "repository":
             if (not result.get("commit") or not result.get("path")
-                    or not isinstance(result.get("line_start"), int)
-                    or not isinstance(result.get("line_end"), int)
+                    or not integer(result.get("line_start"))
+                    or not integer(result.get("line_end"))
+                    or result["line_start"] < 1
                     or result["line_end"] < result["line_start"]):
                 raise ExtractionError(
                     "repository locator requires commit, path, and line range")
