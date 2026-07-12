@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.6` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.7` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -49,8 +49,11 @@ Baseline is **green**. New work must not regress any of these.
     before similarity; ingestion/media/verifier paths use the substrate.
   - Verified: 66/66 focused Phase 3/professional/API contracts, complete non-fuzz
     suite, evals 40/40, governed demo, whole-repository Ruff, mypy across 117
-    modules, architecture checks, package build, clean-wheel `0.25.5` import, and
-    clean diff validation. Independent maker-checker pending.
+    modules, architecture checks, package build, clean-wheel `0.25.6` import, and
+    clean diff validation. First independent review failed on runtime claim-scope
+    propagation, inactive-organization release readiness, and weak document locator
+    values; all three were remediated at `0.25.7` with regressions. Fresh independent
+    maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 

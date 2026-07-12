@@ -129,6 +129,19 @@ class ExtractionRegistry:
                 start, end = result.get("char_start"), result.get("char_end")
                 if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
                     raise ExtractionError("character range is invalid")
+            if "page" in result and (
+                    isinstance(result["page"], bool)
+                    or not isinstance(result["page"], int) or result["page"] < 1):
+                raise ExtractionError("page must be a positive integer")
+            if "paragraph" in result and (
+                    isinstance(result["paragraph"], bool)
+                    or not isinstance(result["paragraph"], int)
+                    or result["paragraph"] < 1):
+                raise ExtractionError("paragraph must be a positive integer")
+            if "section" in result and (
+                    not isinstance(result["section"], str)
+                    or not result["section"].strip()):
+                raise ExtractionError("section must be non-empty text")
         elif locator_type == "table":
             if not result.get("table") or not result.get("cell"):
                 raise ExtractionError("table locator requires table and cell")

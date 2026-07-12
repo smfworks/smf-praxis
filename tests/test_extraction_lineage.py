@@ -79,3 +79,15 @@ def test_derived_artifact_links_to_original_span_and_extractor(tmp_path):
         store._directory_execute(
             "UPDATE evidence_derived_artifacts SET content='changed' WHERE artifact_id=?",
             (derived.artifact_id,))
+
+
+@pytest.mark.parametrize("locator", [
+    {"page": None}, {"page": -1}, {"section": ""}, {"paragraph": True},
+])
+def test_document_locator_rejects_non_exact_values(tmp_path, locator):
+    _, org, owner, workspace, version, registry = setup_lineage(tmp_path)
+    with pytest.raises(ExtractionError):
+        registry.add_span(
+            org.organization_id, workspace.workspace_id, version.version_id,
+            locator_type="document", locator=locator, extracted_text="bad",
+            created_by=owner.user_id)
