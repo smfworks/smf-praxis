@@ -408,6 +408,32 @@ CREATE TRIGGER IF NOT EXISTS prevent_derived_artifact_delete
 BEFORE DELETE ON evidence_derived_artifacts BEGIN
     SELECT RAISE(ABORT, 'derived evidence artifacts are append-only');
 END;
+CREATE TABLE IF NOT EXISTS evidence_custody_events (
+    event_id           TEXT PRIMARY KEY,
+    organization_id    TEXT NOT NULL,
+    workspace_id       TEXT NOT NULL REFERENCES professional_workspaces(workspace_id),
+    version_id         TEXT NOT NULL REFERENCES evidence_source_versions(version_id),
+    sequence           INTEGER NOT NULL,
+    event_type         TEXT NOT NULL,
+    actor_id           TEXT NOT NULL,
+    tool_id            TEXT NOT NULL,
+    occurred_ts        REAL NOT NULL,
+    details_json       TEXT NOT NULL DEFAULT '{}',
+    previous_event_hash TEXT NOT NULL DEFAULT '',
+    event_hash         TEXT NOT NULL UNIQUE,
+    created_ts         REAL NOT NULL,
+    UNIQUE (version_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS ix_custody_scope
+    ON evidence_custody_events(organization_id, workspace_id, version_id, sequence);
+CREATE TRIGGER IF NOT EXISTS prevent_custody_update
+BEFORE UPDATE ON evidence_custody_events BEGIN
+    SELECT RAISE(ABORT, 'custody events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_custody_delete
+BEFORE DELETE ON evidence_custody_events BEGIN
+    SELECT RAISE(ABORT, 'custody events are append-only');
+END;
 CREATE TABLE IF NOT EXISTS workspace_parties (
     party_id       TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,

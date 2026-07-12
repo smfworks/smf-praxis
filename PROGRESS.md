@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.1` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.2` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
