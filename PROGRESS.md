@@ -7,11 +7,11 @@
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
 - **Version:** `0.25.20` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
-- **Active branch:** `feat/professional-platform-phase-3`
+- **Active branch:** `feat/professional-platform-phase-4`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
-- **Current WIP:** PP30 — authority, evidence, claims, and chain of custody
-- **Current blocker:** none; canonical evidence is the active test-first slice
+- **Current WIP:** PP40 — durable professional workflows
+- **Current blocker:** none; durable run/checkpoint protocol is the active test-first slice
 
 ## Baseline verification (captured 2026-07-11)
 
