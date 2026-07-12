@@ -207,5 +207,9 @@ class VerifiedChatAgent:
                 yield AgentEvent("verification", {
                     "approved": False, "critique": verdict.critique,
                     "checks": verdict.checks})
+                # Unsupported material claims are a release barrier, not an
+                # advisory quality signal. Never emit the rejected terminal text.
+                if "material_claims" in verdict.checks:
+                    return
             yield terminal
             return
