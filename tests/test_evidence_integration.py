@@ -1,12 +1,13 @@
 """Runtime wiring from ingestion/multimodal/verification into evidence substrate."""
 
+from hybridagent.chat_agent import AgentEvent
 from hybridagent.claims import ClaimLedger
 from hybridagent.evidence import EvidenceRegistry
 from hybridagent.ingest import ExtractedDoc, register_evidence
 from hybridagent.multimodal import MediaClient
 from hybridagent.organizations import OrganizationDirectory
 from hybridagent.persistence import Store
-from hybridagent.verifier import AnswerVerifier
+from hybridagent.verifier import AnswerVerifier, VerifiedChatAgent
 from hybridagent.workspaces import WorkspaceDirectory
 
 
@@ -58,3 +59,32 @@ def test_answer_verifier_blocks_when_material_claim_ledger_is_not_ready(tmp_path
         workspace_id=workspace.workspace_id)
     assert not verdict.approved
     assert "material_claims" in verdict.checks
+
+
+def test_verified_chat_runtime_propagates_material_claim_scope(tmp_path):
+    store, org, owner, workspace = setup_runtime(tmp_path)
+    ledger = ClaimLedger(store)
+    ledger.create(org.organization_id, workspace.workspace_id,
+                  text="Unresolved", material=True, created_by=owner.user_id)
+
+    class Inner:
+        def run(self, messages, system=None):
+            yield AgentEvent("final", {"text": "Professional conclusion."})
+
+    events = list(VerifiedChatAgent(
+        Inner(), claim_ledger=ledger, organization_id=org.organization_id,
+        workspace_id=workspace.workspace_id, max_revisions=0).run(
+            [{"role": "user", "content": "release draft"}]))
+    assert any(event.type == "verification"
+               and "material_claims" in event.data.get("checks", [])
+               for event in events)
+
+
+def test_release_readiness_fails_for_disabled_organization(tmp_path):
+    store, org, _owner, workspace = setup_runtime(tmp_path)
+    ledger = ClaimLedger(store)
+    assert ledger.release_ready(org.organization_id, workspace.workspace_id)
+    store._directory_execute(
+        "UPDATE organizations SET status='disabled' WHERE organization_id=?",
+        (org.organization_id,))
+    assert not ledger.release_ready(org.organization_id, workspace.workspace_id)

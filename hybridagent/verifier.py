@@ -147,10 +147,16 @@ class VerifiedChatAgent:
     """
 
     def __init__(self, inner: ChatEngine, *, verifier: AnswerVerifier | None = None,
-                 max_revisions: int = 1) -> None:
+                 max_revisions: int = 1, claim_ledger=None,
+                 organization_id: str = "", workspace_id: str = "") -> None:
+        if claim_ledger is not None and (not organization_id or not workspace_id):
+            raise ValueError("claim verification requires organization and workspace scope")
         self.inner = inner
         self.verifier = verifier or AnswerVerifier()
         self.max_revisions = max(0, max_revisions)
+        self.claim_ledger = claim_ledger
+        self.organization_id = organization_id
+        self.workspace_id = workspace_id
 
     def run(self, messages: list[dict],
             system: str | None = None) -> Iterator[AgentEvent]:
@@ -179,7 +185,10 @@ class VerifiedChatAgent:
                 return
             verdict = self.verifier.verify(
                 task, str(terminal.data.get("text", "")),
-                held=traj.held, action_denied=traj.consequential_denied)
+                held=traj.held, action_denied=traj.consequential_denied,
+                claim_ledger=self.claim_ledger,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id)
             last = attempt >= attempts - 1
             # A revision is safe only if the turn executed no side effect AND held
             # nothing for approval. Re-running a *held* turn would re-propose the

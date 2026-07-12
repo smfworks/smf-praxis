@@ -125,8 +125,10 @@ class ClaimLedger:
 
     def release_ready(self, organization_id: str, workspace_id: str) -> bool:
         workspace = self.store._directory_one(
-            "SELECT 1 FROM professional_workspaces WHERE organization_id=? "
-            "AND workspace_id=?", (organization_id, workspace_id))
+            "SELECT 1 FROM professional_workspaces w JOIN organizations o "
+            "ON o.organization_id=w.organization_id WHERE w.organization_id=? "
+            "AND w.workspace_id=? AND w.status='active' AND o.status='active'",
+            (organization_id, workspace_id))
         if workspace is None:
             return False
         row = self.store._directory_one(
