@@ -124,6 +124,11 @@ class ClaimLedger:
         return result
 
     def release_ready(self, organization_id: str, workspace_id: str) -> bool:
+        workspace = self.store._directory_one(
+            "SELECT 1 FROM professional_workspaces WHERE organization_id=? "
+            "AND workspace_id=?", (organization_id, workspace_id))
+        if workspace is None:
+            return False
         row = self.store._directory_one(
             "SELECT COUNT(*) AS blocked FROM professional_claims WHERE organization_id=? "
             "AND workspace_id=? AND material=1 AND status<>'supported'",

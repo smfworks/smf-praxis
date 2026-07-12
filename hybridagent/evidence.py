@@ -178,8 +178,9 @@ class EvidenceRegistry:
             (organization_id, workspace_id, source_id))
         return [self._version(row) for row in rows]
 
-    def verify_content(self, version_id: str, content: bytes) -> bool:
-        row = self._version_row(version_id)
+    def verify_content(self, organization_id: str, workspace_id: str,
+                       version_id: str, content: bytes) -> bool:
+        row = self._version_row(version_id, organization_id, workspace_id)
         if row is None or not isinstance(content, bytes):
             return False
         return hashlib.sha256(content).hexdigest() == row["content_hash"]
