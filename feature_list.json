@@ -156,6 +156,16 @@
       "verification": "python3 -m pytest tests/test_workspaces.py tests/test_workspace_timeline.py tests/test_workspace_isolation.py tests/test_external_rooms.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
       "status": "passing",
       "evidence": "v0.24.0: tenant-owned professional workspaces; parties, reviewed deadlines, and SQLite-enforced append-only timelines; workspace-scoped memory/RAG/runs/traces/board/context keys; authenticated workspace/list/create, board, timeline, and external-room v1 routes; owned-record quarantine from legacy routes; controlled external rooms with active-principal RBAC and authoritative item ownership; bounded stable v1 JSON errors; atomic organization+workspace idempotency and BEGIN IMMEDIATE run ownership. Verified: complete non-fuzz suite, evals 40/40, governed demo, Ruff, mypy 99 modules, architecture, package/clean-venv import. Independent PASS deleg_8c417aea reproduced 10 synchronized two-process rounds with one creator/one rejection, correct persisted owner, rollback reuse, and same-workspace idempotence."
+    },
+    {
+      "id": "PP30",
+      "priority": 130,
+      "area": "professional-platform",
+      "title": "Phase 3 authority, evidence, claims and chain of custody",
+      "user_visible_behavior": "Praxis preserves canonical source versions, exact extraction lineage, append-only custody, claim support state, and applicable authority policy within tenant-owned workspaces.",
+      "verification": "python3 -m pytest tests/test_evidence.py tests/test_extraction_lineage.py tests/test_custody.py tests/test_claims.py tests/test_authority.py tests/test_architecture.py -q && python3 scripts/check_architecture.py",
+      "status": "in_progress",
+      "evidence": "v0.24.2 release checkpoint passed GitHub CI across Linux 3.10/3.11/3.12, macOS, Windows, Docker, installers, lint, typing and architecture; Phase 3 branch activated with canonical evidence as the first test-first slice."
     }
   ]
 }

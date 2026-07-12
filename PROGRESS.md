@@ -6,12 +6,12 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.24.2` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
-- **Active branch:** `main`
+- **Version:** `0.25.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
-- **Current WIP:** none; PP20 released and Phase 3 has not started
-- **Current blocker:** none; Phase 2 passed independent maker-checker review
+- **Current WIP:** PP30 — authority, evidence, claims, and chain of custody
+- **Current blocker:** none; canonical evidence is the active test-first slice
 
 ## Baseline verification (captured 2026-07-11)
 
@@ -40,7 +40,14 @@ Baseline is **green**. New work must not regress any of these.
 
 ## In Progress
 
-- No active professional-platform phase. Phase 3 remains inactive pending explicit kickoff.
+- [ ] **PP30** — Professional platform Phase 3: canonical sources and versions,
+  extraction lineage, append-only custody, claim support states, and authority policy.
+  - Canonical evidence slice implemented: tenant/workspace-scoped sources, immutable
+    hash-addressed versions, parser/configuration lineage, durable supersession edges,
+    active-actor validation, and SQLite update/delete prevention.
+  - Verified: 6/6 evidence contracts, 78/78 professional/API isolation contracts,
+    complete non-fuzz suite, evals 40/40, governed demo, Ruff, mypy across 100
+    modules, architecture checks, and clean diff validation.
 
 ### Phase 2 release-candidate evidence
 
@@ -70,7 +77,7 @@ Baseline is **green**. New work must not regress any of these.
 
 ## Next Steps (priority order)
 
-1. Begin **Phase 3** only after an explicit kickoff; preserve WIP=1.
+1. Implement canonical source and immutable source-version records test-first.
 2. Preserve Hermes and repository WIP=1 throughout the professional-platform sequence.
 3. Require independent maker-checker PASS before every phase promotion.
 
