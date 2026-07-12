@@ -230,6 +230,14 @@ CREATE TABLE IF NOT EXISTS board_cards (
     created_ts REAL NOT NULL,
     updated_ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_idempotency_receipts (
+    idempotency_key TEXT PRIMARY KEY,
+    fingerprint     TEXT NOT NULL,
+    response_json   TEXT NOT NULL,
+    created_ts      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_api_idempotency_created
+    ON api_idempotency_receipts(created_ts);
 CREATE TABLE IF NOT EXISTS budget (
     name         TEXT PRIMARY KEY,
     limit_usd    REAL NOT NULL DEFAULT 0,
@@ -1498,6 +1506,59 @@ class Store:
             self._conn.execute(
                 "DELETE FROM board_cards WHERE card_id=?", (card_id,))
             self._conn.commit()
+
+    def idempotent_add_card(
+        self, key: str, fingerprint: str, card_id: str, title: str, goal: str,
+        *, max_receipts: int = 4096,
+    ) -> tuple[dict, bool, bool]:
+        """Atomically replay or create a card across threads and processes.
+
+        ``BEGIN IMMEDIATE`` acquires SQLite's writer reservation before receipt
+        lookup. Receipt decision, card effect, response storage, and pruning are
+        therefore one transaction. Returns ``(card, replayed, conflict)``.
+        """
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT fingerprint,response_json FROM api_idempotency_receipts "
+                    "WHERE idempotency_key=?", (key,),
+                ).fetchone()
+                if row is not None:
+                    if row["fingerprint"] != fingerprint:
+                        self._conn.rollback()
+                        return {}, False, True
+                    card = json.loads(row["response_json"])
+                    self._conn.commit()
+                    return card, True, False
+
+                now = time.time()
+                self._conn.execute(
+                    "INSERT INTO board_cards(card_id,title,goal,lane,run_id,status,"
+                    "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?)",
+                    (card_id, title, goal, "backlog", "", "", now, now),
+                )
+                card = {
+                    "card_id": card_id, "title": title, "goal": goal,
+                    "lane": "backlog", "run_id": "", "status": "",
+                    "created_ts": now, "updated_ts": now,
+                }
+                self._conn.execute(
+                    "INSERT INTO api_idempotency_receipts"
+                    "(idempotency_key,fingerprint,response_json,created_ts) VALUES (?,?,?,?)",
+                    (key, fingerprint, json.dumps(card, default=str), now),
+                )
+                self._conn.execute(
+                    "DELETE FROM api_idempotency_receipts WHERE idempotency_key IN ("
+                    "SELECT idempotency_key FROM api_idempotency_receipts "
+                    "ORDER BY created_ts DESC LIMIT -1 OFFSET ?)",
+                    (max_receipts,),
+                )
+                self._conn.commit()
+                return card, False, False
+            except Exception:
+                self._conn.rollback()
+                raise
 
     # ----------------------------------------------------- channel threads
     def get_channel_thread(self, thread_key: str) -> list[dict]:

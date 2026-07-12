@@ -28,9 +28,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, Callable, Iterator
+from urllib.parse import parse_qs as parse_query
+from urllib.parse import urlsplit as split_url
 
 from . import config as cfg
 from .agent import PraxisAgent
+from .api_contract import (
+    API_VERSION,
+    MAX_IDEMPOTENCY_KEY_LENGTH,
+    MAX_IDEMPOTENCY_RECEIPTS,
+    MAX_JSON_BODY_BYTES,
+    error_envelope,
+    etag,
+    normalize_limit,
+    page_items,
+    resource_version,
+    success_envelope,
+)
 from .broker import RiskClass
 from .llm import LLMClient
 from .logging_util import get_logger
@@ -1979,6 +1993,22 @@ class _StatusHandler(BaseHTTPRequestHandler):
             status=401)
         return False
 
+    def _require_v1_auth(self) -> bool:
+        """Apply the configured remote-access gate using the v1 error contract."""
+        from . import auth_gate
+        if self._is_loopback() or not auth_gate.configured_token():
+            return True
+        if auth_gate.token_matches(auth_gate.extract_token(self.headers)):
+            return True
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        self._v1_response(
+            error_envelope(
+                "unauthorized", "Authentication is required",
+                request_id=request_id,
+                details={"hint": "Set Authorization: Bearer *** or X-Praxis-Token"},
+            ), status=401)
+        return False
+
     def do_POST(self) -> None:
         try:
             if self.path == "/stop":
@@ -1989,6 +2019,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b'{"stopping": true}')
                 threading.Thread(target=self.daemon.stop, daemon=True).start()
+                return
+            if self.path == "/api/v1/board/cards":
+                if not self._require_v1_auth():
+                    return
+                self._handle_v1_board_create()
                 return
             # Auth gate for all other mutating routes when bound beyond loopback.
             if self.path not in ("/api/auth/login",) and not self._require_auth():
@@ -2329,6 +2364,12 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
+            parsed = split_url(self.path)
+            if parsed.path == "/api/v1/board/cards":
+                if not self._require_v1_auth():
+                    return
+                self._handle_v1_board_list(parse_query(parsed.query))
+                return
             if self.path == "/status":
                 mgr = self.daemon.manager
                 from . import pack as _pack
@@ -2441,6 +2482,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 body = json.dumps(self.daemon.board_list(), default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Deprecation", "true")
+                self.send_header("Sunset", "Tue, 12 Jan 2027 00:00:00 GMT")
+                self.send_header(
+                    "Link", '</api/v1/board/cards>; rel="successor-version"')
             elif self.path == "/api/readiness":
                 body = json.dumps(self.daemon.readiness(), default=str).encode()
                 self.send_response(200)
@@ -2508,6 +2553,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 body = b"not found"
                 self.send_response(404)
         except Exception as exc:
+            if split_url(self.path).path.startswith("/api/v1/"):
+                self._error_response(exc)
+                return
             body = f"error: {exc}".encode()
             self.send_response(500)
         self.end_headers()
@@ -2752,13 +2800,135 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return
         self._json_response({"uploaded": len(saved), "files": saved, "errors": errors})
 
-    def _json_response(self, payload: dict, status: int = 200) -> None:
+    def _handle_v1_board_list(self, query: dict[str, list[str]]) -> None:
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        try:
+            limit_values = query.get("limit")
+            cursor_values = query.get("cursor")
+            limit_value: str | None = limit_values[0] if limit_values else None
+            cursor: str | None = cursor_values[0] if cursor_values else None
+            limit = normalize_limit(limit_value)
+            cards = self.daemon.board_list()["cards"]
+            version = resource_version(cards)
+            items, next_cursor = page_items(
+                cards, limit=limit, cursor=cursor,
+                secret=self.daemon.api_cursor_secret, snapshot=version,
+            )
+        except ValueError as exc:
+            self._v1_response(
+                error_envelope("invalid_request", str(exc), request_id=request_id),
+                status=400,
+            )
+            return
+        if self.headers.get("If-None-Match") == etag(version):
+            self.send_response(304)
+            self.send_header("X-API-Version", API_VERSION)
+            self.send_header("ETag", etag(version))
+            self.end_headers()
+            return
+        payload = success_envelope(
+            {"items": items}, request_id=request_id,
+            meta={"next_cursor": next_cursor, "resource_version": version},
+        )
+        self._v1_response(payload, headers={"ETag": etag(version)})
+
+    def _handle_v1_board_create(self) -> None:
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+        try:
+            declared_length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            declared_length = -1
+        if declared_length < 0 or declared_length > MAX_JSON_BODY_BYTES:
+            self._v1_response(
+                error_envelope(
+                    "payload_too_large",
+                    f"JSON body must be at most {MAX_JSON_BODY_BYTES} bytes",
+                    request_id=request_id,
+                ), status=413)
+            return
+        try:
+            payload = json.loads(
+                self._read_body(max_bytes=MAX_JSON_BODY_BYTES).decode() or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._v1_response(
+                error_envelope("invalid_json", "Request body must be valid JSON",
+                               request_id=request_id), status=400)
+            return
+        if not isinstance(payload, dict):
+            self._v1_response(
+                error_envelope("invalid_request", "Request body must be a JSON object",
+                               request_id=request_id), status=400)
+            return
+        title = str(payload.get("title") or "").strip()
+        goal = str(payload.get("goal") or title).strip()
+        if not goal:
+            self._v1_response(
+                error_envelope("invalid_request", "title or goal is required",
+                               request_id=request_id,
+                               details={"field": "title"}), status=400)
+            return
+
+        key = str(self.headers.get("Idempotency-Key") or "").strip()
+        if len(key) > MAX_IDEMPOTENCY_KEY_LENGTH:
+            self._v1_response(
+                error_envelope(
+                    "invalid_request",
+                    f"Idempotency-Key must be at most {MAX_IDEMPOTENCY_KEY_LENGTH} characters",
+                    request_id=request_id,
+                ), status=400)
+            return
+        fingerprint = resource_version({"title": title, "goal": goal})
+        result, replayed, conflict = self.daemon.api_idempotent_board_create(
+            key, fingerprint, title, goal)
+        if conflict:
+            self._v1_response(
+                error_envelope(
+                    "idempotency_conflict",
+                    "Idempotency-Key was already used with a different request",
+                    request_id=request_id,
+                ), status=409)
+            return
+        card = result.get("card")
+        if not isinstance(card, dict):
+            self._v1_response(
+                error_envelope("invalid_request", str(result.get("error") or "invalid card"),
+                               request_id=request_id), status=400)
+            return
+        version = resource_version(card)
+        response_headers = {"ETag": etag(version)}
+        if replayed:
+            response_headers["Idempotency-Replayed"] = "true"
+        self._v1_response(
+            success_envelope({"card": card}, request_id=request_id,
+                             meta={"resource_version": version}),
+            status=200 if replayed else 201, headers=response_headers,
+        )
+
+    def _v1_response(self, payload: dict, status: int = 200,
+                     headers: dict[str, str] | None = None) -> None:
+        self._json_response(
+            payload, status=status,
+            headers={"X-API-Version": API_VERSION, **(headers or {})},
+        )
+
+    def _json_response(self, payload: dict, status: int = 200,
+                       headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(json.dumps(payload, default=str).encode())
 
     def _error_response(self, exc: Exception) -> None:
+        if split_url(self.path).path.startswith("/api/v1/"):
+            request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex
+            self._v1_response(
+                error_envelope(
+                    "internal_error", "The request could not be completed",
+                    request_id=request_id,
+                ), status=500)
+            return
         self.send_response(500)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -2817,6 +2987,10 @@ class Daemon:
         self._last_heartbeat_ts = 0.0
         self._heartbeat_backoff_until = 0.0
         self._log_buffer: list[str] = []
+        # Serializes handlers sharing this daemon; SQLite BEGIN IMMEDIATE below
+        # provides the cross-process transaction boundary.
+        self._api_idempotency_lock = threading.Lock()
+        self.api_cursor_secret = uuid.uuid4().bytes
         # Open SSE subscriber queues, one per /events connection. Guarded by
         # _sse_lock because request handlers run on independent threads.
         self._sse_clients: list[Queue[dict[str, _T] | None]] = []
@@ -2824,6 +2998,25 @@ class Daemon:
         self.state = _read_state()
         self.state.running = False
         self._setup_signal_handlers()
+
+    def api_idempotent_board_create(
+        self, key: str, fingerprint: str, title: str, goal: str,
+    ) -> tuple[dict[str, Any], bool, bool]:
+        """Atomically replay or create a board card for an idempotency key.
+
+        Returns ``(result, replayed, conflict)``. Holding the lock across the
+        store write prevents concurrent HTTP handlers from duplicating effects.
+        """
+        if not key:
+            return self.board_create(title, goal), False, False
+        with self._api_idempotency_lock:
+            self._ensure_agent()
+            assert self.store is not None
+            card, replayed, conflict = self.store.idempotent_add_card(
+                key, fingerprint, f"card-{uuid.uuid4().hex[:10]}", title, goal,
+                max_receipts=MAX_IDEMPOTENCY_RECEIPTS,
+            )
+            return ({"card": card} if card else {}), replayed, conflict
 
     def work_dir_upload(self, filename: str) -> Path:
         base = self.work_dir or os.environ.get("PRAXIS_WORK_DIR") or os.getcwd()
@@ -2908,8 +3101,11 @@ class Daemon:
         if self.agent is not None:
             self._bind_durable_surfaces()
             return
-        self.agent = PraxisAgent.persistent(llm=self.llm, work_dir=self.work_dir)
-        self.store = self.agent.store
+        if self.store is not None:
+            self.agent = PraxisAgent(llm=self.llm, store=self.store)
+        else:
+            self.agent = PraxisAgent.persistent(llm=self.llm, work_dir=self.work_dir)
+            self.store = self.agent.store
         if self.manager is None:
             self.manager = TaskManager(self.store)
         self._bind_durable_surfaces()
