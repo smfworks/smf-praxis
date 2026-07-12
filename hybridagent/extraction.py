@@ -130,6 +130,9 @@ class ExtractionRegistry:
         def integer(value: Any) -> bool:
             return isinstance(value, int) and not isinstance(value, bool)
 
+        def text(value: Any) -> bool:
+            return isinstance(value, str) and bool(value.strip())
+
         if locator_type == "document":
             if not any(key in result for key in ("page", "section", "paragraph",
                                                   "char_start", "char_end")):
@@ -153,7 +156,7 @@ class ExtractionRegistry:
                     or not result["section"].strip()):
                 raise ExtractionError("section must be non-empty text")
         elif locator_type == "table":
-            if not result.get("table") or not result.get("cell"):
+            if not text(result.get("table")) or not text(result.get("cell")):
                 raise ExtractionError("table locator requires table and cell")
         elif locator_type == "image":
             box = result.get("bbox")
@@ -170,7 +173,7 @@ class ExtractionRegistry:
             if start_num < 0 or end_num <= start_num:
                 raise ExtractionError("media locator requires a valid time range")
         elif locator_type == "repository":
-            if (not result.get("commit") or not result.get("path")
+            if (not text(result.get("commit")) or not text(result.get("path"))
                     or not integer(result.get("line_start"))
                     or not integer(result.get("line_end"))
                     or result["line_start"] < 1
