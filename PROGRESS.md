@@ -7,7 +7,7 @@
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
 - **Version:** `0.24.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
-- **Active branch:** `feat/professional-platform-phase-2`
+- **Active branch:** `main`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
 - **Current WIP:** none; PP20 released and Phase 3 has not started
