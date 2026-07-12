@@ -6,11 +6,11 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.22.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
-- **Active branch:** `feat/professional-platform-phase-0`
+- **Version:** `0.23.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Active branch:** `feat/professional-platform-phase-1` (ready to merge)
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
-- **Current WIP:** none — PP00 passed; Phase 1 is next
+- **Current WIP:** none — PP10 passed; Phase 2 is next
 - **Current blocker:** none
 
 ## Baseline verification (captured 2026-07-11)
@@ -35,10 +35,11 @@ Baseline is **green**. New work must not regress any of these.
 - [x] **H02** — Evaluator rubric template (`docs/harness/evaluator-rubric.md`)
 - [x] **H03** — Clean-state checklist + session handoff templates
 - [x] **H04** — Quality document with initial module snapshot
+- [x] **PP10** — Professional platform Phase 1: tenant isolation, revocable sessions, RBAC/ABAC/purpose controls, authenticated approvals, and classified-data lifecycle/egress — independently verified 2026-07-12
 
 ## In Progress
 
-(none — PP00 passed; Phase 1 is the next WIP=1 increment)
+(none — PP10 passed; Phase 2 is the next WIP=1 increment)
 
 ## Known Issues / Risks
 
@@ -50,7 +51,7 @@ Baseline is **green**. New work must not regress any of these.
 
 ## Next Steps (priority order)
 
-1. Begin **Phase 1**: organization persistence → secure sessions → RBAC/ABAC → classification/retention → isolation gate.
+1. Begin **Phase 2**: professional workspaces → timelines → context isolation → controlled external rooms.
 2. Preserve Hermes and repository WIP=1 throughout the professional-platform sequence.
 3. Require independent maker-checker PASS before every phase promotion.
 

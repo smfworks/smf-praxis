@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS audit_entries (
 
 CREATE TABLE IF NOT EXISTS approvals (
     approval_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL DEFAULT '',
     cycle_id    TEXT NOT NULL DEFAULT '',
     decision_id TEXT NOT NULL DEFAULT '',
     tool        TEXT NOT NULL,
@@ -222,6 +223,7 @@ CREATE TABLE IF NOT EXISTS run_events (
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
 CREATE TABLE IF NOT EXISTS board_cards (
     card_id    TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL DEFAULT '',
     title      TEXT NOT NULL DEFAULT '',
     goal       TEXT NOT NULL DEFAULT '',
     lane       TEXT NOT NULL DEFAULT 'backlog',
@@ -238,6 +240,55 @@ CREATE TABLE IF NOT EXISTS api_idempotency_receipts (
 );
 CREATE INDEX IF NOT EXISTS ix_api_idempotency_created
     ON api_idempotency_receipts(created_ts);
+CREATE TABLE IF NOT EXISTS organizations (
+    organization_id TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_ts      REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS organization_users (
+    user_id      TEXT PRIMARY KEY,
+    email        TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_ts   REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS organization_memberships (
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    user_id         TEXT NOT NULL REFERENCES organization_users(user_id),
+    roles_json      TEXT NOT NULL DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_ts      REAL NOT NULL,
+    PRIMARY KEY (organization_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS ix_memberships_user
+    ON organization_memberships(user_id);
+CREATE TABLE IF NOT EXISTS organization_teams (
+    team_id         TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    name            TEXT NOT NULL,
+    created_ts      REAL NOT NULL,
+    UNIQUE (organization_id, name)
+);
+CREATE TABLE IF NOT EXISTS organization_team_members (
+    team_id    TEXT NOT NULL REFERENCES organization_teams(team_id),
+    user_id    TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    PRIMARY KEY (team_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS professional_sessions (
+    session_id      TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES organization_users(user_id),
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    token_hash      TEXT NOT NULL UNIQUE,
+    csrf_hash       TEXT NOT NULL,
+    device_id       TEXT NOT NULL DEFAULT '',
+    expires_ts      REAL NOT NULL,
+    revoked_ts      REAL,
+    created_ts      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_professional_sessions_actor
+    ON professional_sessions(user_id,organization_id,device_id);
 CREATE TABLE IF NOT EXISTS budget (
     name         TEXT PRIMARY KEY,
     limit_usd    REAL NOT NULL DEFAULT 0,
@@ -356,6 +407,7 @@ class Store:
             "args_hash": "TEXT NOT NULL DEFAULT ''",
         })
         self._ensure_columns_locked("approvals", {
+            "organization_id": "TEXT NOT NULL DEFAULT ''",
             "cycle_id": "TEXT NOT NULL DEFAULT ''",
             "decision_id": "TEXT NOT NULL DEFAULT ''",
             "rationale": "TEXT NOT NULL DEFAULT ''",
@@ -365,6 +417,9 @@ class Store:
             "approval_notes": "TEXT NOT NULL DEFAULT ''",
             "required_approvals": "INTEGER NOT NULL DEFAULT 1",
             "signatures_json": "TEXT NOT NULL DEFAULT '[]'",
+        })
+        self._ensure_columns_locked("board_cards", {
+            "organization_id": "TEXT NOT NULL DEFAULT ''",
         })
         self._ensure_columns_locked("memory_items", {
             "salience": "REAL NOT NULL DEFAULT 1.0",
@@ -487,30 +542,32 @@ class Store:
                         expires_at: float | None, cycle_id: str = "",
                         decision_id: str = "", rationale: str = "",
                         evidence: list[dict] | None = None,
-                        required_approvals: int = 1) -> None:
+                        required_approvals: int = 1,
+                        organization_id: str = "") -> None:
         evidence_json = json.dumps(evidence or [])
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO approvals"
-                "(approval_id,cycle_id,decision_id,tool,args_json,preview,provenance,"
-                "rationale,evidence_json,ts,expires_at,required_approvals,"
+                "(approval_id,organization_id,cycle_id,decision_id,tool,args_json,preview,"
+                "provenance,rationale,evidence_json,ts,expires_at,required_approvals,"
                 "signatures_json,status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '[]', 'pending')",
-                (approval_id, cycle_id, decision_id, tool, json.dumps(args), preview,
-                 provenance, rationale, evidence_json, time.time(), expires_at,
-                 required_approvals),
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, '[]', 'pending')",
+                (approval_id, organization_id, cycle_id, decision_id, tool,
+                 json.dumps(args), preview, provenance, rationale, evidence_json,
+                 time.time(), expires_at, required_approvals),
             )
             self._conn.commit()
 
     def add_approval_signature(self, approval_id: str, approver: str,
-                               notes: str = "") -> int:
+                               notes: str = "", role: str = "") -> int:
         """Append a signature to an approval and return the new signature count."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT signatures_json FROM approvals WHERE approval_id=?",
                 (approval_id,)).fetchone()
             sigs = json.loads(row["signatures_json"] if row else "[]") or []
-            sigs.append({"approved_by": approver, "notes": notes, "ts": time.time()})
+            sigs.append({"approved_by": approver, "role": role,
+                         "notes": notes, "ts": time.time()})
             self._conn.execute(
                 "UPDATE approvals SET signatures_json=? WHERE approval_id=?",
                 (json.dumps(sigs), approval_id))
@@ -521,7 +578,7 @@ class Store:
         now = time.time()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT approval_id,cycle_id,decision_id,tool,args_json,preview,"
+                "SELECT approval_id,organization_id,cycle_id,decision_id,tool,args_json,preview,"
                 "provenance,rationale,evidence_json,ts,expires_at,resolved_at,"
                 "approved_by,approval_notes,required_approvals,signatures_json,status "
                 "FROM approvals WHERE status='pending' ORDER BY ts ASC",
@@ -540,7 +597,7 @@ class Store:
     def get_approval(self, approval_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT approval_id,cycle_id,decision_id,tool,args_json,preview,"
+                "SELECT approval_id,organization_id,cycle_id,decision_id,tool,args_json,preview,"
                 "provenance,rationale,evidence_json,ts,expires_at,resolved_at,"
                 "approved_by,approval_notes,required_approvals,signatures_json,status "
                 "FROM approvals WHERE approval_id=?", (approval_id,),
@@ -556,7 +613,7 @@ class Store:
     def list_all_approvals(self, limit: int = 500) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT approval_id,cycle_id,decision_id,tool,args_json,preview,"
+                "SELECT approval_id,organization_id,cycle_id,decision_id,tool,args_json,preview,"
                 "provenance,rationale,evidence_json,ts,expires_at,resolved_at,"
                 "approved_by,approval_notes,required_approvals,signatures_json,status "
                 "FROM approvals ORDER BY ts DESC LIMIT ?", (limit,),
@@ -1458,22 +1515,30 @@ class Store:
 
     # ------------------------------------------------------------- work board
     def add_card(self, card_id: str, title: str, goal: str,
-                 lane: str = "backlog") -> None:
+                 lane: str = "backlog", organization_id: str = "") -> None:
         now = time.time()
         with self._lock:
             self._conn.execute(
-                "INSERT INTO board_cards(card_id,title,goal,lane,run_id,status,"
-                "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?)",
-                (card_id, title, goal, lane, "", "", now, now),
+                "INSERT INTO board_cards(card_id,organization_id,title,goal,lane,run_id,status,"
+                "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                (card_id, organization_id, title, goal, lane, "", "", now, now),
             )
             self._conn.commit()
 
-    def list_cards(self, limit: int = 200) -> list[dict]:
+    def list_cards(self, limit: int = 200,
+                   organization_id: str | None = None) -> list[dict]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT card_id,title,goal,lane,run_id,status,created_ts,updated_ts "
-                "FROM board_cards ORDER BY created_ts ASC LIMIT ?", (limit,),
-            ).fetchall()
+            if organization_id is None:
+                rows = self._conn.execute(
+                    "SELECT card_id,organization_id,title,goal,lane,run_id,status,created_ts,updated_ts "
+                    "FROM board_cards ORDER BY created_ts ASC LIMIT ?", (limit,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT card_id,organization_id,title,goal,lane,run_id,status,created_ts,updated_ts "
+                    "FROM board_cards WHERE organization_id=? ORDER BY created_ts ASC LIMIT ?",
+                    (organization_id, limit),
+                ).fetchall()
         return [dict(r) for r in rows]
 
     def get_card(self, card_id: str) -> dict | None:
@@ -1509,7 +1574,7 @@ class Store:
 
     def idempotent_add_card(
         self, key: str, fingerprint: str, card_id: str, title: str, goal: str,
-        *, max_receipts: int = 4096,
+        *, max_receipts: int = 4096, organization_id: str = "",
     ) -> tuple[dict, bool, bool]:
         """Atomically replay or create a card across threads and processes.
 
@@ -1534,12 +1599,13 @@ class Store:
 
                 now = time.time()
                 self._conn.execute(
-                    "INSERT INTO board_cards(card_id,title,goal,lane,run_id,status,"
-                    "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?)",
-                    (card_id, title, goal, "backlog", "", "", now, now),
+                    "INSERT INTO board_cards(card_id,organization_id,title,goal,lane,run_id,status,"
+                    "created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (card_id, organization_id, title, goal, "backlog", "", "", now, now),
                 )
                 card = {
-                    "card_id": card_id, "title": title, "goal": goal,
+                    "card_id": card_id, "organization_id": organization_id,
+                    "title": title, "goal": goal,
                     "lane": "backlog", "run_id": "", "status": "",
                     "created_ts": now, "updated_ts": now,
                 }
@@ -1559,6 +1625,23 @@ class Store:
             except Exception:
                 self._conn.rollback()
                 raise
+
+    # ------------------------------------------------ professional directory
+    def _directory_execute(self, sql: str, params: tuple = ()) -> None:
+        """Execute a directory mutation within the Store lock."""
+        with self._lock:
+            self._conn.execute(sql, params)
+            self._conn.commit()
+
+    def _directory_one(self, sql: str, params: tuple = ()) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def _directory_all(self, sql: str, params: tuple = ()) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
     # ----------------------------------------------------- channel threads
     def get_channel_thread(self, thread_key: str) -> list[dict]:

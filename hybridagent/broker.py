@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from .data_policy import Classification, DataPolicy
 from .errors import agent_error
 from .logging_util import get_logger
 
@@ -155,6 +156,7 @@ class PendingApproval:
     expires_at: float | None = None
     required_approvals: int = 1
     approvals: list[dict] = field(default_factory=list)
+    organization_id: str = ""
 
     @property
     def fully_approved(self) -> bool:
@@ -254,7 +256,8 @@ class GovernanceBroker:
                 rationale=row.get("rationale", ""), evidence=row.get("evidence", []),
                 expires_at=row["expires_at"],
                 required_approvals=row.get("required_approvals", 1),
-                approvals=row.get("signatures", []))
+                approvals=row.get("signatures", []),
+                organization_id=row.get("organization_id", ""))
         for row in store.load_audit():
             self.audit.append(AuditEntry(
                 actor=row["actor"], tool=row["tool"], risk=row["risk"],
@@ -306,7 +309,7 @@ class GovernanceBroker:
     def authorize(self, actor: str, tool: str, risk: RiskClass, args: dict,
                   preview: str = "", provenance: str = "agent",
                   cycle_id: str = "", evidence: list[dict] | None = None,
-                  rationale: str = "") -> Decision:
+                  rationale: str = "", organization_id: str = "") -> Decision:
         decision_id = f"dec-{uuid.uuid4().hex[:12]}"
         args_hash = self._hash_args(args)
         # External policy hook (OPA/Rego/Cedar/custom). A "deny" is an absolute
@@ -369,6 +372,37 @@ class GovernanceBroker:
                                       decision_id=decision_id, cycle_id=cycle_id,
                                       policy_rule="kill_switch_denied",
                                       args_hash=args_hash)
+        classification = args.get("classification")
+        connector = args.get("connector")
+        if organization_id and risk in CONSEQUENTIAL and (
+                classification is None or connector is None):
+            return self._log_decision(
+                actor, tool, risk, Verdict.DENY,
+                "professional consequential egress requires classification and connector",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="classification_required", args_hash=args_hash)
+        if classification is not None or connector is not None:
+            try:
+                classified = Classification(str(classification))
+            except ValueError:
+                return self._log_decision(
+                    actor, tool, risk, Verdict.DENY,
+                    "unknown or missing data classification",
+                    decision_id=decision_id, cycle_id=cycle_id,
+                    policy_rule="classification_denied", args_hash=args_hash)
+            if not connector or not DataPolicy().allow_egress(classified, str(connector)):
+                return self._log_decision(
+                    actor, tool, risk, Verdict.DENY,
+                    "classified data is not approved for this connector",
+                    decision_id=decision_id, cycle_id=cycle_id,
+                    policy_rule="classified_egress_denied", args_hash=args_hash)
+            export = DataPolicy().export_decision(
+                classified, redacted=bool(args.get("redacted", False)))
+            if not export.allowed:
+                return self._log_decision(
+                    actor, tool, risk, Verdict.DENY, export.reason,
+                    decision_id=decision_id, cycle_id=cycle_id,
+                    policy_rule="redaction_required", args_hash=args_hash)
         if risk in self.policy.autonomous_risks:
             return self._log_decision(actor, tool, risk, Verdict.ALLOW,
                                       "autonomous (read/draft)", decision_id=decision_id,
@@ -427,7 +461,7 @@ class GovernanceBroker:
         # unexpired reuses that approval instead of queuing a duplicate, so a
         # re-proposed action (e.g. a verifier-revised turn) can't mint a second
         # approval a human could approve twice -> double execution.
-        existing = self._find_pending(tool, args_hash)
+        existing = self._find_pending(tool, args_hash, organization_id)
         if existing is not None:
             return self._log_decision(
                 actor, tool, risk, Verdict.NEEDS_APPROVAL,
@@ -448,6 +482,7 @@ class GovernanceBroker:
             preview=preview, provenance=provenance, cycle_id=cycle_id,
             decision_id=decision_id, rationale=why, evidence=evidence or [],
             expires_at=expires_at, required_approvals=required,
+            organization_id=organization_id,
         )
         self._session_approvals.add(approval_id)
         if self.store is not None:
@@ -455,7 +490,8 @@ class GovernanceBroker:
                                        provenance, expires_at, cycle_id=cycle_id,
                                        decision_id=decision_id, rationale=why,
                                        evidence=evidence,
-                                       required_approvals=required)
+                                       required_approvals=required,
+                                       organization_id=organization_id)
         return self._log_decision(actor, tool, risk, Verdict.NEEDS_APPROVAL,
                                   f"queued {approval_id} (needs {required})",
                                   approval_id,
@@ -466,7 +502,7 @@ class GovernanceBroker:
                                   args_hash=args_hash)
 
     def approve(self, approval_id: str, approved_by: str = "",
-                approval_notes: str = "") -> PendingApproval | None:
+                approval_notes: str = "", approved_role: str = "") -> PendingApproval | None:
         pending = self.pending.get(approval_id)
         if pending is None:
             return None
@@ -491,12 +527,12 @@ class GovernanceBroker:
                           approval_id, signer)
             return None
         pending.approvals.append({
-            "approved_by": signer, "notes": approval_notes,
-            "ts": time.time(),
+            "approved_by": signer, "role": approved_role,
+            "notes": approval_notes, "ts": time.time(),
         })
         if self.store is not None:
             self.store.add_approval_signature(
-                approval_id, signer, approval_notes)
+                approval_id, signer, approval_notes, approved_role)
         if not pending.fully_approved:
             self.log.info("approval %s: %d/%d signatures collected",
                           approval_id, len(pending.approvals),
@@ -586,12 +622,15 @@ class GovernanceBroker:
                         "untrusted source flagged for prompt injection")
         return ""
 
-    def _find_pending(self, tool: str, args_hash: str) -> str | None:
+    def _find_pending(self, tool: str, args_hash: str,
+                      organization_id: str = "") -> str | None:
         now = time.time()
         for aid, p in self.pending.items():
             if aid not in self._session_approvals:
                 continue  # only dedup re-proposals made in this broker session
             if p.tool != tool:
+                continue
+            if p.organization_id != organization_id:
                 continue
             if p.expires_at and p.expires_at < now:
                 continue
