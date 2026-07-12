@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.10` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.25.11` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-3`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -52,9 +52,11 @@ Baseline is **green**. New work must not regress any of these.
     modules, architecture checks, package build, clean-wheel `0.25.6` import, and
     clean diff validation. First independent review failed on runtime claim-scope
     propagation, inactive-organization release readiness, and weak document locator
-    values. A second review found boolean/range gaps across numeric locators; all
-    locator types now reject booleans and invalid ranges at `0.25.8`. Fresh
-    independent maker-checker pending.
+    values. Subsequent reviews exposed boolean/range, textual-field, and nested
+    non-finite JSON gaps across locators; `0.25.11` now enforces strict scalar types,
+    valid ranges, finite numbers, nonempty identifiers, and RFC-compatible JSON for
+    locator, parser, derived-artifact, and custody metadata. Fresh independent
+    maker-checker pending.
 
 ### Phase 2 release-candidate evidence
 

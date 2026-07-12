@@ -66,7 +66,8 @@ class ExtractionRegistry:
             "locator_type,locator_json,extracted_text,created_by,created_ts) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             (span_id, organization_id, workspace_id, version_id, locator_type,
-             json.dumps(clean_locator, sort_keys=True), extracted_text, created_by, now))
+             json.dumps(clean_locator, sort_keys=True, allow_nan=False),
+             extracted_text, created_by, now))
         result = self.get_span(organization_id, workspace_id, span_id)
         assert result is not None
         return result
@@ -91,7 +92,8 @@ class ExtractionRegistry:
         if not extractor.strip() or not extractor_version.strip():
             raise ExtractionError("extractor and version are required")
         try:
-            config = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
+            config = json.dumps(
+                configuration, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise ExtractionError("extractor configuration must be JSON serializable") from exc
         artifact_id = f"derived-{uuid.uuid4().hex}"
@@ -181,7 +183,7 @@ class ExtractionRegistry:
                 raise ExtractionError(
                     "repository locator requires commit, path, and line range")
         try:
-            json.dumps(result, sort_keys=True)
+            json.dumps(result, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise ExtractionError("locator must be JSON serializable") from exc
         return result

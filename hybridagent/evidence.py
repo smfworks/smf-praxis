@@ -123,7 +123,8 @@ class EvidenceRegistry:
         if missing:
             raise EvidenceError(f"{missing} is required")
         try:
-            config_json = json.dumps(parser_config, sort_keys=True, separators=(",", ":"))
+            config_json = json.dumps(
+                parser_config, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise EvidenceError("parser configuration must be JSON serializable") from exc
         if supersedes_version_id:
