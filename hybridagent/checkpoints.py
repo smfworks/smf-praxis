@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -212,7 +213,7 @@ class CheckpointRegistry:
             except Exception:
                 conn.rollback()
                 raise
-        result = self.latest(organization_id, workspace_id, run_id)
+        result = self.get_checkpoint(organization_id, workspace_id, checkpoint_id)
         assert result is not None
         return result
 
@@ -307,13 +308,32 @@ class CheckpointRegistry:
                     interrupt_payload_json: str = "{}", cancel_reason: str = "") -> WorkflowRun:
         self._validate_scope(organization_id, workspace_id, actor_id)
         RunState(status, interrupt_type)
+        allowed_sources = {
+            "interrupted": ("running",),
+            "running": ("interrupted",),
+            "cancelled": ("running", "interrupted"),
+        }.get(status, ())
+        if not allowed_sources:
+            raise CheckpointError(f"unsupported lifecycle transition to {status}")
         now = time.time()
-        self.store._directory_execute(
-            "UPDATE professional_runs SET status=?,interrupt_type=?,"
-            "interrupt_payload_json=?,cancel_reason=?,updated_ts=? WHERE "
-            "organization_id=? AND workspace_id=? AND run_id=?",
-            (status, interrupt_type, interrupt_payload_json, cancel_reason, now,
-             organization_id, workspace_id, run_id))
+        placeholders = ",".join("?" for _ in allowed_sources)
+        with self.store._lock:
+            conn = self.store._conn
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                cur = conn.execute(
+                    "UPDATE professional_runs SET status=?,interrupt_type=?,"
+                    "interrupt_payload_json=?,cancel_reason=?,updated_ts=? WHERE "
+                    "organization_id=? AND workspace_id=? AND run_id=? AND status IN ("
+                    + placeholders + ")",
+                    (status, interrupt_type, interrupt_payload_json, cancel_reason, now,
+                     organization_id, workspace_id, run_id, *allowed_sources))
+                if cur.rowcount != 1:
+                    raise CheckpointError("invalid or concurrent lifecycle transition")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         result = self.get_run(organization_id, workspace_id, run_id)
         if result is None:
             raise CheckpointError("run does not exist in workspace")
@@ -334,11 +354,28 @@ class CheckpointRegistry:
     def _json_object(value: Any, label: str) -> str:
         if type(value) is not dict:
             raise CheckpointError(f"{label} must be a JSON object")
+        if not CheckpointRegistry._is_exact_json(value):
+            raise CheckpointError(f"{label} must be strict JSON")
         try:
             return json.dumps(value, sort_keys=True, separators=(",", ":"),
                               allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise CheckpointError(f"{label} must be strict JSON") from exc
+
+    @staticmethod
+    def _is_exact_json(value: Any) -> bool:
+        value_type = type(value)
+        if value is None or value_type in {bool, int, str}:
+            return True
+        if value_type is float:
+            return math.isfinite(value)
+        if value_type is list:
+            return all(CheckpointRegistry._is_exact_json(item) for item in value)
+        if value_type is dict:
+            return all(
+                type(key) is str and CheckpointRegistry._is_exact_json(item)
+                for key, item in value.items())
+        return False
 
     @staticmethod
     def _run(row: dict[str, Any]) -> WorkflowRun:

@@ -305,6 +305,8 @@ CREATE TABLE IF NOT EXISTS professional_workspaces (
 );
 CREATE INDEX IF NOT EXISTS ix_workspaces_org_status
     ON professional_workspaces(organization_id, status, created_ts);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workspaces_id_org
+    ON professional_workspaces(workspace_id, organization_id);
 CREATE TABLE IF NOT EXISTS evidence_sources (
     source_id         TEXT PRIMARY KEY,
     organization_id   TEXT NOT NULL REFERENCES organizations(organization_id),
@@ -712,6 +714,26 @@ CREATE TABLE IF NOT EXISTS run_effect_receipts (
 );
 CREATE INDEX IF NOT EXISTS ix_run_effect_receipts_scope
     ON run_effect_receipts(organization_id, workspace_id, run_id, created_ts);
+CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_scope_insert
+BEFORE INSERT ON run_checkpoints
+WHEN NOT EXISTS (
+    SELECT 1 FROM professional_runs r
+    WHERE r.run_id=NEW.run_id
+      AND r.organization_id=NEW.organization_id
+      AND r.workspace_id=NEW.workspace_id
+) BEGIN
+    SELECT RAISE(ABORT, 'checkpoint scope must match run');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_scope_insert
+BEFORE INSERT ON run_effect_receipts
+WHEN NOT EXISTS (
+    SELECT 1 FROM professional_runs r
+    WHERE r.run_id=NEW.run_id
+      AND r.organization_id=NEW.organization_id
+      AND r.workspace_id=NEW.workspace_id
+) BEGIN
+    SELECT RAISE(ABORT, 'effect scope must match run');
+END;
 CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_no_update
 BEFORE UPDATE ON run_effect_receipts BEGIN
     SELECT RAISE(ABORT, 'effect receipts are immutable');
@@ -747,6 +769,7 @@ class Store:
             # second process); busy_timeout backs off instead of raising
             # "database is locked" under cross-process contention.
             try:
+                self._conn.execute("PRAGMA foreign_keys=ON")
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA busy_timeout=5000")
                 self._conn.execute("PRAGMA synchronous=NORMAL")
