@@ -366,9 +366,11 @@ def test_durable_plan_executor_honors_cancellation_before_next_step(tmp_path):
             ],
             "outbox": [],
             "effect_receipts": [],
+            "replans": 2,
         },
     )
     checkpoints.cancel(org_id, workspace_id, run.run_id, actor_id=actor_id, reason="stop")
+    events: list[str] = []
     report = PlanExecutor(
         _registry(READ, counting),
         _broker("get_data", "counting_read"),
@@ -377,8 +379,11 @@ def test_durable_plan_executor_honors_cancellation_before_next_step(tmp_path):
         workspace_id=workspace_id,
         run_id=run.run_id,
         actor_id=actor_id,
+        on_event=lambda event_type, data: events.append(event_type),
     ).execute("cancelled")
     assert report.status == "cancelled"
+    assert report.replans == 2
+    assert events == ["plan", "final"]
     assert calls == []
 
 def test_durable_plan_executor_never_executes_terminal_run(tmp_path):
@@ -471,6 +476,285 @@ def test_durable_plan_executor_resumes_approved_held_step(tmp_path):
         checkpoints.get_effect(org_id, workspace_id, run.run_id, "provider-key-approved")
         is not None
     )
+
+
+def test_identical_independent_plan_steps_require_independent_approvals(tmp_path):
+    calls: list[str] = []
+    send = Tool(
+        "approved_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(
+        GovernancePolicy(allowed_tools={"approved_send"}), store=store
+    )
+    executor = PlanExecutor(
+        _registry(send),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "duplicate",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-duplicate",
+    }
+    held = executor.execute(
+        "two identical sends",
+        steps=[
+            PlanStep(id="s1", intent="send first", tool="approved_send", args=dict(args)),
+            PlanStep(id="s2", intent="send second", tool="approved_send", args=dict(args)),
+        ],
+    )
+    approval_ids = [step.approval_id for step in held.steps]
+    assert [step.status for step in held.steps] == ["held", "held"]
+    assert len(set(approval_ids)) == 2
+    for approval_id in approval_ids:
+        assert broker.approve(
+            approval_id, approved_by=actor_id, approved_role="owner"
+        ) is not None
+    checkpoints.resume(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+
+    resumed = executor.execute("two identical sends")
+    assert resumed.status == "completed"
+    assert calls == ["duplicate", "duplicate"]
+    assert broker._session_one_shot_actions == {}
+
+
+@pytest.mark.parametrize(
+    ("persisted_statuses", "expected_statuses"),
+    [
+        (["held", "held"], ["failed", "failed"]),
+        (["done", "held"], ["done", "failed"]),
+    ],
+)
+def test_legacy_shared_plan_approval_fails_closed_on_restore(
+    tmp_path, persisted_statuses, expected_statuses
+):
+    calls: list[str] = []
+    send = Tool(
+        "approved_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(
+        GovernancePolicy(allowed_tools={"approved_send"}), store=store
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "legacy-duplicate",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-legacy-duplicate",
+    }
+    decision = broker.authorize(
+        actor_id,
+        "approved_send",
+        RiskClass.SEND,
+        args,
+        provenance="plan",
+        organization_id=org_id,
+    )
+    assert decision.approval_id is not None
+    assert broker.approve(
+        decision.approval_id, approved_by=actor_id, approved_role="owner"
+    ) is not None
+    checkpoints.checkpoint(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        state={
+            "goal": "legacy shared approval",
+            "steps": [
+                {
+                    "id": f"s{index}",
+                    "intent": f"send {index}",
+                    "tool": "approved_send",
+                    "args": args,
+                    "depends_on": [],
+                    "status": status,
+                    "output": "SENT" if status == "done" else "",
+                    "approval_id": decision.approval_id,
+                }
+                for index, status in enumerate(persisted_statuses, start=1)
+            ],
+            "outbox": [
+                {
+                    "step_id": f"s{index}",
+                    "intent": f"send {index}",
+                    "tool": "approved_send",
+                    "effect_type": "send_message",
+                    "args": args,
+                    "status": "pending_approval",
+                    "approval_id": decision.approval_id,
+                    "idempotency_key": args["idempotency_key"],
+                    "requires_provider_idempotency": True,
+                }
+                for index in (1, 2)
+            ],
+            "effect_receipts": [],
+            "replans": 0,
+        },
+    )
+
+    report = PlanExecutor(
+        _registry(send),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute("legacy shared approval")
+    assert report.status == "failed"
+    assert [step.status for step in report.steps] == expected_statuses
+    assert all(
+        "multiple plan steps" in step.output
+        for step in report.steps
+        if step.status == "failed"
+    )
+    assert calls == []
+    assert broker._session_one_shot_actions == {}
+
+
+def test_cancelled_restored_approval_does_not_leak_exact_grant(tmp_path):
+    calls: list[str] = []
+    send = Tool(
+        "approved_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(
+        GovernancePolicy(allowed_tools={"approved_send"}), store=store
+    )
+    executor = PlanExecutor(
+        _registry(send),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "cancelled-action",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-cancelled",
+    }
+    held = executor.execute(
+        "cancel before send",
+        steps=[PlanStep(id="s1", intent="send", tool="approved_send", args=args)],
+    )
+    approval_id = held.held_approvals()[0]
+    assert broker.approve(
+        approval_id, approved_by=actor_id, approved_role="owner"
+    ) is not None
+    checkpoints.resume(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    checkpoints.cancel(
+        org_id, workspace_id, run.run_id, actor_id=actor_id, reason="stop"
+    )
+
+    cancelled = executor.execute("cancel before send")
+    assert cancelled.status == "cancelled"
+    assert calls == []
+    assert broker._session_one_shot_actions == {}
+    later = broker.authorize(
+        actor_id,
+        "approved_send",
+        RiskClass.SEND,
+        args,
+        organization_id=org_id,
+    )
+    assert later.verdict.value == "needs_approval"
+
+
+def test_restored_approval_denied_by_kill_switch_revokes_grant(tmp_path):
+    calls: list[str] = []
+    send = Tool(
+        "approved_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(
+        GovernancePolicy(allowed_tools={"approved_send"}), store=store
+    )
+    executor = PlanExecutor(
+        _registry(send),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "blocked-after-approval",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-blocked",
+    }
+    held = executor.execute(
+        "block approved send",
+        steps=[PlanStep(id="s1", intent="send", tool="approved_send", args=args)],
+    )
+    approval_id = held.held_approvals()[0]
+    assert broker.approve(
+        approval_id, approved_by=actor_id, approved_role="owner"
+    ) is not None
+    checkpoints.resume(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    broker.kill.trip()
+
+    denied = executor.execute("block approved send")
+    assert denied.status == "failed"
+    assert calls == []
+    assert broker._session_one_shot_actions == {}
 
 
 def test_restored_approved_actions_for_same_tool_keep_exact_counted_grants(tmp_path):

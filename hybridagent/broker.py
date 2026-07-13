@@ -478,11 +478,14 @@ class GovernanceBroker:
                 decision_id=decision_id, cycle_id=cycle_id,
                 policy_rule="compliance_off_allow", args_hash=args_hash)
         # Idempotency applies to conversational re-proposals only. Every queued task
-        # action owns its approval: sharing one approval across tasks can strand one
-        # task or authorize one provider effect on behalf of two independent intents.
+        # action and every execution-scoped PlanExecutor step owns its approval:
+        # sharing one approval across independent effects can authorize multiple
+        # provider calls from a single human decision. The legacy literal ``plan``
+        # provenance remains conversationally deduplicated for API compatibility.
+        execution_scoped = str(provenance).startswith(("task:", "plan:"))
         existing = (
             None
-            if str(provenance).startswith("task:")
+            if execution_scoped
             else self._find_pending(tool, args_hash, organization_id)
         )
         if existing is not None:
@@ -618,11 +621,20 @@ class GovernanceBroker:
             self.store.resolve_approval(approval_id, "rejected")
         return existed
 
-    def revoke_tool_once(self, tool: str) -> None:
-        """Drop a previously granted generic one-shot allow (if still unused)."""
+    def revoke_tool_once(self, tool: str, args: dict | None = None) -> None:
+        """Drop one unconsumed generic or exact one-shot grant."""
         name = (tool or "").strip()
-        if name:
+        if not name:
+            return
+        if args is None:
             self._session_one_shot_tools.discard(name)
+            return
+        key = self._one_shot_action_key(name, args)
+        count = self._session_one_shot_actions.get(key, 0)
+        if count <= 1:
+            self._session_one_shot_actions.pop(key, None)
+        else:
+            self._session_one_shot_actions[key] = count - 1
 
     def _one_shot_action_key(self, tool: str, args: dict) -> str:
         return f"{tool}\n{self._hash_args(args)}"
