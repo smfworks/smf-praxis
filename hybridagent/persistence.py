@@ -1932,6 +1932,57 @@ END;
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
+                waiting_rows = self._conn.execute(
+                    "SELECT task_id,result_json FROM tasks "
+                    "WHERE status='waiting_approval'"
+                ).fetchall()
+                shared_task_ids: list[str] = []
+                for waiting in waiting_rows:
+                    try:
+                        waiting_result = json.loads(waiting["result_json"] or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    waiting_pending = (
+                        waiting_result.get("pending_approvals")
+                        if type(waiting_result) is dict
+                        else None
+                    )
+                    if type(waiting_pending) is list and any(
+                        type(item) is dict and item.get("approval_id") == approval_id
+                        for item in waiting_pending
+                    ):
+                        shared_task_ids.append(str(waiting["task_id"]))
+                if len(shared_task_ids) > 1:
+                    reason = (
+                        "manual reconciliation required: legacy approval is shared "
+                        "by multiple waiting tasks"
+                    )
+                    marks = ",".join("?" for _ in shared_task_ids)
+                    failed = self._conn.execute(
+                        "UPDATE tasks SET status='failed',error=?,output=?,updated_ts=? "
+                        f"WHERE task_id IN ({marks}) AND status='waiting_approval'",
+                        (reason, reason, now, *shared_task_ids),
+                    )
+                    if failed.rowcount != len(shared_task_ids):
+                        raise ValueError("shared legacy task failure lost its state race")
+                    self._conn.execute(
+                        "UPDATE task_approval_actions SET status='rejected',error=?,"
+                        "updated_ts=? WHERE approval_id=? AND status='pending_approval'",
+                        (reason, now, approval_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE task_approval_actions SET status='manual_reconciliation',"
+                        "error=?,updated_ts=? WHERE approval_id=? "
+                        "AND status='pending_execution'",
+                        (reason, now, approval_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE approvals SET status='rejected',resolved_at=? "
+                        "WHERE approval_id=? AND status='pending'",
+                        (now, approval_id),
+                    )
+                    self._conn.commit()
+                    return False
                 existing = self._conn.execute(
                     "SELECT 1 FROM task_approval_actions "
                     "WHERE task_id=? AND approval_id=?",
