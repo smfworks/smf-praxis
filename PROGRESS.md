@@ -6,13 +6,13 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.26.2` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.26.3` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-4`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
 - **Current WIP:** PP40 — durable professional workflows
 - **Current blocker:** none; durable run/checkpoint protocol is the active test-first slice
-- **Phase 4 implementation:** `0.26.2` checkpoint substrate in progress — tenant/workspace-owned runs, strict exact-domain JSON state/schema manifests, immutable append-only checkpoint ancestry, transactional lifecycle transitions, typed interrupts, resume compatibility, cancellation, restart durability, foreign-key and database scope enforcement, atomic immutable effect receipts with fingerprinted idempotent replay, race-safe checkpoint returns, and scoped fork/replay lineage that never inherits prior effects; 19 focused and 44 adjacent contracts green.
+- **Phase 4 implementation:** `0.26.3` checkpoint substrate and GoalRunner integration in progress — tenant/workspace-owned runs, strict exact-domain JSON state/schema manifests, immutable append-only checkpoint ancestry, transactional lifecycle transitions, typed interrupts, resume compatibility, cancellation, restart durability, foreign-key and database scope enforcement, atomic immutable effect receipts with fingerprinted idempotent replay, race-safe checkpoint returns, scoped fork/replay lineage that never inherits prior effects, completed GoalRunner turn checkpoints, durable approval interrupts, and pre-turn cancellation enforcement; 28 GoalRunner/checkpoint contracts green.
 
 ## Baseline verification (captured 2026-07-11)
 
