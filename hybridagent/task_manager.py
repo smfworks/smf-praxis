@@ -99,7 +99,7 @@ class TaskManager:
         task = self.get(task_id)
         if task is None or task.status in TERMINAL:
             return False
-        ok = self.store.update_task(task_id, status="cancelled")
+        ok = self.store.cancel_task_approval_actions(task_id)
         if ok:
             self.store.add_compliance_event(task.cycle_id, "task_cancelled", {
                 "task_id": task_id,
@@ -123,12 +123,14 @@ class TaskManager:
             return task
 
         attempts = task.attempts + 1
-        self.store.update_task(task_id, status="running", attempts=attempts)
+        self.store.update_task(task_id, status="running", attempts=attempts, error="")
         self.store.add_compliance_event(task.cycle_id, "task_started", {
             "task_id": task_id, "attempt": attempts,
         }, ref_id=task_id)
+        report = None
+        state_committed = False
         try:
-            report = agent.handle(task.goal)
+            report = agent.handle(task.goal, task_id=task_id)
             status = "waiting_approval" if report.pending_approvals else "completed"
             result = {
                 "cycle_id": report.cycle_id,
@@ -138,17 +140,35 @@ class TaskManager:
             }
             plan_text = self._format_plan(report.plan)
             output_text = self._format_output(report, plan_text)
-            self.store.update_task(
-                task_id, status=status, cycle_id=report.cycle_id,
-                result_json=json.dumps(result), error="",
-                output=output_text, plan=plan_text,
-            )
+            if report.pending_approvals:
+                self.store.hold_task_for_approvals(
+                    task_id,
+                    cycle_id=report.cycle_id,
+                    result=result,
+                    output=output_text,
+                    plan=plan_text,
+                    actions=report.pending_approvals,
+                )
+            else:
+                self.store.update_task(
+                    task_id, status=status, cycle_id=report.cycle_id,
+                    result_json=json.dumps(result), error="",
+                    output=output_text, plan=plan_text,
+                )
+            state_committed = True
             self.store.add_compliance_event(report.cycle_id, "task_finished", {
                 "task_id": task_id, "status": status,
                 "pending_approvals": len(report.pending_approvals),
             }, ref_id=task_id)
             self._notify(status, task_id, report.summary())
         except Exception as exc:
+            if state_committed:
+                return self._require(task_id)
+            if report is not None:
+                for item in report.pending_approvals:
+                    approval_id = str(item.get("approval_id") or "")
+                    if approval_id:
+                        agent.broker.reject(approval_id)
             failed_terminal = attempts >= task.max_attempts
             status = "failed" if failed_terminal else "retry"
             base = min(3600.0, 2.0 ** attempts)

@@ -237,6 +237,9 @@ class GovernanceBroker:
         # dashboard "Approve once" so a held chat turn can resume without
         # permanently waiving approval for the tool).
         self._session_one_shot_tools: set[str] = set()
+        # Durable workflow resumes bind grants to the exact tool+args fingerprint.
+        # Counts matter when multiple independently approved actions use one tool.
+        self._session_one_shot_actions: dict[str, int] = {}
         self.store = store
         self.log = get_logger("praxis.broker")
         self.mode = (coerce_compliance_mode(store.get_compliance_mode())
@@ -423,6 +426,18 @@ class GovernanceBroker:
                                           args_hash=args_hash)
         # One-shot allow: consume exactly once (dashboard "Approve once" + chat resume).
         # Still respects allowlist, pack, kill-switch, and egress firewall.
+        exact_grant = self._one_shot_action_key(tool, args)
+        exact_count = self._session_one_shot_actions.get(exact_grant, 0)
+        if exact_count:
+            if exact_count == 1:
+                self._session_one_shot_actions.pop(exact_grant, None)
+            else:
+                self._session_one_shot_actions[exact_grant] = exact_count - 1
+            return self._log_decision(
+                actor, tool, risk, Verdict.ALLOW,
+                "auto-allowed (exact one-shot approval)",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="session_exact_oneshot_allow", args_hash=args_hash)
         if tool in self._session_one_shot_tools:
             self._session_one_shot_tools.discard(tool)
             return self._log_decision(
@@ -530,21 +545,40 @@ class GovernanceBroker:
             "approved_by": signer, "role": approved_role,
             "notes": approval_notes, "ts": time.time(),
         })
-        if self.store is not None:
-            self.store.add_approval_signature(
-                approval_id, signer, approval_notes, approved_role)
         if not pending.fully_approved:
+            if self.store is not None:
+                self.store.add_approval_signature(
+                    approval_id, signer, approval_notes, approved_role)
             self.log.info("approval %s: %d/%d signatures collected",
                           approval_id, len(pending.approvals),
                           pending.required_approvals)
             return None
-        # All signatures collected -> atomically claim execution.
-        if self.store is not None and not self.store.resolve_approval(
-                approval_id, "approved", approved_by=signer,
-                approval_notes=approval_notes):
-            self.pending.pop(approval_id, None)        # already resolved elsewhere
-            self.log.info("approval %s already resolved; refusing", approval_id)
-            return None
+        # Task approvals atomically resolve the human approval and persist the
+        # pre-execution action intent. No provider call can precede that commit.
+        if self.store is not None and self.store.has_task_approval_action(approval_id):
+            if not self.store.claim_task_approval_action(
+                approval_id,
+                signatures=pending.approvals,
+                approved_by=signer,
+                approval_notes=approval_notes,
+            ):
+                pending.approvals.pop()
+                row = self.store.get_approval(approval_id)
+                if row is None or row.get("status") != "pending":
+                    self.pending.pop(approval_id, None)
+                self.log.info("approval %s could not claim task execution", approval_id)
+                return None
+        else:
+            if self.store is not None:
+                self.store.add_approval_signature(
+                    approval_id, signer, approval_notes, approved_role)
+                if not self.store.resolve_approval(
+                    approval_id, "approved", approved_by=signer,
+                    approval_notes=approval_notes,
+                ):
+                    self.pending.pop(approval_id, None)
+                    self.log.info("approval %s already resolved; refusing", approval_id)
+                    return None
         self.pending.pop(approval_id, None)
         return pending
 
@@ -558,17 +592,18 @@ class GovernanceBroker:
         self._session_allowed_tools.add(tool)
         self.log.info("tool %s added to session allowlist", tool)
 
-    def allow_tool_once(self, tool: str) -> None:
-        """Allow a tool for exactly one subsequent authorize() in this session.
-
-        Used by dashboard "Approve once" so a held chat turn can resume and the
-        model can complete the action without permanently waiving approval.
-        """
+    def allow_tool_once(self, tool: str, args: dict | None = None) -> None:
+        """Allow one subsequent authorization, optionally for an exact action."""
         name = (tool or "").strip()
         if not name:
             return
-        self._session_one_shot_tools.add(name)
-        self.log.info("tool %s granted one-shot session allow", name)
+        if args is None:
+            self._session_one_shot_tools.add(name)
+            self.log.info("tool %s granted one-shot session allow", name)
+            return
+        key = self._one_shot_action_key(name, args)
+        self._session_one_shot_actions[key] = self._session_one_shot_actions.get(key, 0) + 1
+        self.log.info("tool %s granted exact one-shot session allow", name)
 
     def reject(self, approval_id: str) -> bool:
         """Reject a pending approval. Returns True if it was pending."""
@@ -579,10 +614,13 @@ class GovernanceBroker:
         return existed
 
     def revoke_tool_once(self, tool: str) -> None:
-        """Drop a previously granted one-shot allow (if still unused)."""
+        """Drop a previously granted generic one-shot allow (if still unused)."""
         name = (tool or "").strip()
         if name:
             self._session_one_shot_tools.discard(name)
+
+    def _one_shot_action_key(self, tool: str, args: dict) -> str:
+        return f"{tool}\n{self._hash_args(args)}"
 
     def egress_blocked_for(self, args: dict) -> str:
         """Public egress check: non-empty reason string if the action is blocked.
@@ -625,9 +663,15 @@ class GovernanceBroker:
     def _find_pending(self, tool: str, args_hash: str,
                       organization_id: str = "") -> str | None:
         now = time.time()
-        for aid, p in self.pending.items():
+        for aid, p in list(self.pending.items()):
             if aid not in self._session_approvals:
                 continue  # only dedup re-proposals made in this broker session
+            if self.store is not None:
+                row = self.store.get_approval(aid)
+                if row is None or row.get("status") != "pending":
+                    self.pending.pop(aid, None)
+                    self._session_approvals.discard(aid)
+                    continue
             if p.tool != tool:
                 continue
             if p.organization_id != organization_id:

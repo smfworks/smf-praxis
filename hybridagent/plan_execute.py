@@ -479,7 +479,7 @@ class PlanExecutor:
                 and approval.get("args") == step.args
             )
             if step.status == HELD and approved_action:
-                self.broker.allow_tool_once(step.tool)
+                self.broker.allow_tool_once(step.tool, step.args)
                 step.status = PENDING
             elif (
                 step.status == HELD
@@ -504,7 +504,7 @@ class PlanExecutor:
                     and entry.get("effect_type") == pending_effect_type
                     and entry.get("args") == step.args
                 ):
-                    self.broker.allow_tool_once(step.tool)
+                    self.broker.allow_tool_once(step.tool, step.args)
             if step.status != RUNNING:
                 continue
             tool = self.registry.get(step.tool)
@@ -537,7 +537,7 @@ class PlanExecutor:
             entry_status = entry.get("status")
             if entry_status == "pending_approval":
                 if approved_action and entry_matches:
-                    self.broker.allow_tool_once(step.tool)
+                    self.broker.allow_tool_once(step.tool, step.args)
                     step.status = PENDING
                 elif approval and approval.get("status") in {"rejected", "expired"}:
                     step.status = DENIED
@@ -556,7 +556,7 @@ class PlanExecutor:
                 and bool(idempotency_key)
             )
             if provider_retry and approved_action:
-                self.broker.allow_tool_once(step.tool)
+                self.broker.allow_tool_once(step.tool, step.args)
                 step.status = PENDING
             elif provider_retry:
                 step.status = FAILED

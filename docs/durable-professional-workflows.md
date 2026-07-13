@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.6`)
+Status: Phase 4 release candidate (`0.26.7`)
 
 ## Scope
 
@@ -64,7 +64,9 @@ It checkpoints the plan and every durable step transition. Persisted progress al
 - `running` consequential intent: may be retried only with a provider idempotency key and the exact durable approved action;
 - consequential intent without safe reconciliation evidence: fails closed for manual reconciliation.
 
-Approval resumption is a separate executor invocation. `SEND` and `DESTRUCTIVE` actions remain held in enforced mode and are never executed in the same invocation that created their approval. In the daemon task path, a consumed approval whose tool execution fails marks the task `failed` with the error preserved; it is never reported as completed. A pre-claim kill-switch or egress denial leaves the task and approval waiting.
+Approval resumption is a separate executor invocation. `SEND` and `DESTRUCTIVE` actions remain held in enforced mode and are never executed in the same invocation that created their approval. In the daemon task path, every held action is bound to the exact task provenance, tool, strict-JSON arguments, effect type, and action fingerprint. Final approval resolution and transition to `pending_execution` commit atomically before the provider call. The task completes only after every linked action has an immutable receipt; rejecting one action fails the task and cancels its remaining unclaimed actions. A pre-claim kill-switch or egress denial leaves the task and approval waiting.
+
+Daemon restart reconciliation retries only a claimed action whose registered tool still matches the durable effect type and whose exact provider idempotency argument and key remain verifiable. A provider exception without that guarantee, or an interrupted non-idempotent action, fails the task with an explicit manual-reconciliation requirement. Cancellation atomically cancels only unclaimed actions and refuses to race a claimed effect. Direct agent approval cannot bypass this daemon-owned claim/receipt protocol.
 
 ## Effect delivery semantics
 
@@ -140,4 +142,4 @@ python3 -m hybridagent.cli demo
 python3 scripts/check_architecture.py
 ```
 
-The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
+The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. The `0.26.7` local candidate passed 1,195 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 114 PP40 contracts, 40/40 capability evals, 81.94% coverage, static and architecture checks, semantic demo, populated `v0.25.20` migration, artifact/install verification, and rebuilt-container dashboard smoke. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
