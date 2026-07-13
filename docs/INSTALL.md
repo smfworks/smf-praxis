@@ -20,17 +20,20 @@ One-liner bootstrap (clones + installs + onboard):
 curl -fsSL https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.sh | bash
 ```
 
-## From PyPI (`praxis-agent`)
+## From a GitHub Release
+
+Replace `X.Y.Z` with the selected release version:
 
 ```bash
-pip install praxis-agent
+VERSION=X.Y.Z
+pip install "https://github.com/smfworks/smf-praxis/releases/download/v${VERSION}/praxis_agent-${VERSION}-py3-none-any.whl"
 praxis onboard
 praxis daemon start
 ```
 
-If `pip` does not show the latest GitHub tag, **Trusted Publishing** may not be
-configured yet for the `smfworks/smf-praxis` repo (see [RELEASING.md](../RELEASING.md)).
-Until that is fixed, install from git:
+The release workflow currently publishes wheel and sdist artifacts to GitHub
+Releases only; PyPI publication is disabled. See [RELEASING.md](../RELEASING.md).
+Alternatively, install from git:
 
 ```bash
 pip install "git+https://github.com/smfworks/smf-praxis.git@main"

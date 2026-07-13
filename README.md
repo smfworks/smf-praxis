@@ -96,28 +96,22 @@ parameters: `-With docs,multimodal,fast` / `-NoConfigure` /
 `-Provider ollama -Model llama3.1`. Then `source .venv/bin/activate`
 (`.venv\Scripts\Activate.ps1` on Windows) and run `praxis demo`.
 
-### From PyPI
+### From a GitHub Release
 
-Install the CLI directly — the Command Deck dashboard assets ship inside the wheel:
+The tag workflow publishes a wheel and sdist to GitHub Releases. Replace `X.Y.Z`
+with the selected release version:
 
 ```bash
-pipx install praxis-agent     # isolated CLI (recommended)
-# or
-pip install praxis-agent      # into the current environment
+VERSION=X.Y.Z
+pipx install "https://github.com/smfworks/smf-praxis/releases/download/v${VERSION}/praxis_agent-${VERSION}-py3-none-any.whl"
+# or install into the current environment:
+pip install "https://github.com/smfworks/smf-praxis/releases/download/v${VERSION}/praxis_agent-${VERSION}-py3-none-any.whl"
 praxis --version
 ```
 
-Optional extras work the same way, e.g. `pipx install "praxis-agent[browser,docs]"`.
-
-> **Note:** `praxis-agent` is not yet on PyPI. Until it is, install from the
-> GitHub Release for any version tag:
-> ```bash
-> pip install https://github.com/smfworks/smf-praxis/releases/download/v0.21.6/praxis_agent-0.21.6-py3-none-any.whl
-> # or from git:
-> pip install git+https://github.com/smfworks/smf-praxis.git@v0.21.6
-> ```
-> The wheel and sdist are attached to every release (see the Releases page
-> on the repo). Replace the version in the URL as needed.
+For optional extras, use a source checkout and install `.[browser,docs]` until PyPI
+publication is enabled. See [RELEASING.md](RELEASING.md) for current distribution
+status.
 
 ### Manual install
 

@@ -6,9 +6,12 @@ key required (offline mock); add one to see a live model.
 ## 1. Install (1 min)
 
 ```bash
-pipx install praxis-agent        # isolated CLI (or: pip install praxis-agent)
+curl -fsSL https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.sh | bash
 # from a clone:  ./install.sh   (mac/Linux)   .\install.ps1   (Windows)
 ```
+
+The release workflow publishes versioned wheel and sdist artifacts to GitHub
+Releases; PyPI publication is currently disabled.
 
 ## 2. Configure — optional (1 min)
 

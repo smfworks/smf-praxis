@@ -1,7 +1,7 @@
 name: Release
 
-# Build, validate, and publish the package to PyPI.
-# Push a version tag (vX.Y.Z) to release; workflow_dispatch builds without publishing.
+# Build, validate, and publish artifacts to a GitHub Release.
+# Push a version tag (vX.Y.Z) to release; workflow_dispatch builds without attaching artifacts.
 on:
   push:
     tags: ["v*"]
@@ -60,7 +60,9 @@ jobs:
       - name: Attach wheel + sdist to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
           generate_release_notes: true
     # NOTE: PyPI publishing is intentionally not in this workflow. PyPI
     # trusted publishing requires the project to exist on PyPI first
