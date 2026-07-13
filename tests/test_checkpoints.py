@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 
 import pytest
 
@@ -177,3 +178,54 @@ def test_fork_conceals_checkpoint_from_another_workspace(tmp_path):
         registry.fork(
             org_id, other.workspace_id, source.run_id,
             checkpoint_id=source.head_checkpoint_id, actor_id=actor_id)
+
+
+def test_cancelled_run_cannot_be_resurrected(tmp_path):
+    store, org_id, workspace_id, actor_id = setup_scope(tmp_path)
+    registry = CheckpointRegistry(store)
+    run = registry.create_run(
+        org_id, workspace_id, kind="research", created_by=actor_id,
+        state={}, schema_manifest={"version": 1})
+    registry.cancel(org_id, workspace_id, run.run_id,
+                    actor_id=actor_id, reason="stop")
+    with pytest.raises(CheckpointError, match="transition"):
+        registry.interrupt(
+            org_id, workspace_id, run.run_id, actor_id=actor_id,
+            interrupt_type="operator_input", payload={})
+
+
+def test_checkpoint_foreign_keys_and_scope_integrity_are_enabled(tmp_path):
+    store, org_id, workspace_id, actor_id = setup_scope(tmp_path)
+    assert store._conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute(
+            "INSERT INTO run_checkpoints(checkpoint_id,run_id,organization_id,"
+            "workspace_id,parent_checkpoint_id,sequence,state_json,"
+            "schema_manifest_json,created_by,created_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("bad", "missing", org_id, workspace_id, None, 1, "{}", "{}",
+             actor_id, 1.0))
+
+
+def test_checkpoint_returns_generated_checkpoint_not_latest(tmp_path, monkeypatch):
+    store, org_id, workspace_id, actor_id = setup_scope(tmp_path)
+    registry = CheckpointRegistry(store)
+    run = registry.create_run(
+        org_id, workspace_id, kind="research", created_by=actor_id,
+        state={}, schema_manifest={"version": 1})
+    monkeypatch.setattr(
+        registry, "latest",
+        lambda *_: pytest.fail("checkpoint must not select latest after commit"))
+    checkpoint = registry.checkpoint(
+        org_id, workspace_id, run.run_id, actor_id=actor_id, state={"writer": "A"})
+    assert checkpoint.state == {"writer": "A"}
+
+
+@pytest.mark.parametrize("bad", [
+    {1: "integer key"}, {"tuple": (1, 2)}, {"nested": {2: "bad"}},
+])
+def test_checkpoint_json_rejects_coercing_types(tmp_path, bad):
+    store, org_id, workspace_id, actor_id = setup_scope(tmp_path)
+    with pytest.raises(CheckpointError, match="strict JSON"):
+        CheckpointRegistry(store).create_run(
+            org_id, workspace_id, kind="research", created_by=actor_id,
+            state=bad, schema_manifest={"version": 1})
