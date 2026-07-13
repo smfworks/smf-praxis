@@ -144,20 +144,21 @@ local, Docker, and team/LAN access — host binding, data dir, ports, and the re
 ### Updating
 
 ```bash
-praxis update            # upgrade to the latest PyPI release + migrate config
-praxis update --check    # just check whether a newer version is available
+praxis update            # install the latest GitHub Release wheel + migrate config
+praxis update --check    # check GitHub Releases without installing
 ```
 
-`update` upgrades in place (pip or pipx) and runs any config migrations; from a
-source checkout, use `git pull` instead.
+`update` resolves the latest stable GitHub Release and upgrades from its exact
+wheel URL. From a source checkout, use `git pull` and re-run `./install.sh`
+instead.
 
 ### Secrets
 
 API keys default to an **environment-variable reference** (nothing stored). When
 you paste a key, it goes to the **OS keychain** (Windows Credential Manager, macOS
-Keychain, Linux Secret Service) if the `keyring` extra is installed
-(`pip install "praxis-agent[keyring]"`), otherwise a gitignored file. Manage them
-with `praxis secrets`:
+Keychain, Linux Secret Service) if the `keyring` extra is installed. From a source
+checkout, enable it with `python -m pip install ".[keyring]"`; otherwise Praxis uses
+a gitignored file. Manage secrets with `praxis secrets`:
 
 ```bash
 praxis secrets status                  # where each provider's key resolves
@@ -645,7 +646,8 @@ Agent mode the model can `browser_navigate` to a page and read it, then a
 web.
 
 ```bash
-pip install "praxis-agent[browser]"   # enables real click/type via Playwright
+# from a source checkout:
+python -m pip install ".[browser]"   # enables real click/type via Playwright
 ```
 
 ## Knowledge base (RAG)
@@ -663,7 +665,8 @@ praxis recall "Q3 revenue follow-up for the customer"
 Embeddings and parsers are **offline-first**: a deterministic mock embedder needs
 no model or network, so RAG works out of the box. Plain text, Markdown, CSV/JSON,
 HTML, and `.eml` parse with the standard library; PDF/Word/PowerPoint/Excel/`.msg`
-need the optional extra (`pip install "praxis-agent[docs]"`). Point at a real
+need the optional `[docs]` extra. From a source checkout, run
+`python -m pip install ".[docs]"`. Point at a real
 embedding model by setting `agents.defaults.embedModel` (e.g.
 `ollama/nomic-embed-text`) and `PRAXIS_EMBED=real`.
 
@@ -671,7 +674,8 @@ embedding model by setting `agents.defaults.embedModel` (e.g.
 
 Retrieval uses a **cached, pre-normalized vector index** (`vecsim.py`) rebuilt
 only when a namespace changes (tracked by a vector-version counter). With the
-optional `[fast]` extra (`pip install "praxis-agent[fast]"`, adds numpy) scoring
+optional `[fast]` extra (from a source checkout, run
+`python -m pip install ".[fast]"`; this adds numpy), scoring
 is a single matrix–vector product built directly from raw embedding bytes —
 roughly **two orders of magnitude faster** than the previous per-query
 pure-Python cosine loop (≈945 ms → ≈4 ms per query over 4k chunks in the bundled

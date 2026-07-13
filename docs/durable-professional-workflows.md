@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.15`)
+Status: Phase 4 release candidate (`0.26.16`)
 
 ## Scope
 
@@ -144,4 +144,4 @@ python3 -m hybridagent.cli demo
 python3 scripts/check_architecture.py
 ```
 
-`0.26.15` retains recursive `hybridagent*` discovery, clean-wheel path/import verification, atomic fail-closed shared-approval recovery, and serializes schema creation plus additive migration under one cross-process `BEGIN IMMEDIATE`. The tag workflow attaches both wheel and sdist to GitHub Releases; all operator installation/release surfaces consistently state that PyPI publication is disabled. The candidate passes 1,226 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 141 PP40 contracts, 1,237 total tests with 17 expected skips at 81.81% coverage, 40/40 capability evals, static and architecture checks, semantic demo, six historical migration/recovery classes, 100 repeated concurrent schema/recovery initializations, artifact/install verification, rebuilt-container dashboard smoke, security scanning, and 25 repeated eleven-outcome lifecycle/recovery stress runs. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
+`0.26.16` retains recursive packaging, clean-wheel verification, atomic fail-closed shared-approval recovery, and serialized cross-process schema migration. Its GitHub-only distribution contract covers the workflow, updater, and every operator installation surface: `praxis update` validates the latest stable GitHub Release, installs its exact wheel, and invokes no installer if discovery fails; optional extras use source-checkout installation. The candidate passes 1,230 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 141 PP40 contracts, 1,241 total tests with 17 expected skips at 81.93% coverage, 40/40 capability evals, static and architecture checks, semantic demo, six historical migration/recovery classes, 100 repeated concurrent schema/recovery initializations, artifact/install verification, rebuilt-container dashboard smoke, security scanning, and 25 repeated eleven-outcome lifecycle/recovery stress runs. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.

@@ -354,19 +354,49 @@ def _is_editable_install() -> bool:
         return False
 
 
-def _latest_pypi_version() -> str | None:
-    """The newest praxis-agent version on PyPI, or None if unreachable."""
+def _latest_github_version() -> str | None:
+    """Newest stable Praxis GitHub Release version, or ``None`` if unavailable."""
+    import re
     import urllib.request
+
+    request = urllib.request.Request(
+        "https://api.github.com/repos/smfworks/smf-praxis/releases/latest",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "praxis-agent-updater",
+        },
+    )
     try:
-        with urllib.request.urlopen(
-                "https://pypi.org/pypi/praxis-agent/json", timeout=5) as resp:
-            return str(json.loads(resp.read().decode())["info"]["version"])
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode())
+        tag = payload.get("tag_name") if type(payload) is dict else None
+        match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag) if type(tag) is str else None
+        return match.group(1) if match is not None else None
     except Exception:
         return None
 
 
+def _release_version_key(version: str) -> tuple[int, int, int]:
+    """Return a comparable key for a validated three-part release version."""
+    import re
+
+    if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        raise ValueError("invalid GitHub release version")
+    major, minor, patch = version.split(".")
+    return int(major), int(minor), int(patch)
+
+
+def _github_release_wheel_url(version: str) -> str:
+    """Return the exact pure-Python wheel URL for a validated release version."""
+    _release_version_key(version)
+    return (
+        "https://github.com/smfworks/smf-praxis/releases/download/"
+        f"v{version}/praxis_agent-{version}-py3-none-any.whl"
+    )
+
+
 def cmd_update(args: argparse.Namespace) -> int:
-    """Upgrade the installed praxis-agent package and migrate config."""
+    """Upgrade from the latest GitHub Release wheel and migrate config."""
     import subprocess
 
     from . import __version__
@@ -374,21 +404,31 @@ def cmd_update(args: argparse.Namespace) -> int:
         print(f"praxis {__version__} is an editable/source checkout — update with "
               "`git pull` (then re-run ./install.sh if needed), not `praxis update`.")
         return 1
-    latest = _latest_pypi_version()
+    latest = _latest_github_version()
     if args.check:
         if latest is None:
-            print(f"praxis {__version__} (could not reach PyPI to check for updates)")
-        elif latest == __version__:
+            print(
+                f"praxis {__version__} "
+                "(could not reach GitHub Releases to check for updates)"
+            )
+        elif _release_version_key(latest) <= _release_version_key(__version__):
             print(f"praxis {__version__} is up to date.")
         else:
             print(f"praxis {__version__} -> {latest} available. Run `praxis update`.")
         return 0
-    if latest is not None and latest == __version__:
+    if latest is None:
+        print(
+            "Update unavailable: could not resolve GitHub Releases. "
+            "No package was installed."
+        )
+        return 1
+    if _release_version_key(latest) <= _release_version_key(__version__):
         print(f"praxis {__version__} is already up to date.")
         cfg.migrate_config()
         return 0
-    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "praxis-agent"]
-    print("Updating:", " ".join(cmd))
+    wheel_url = _github_release_wheel_url(latest)
+    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", wheel_url]
+    print("Updating from GitHub Release:", " ".join(cmd))
     rc = subprocess.call(cmd)
     if rc == 0:
         migrated = cfg.migrate_config()
