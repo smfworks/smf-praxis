@@ -17,10 +17,13 @@ Praxis runs the same code in three shapes. Pick by **who reaches the dashboard**
 ## 1. Local (single user)
 
 ```bash
-pipx install praxis-agent            # or: pip install praxis-agent
+curl -fsSL https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.sh | bash
 praxis daemon start                  # Command Deck → http://127.0.0.1:8643
 praxis daemon status | stop
 ```
+
+The installer uses the source repository. Versioned wheel and sdist artifacts are
+also available on GitHub Releases; PyPI publication is currently disabled.
 
 - Binds **127.0.0.1** only; nothing leaves the machine.
 - State lives in `~/.praxis/` (SQLite store, knowledge base, config, packs). Override

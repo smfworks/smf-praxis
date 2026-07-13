@@ -96,28 +96,22 @@ parameters: `-With docs,multimodal,fast` / `-NoConfigure` /
 `-Provider ollama -Model llama3.1`. Then `source .venv/bin/activate`
 (`.venv\Scripts\Activate.ps1` on Windows) and run `praxis demo`.
 
-### From PyPI
+### From a GitHub Release
 
-Install the CLI directly — the Command Deck dashboard assets ship inside the wheel:
+The tag workflow publishes a wheel and sdist to GitHub Releases. Replace `X.Y.Z`
+with the selected release version:
 
 ```bash
-pipx install praxis-agent     # isolated CLI (recommended)
-# or
-pip install praxis-agent      # into the current environment
+VERSION=X.Y.Z
+pipx install "https://github.com/smfworks/smf-praxis/releases/download/v${VERSION}/praxis_agent-${VERSION}-py3-none-any.whl"
+# or install into the current environment:
+pip install "https://github.com/smfworks/smf-praxis/releases/download/v${VERSION}/praxis_agent-${VERSION}-py3-none-any.whl"
 praxis --version
 ```
 
-Optional extras work the same way, e.g. `pipx install "praxis-agent[browser,docs]"`.
-
-> **Note:** `praxis-agent` is not yet on PyPI. Until it is, install from the
-> GitHub Release for any version tag:
-> ```bash
-> pip install https://github.com/smfworks/smf-praxis/releases/download/v0.21.6/praxis_agent-0.21.6-py3-none-any.whl
-> # or from git:
-> pip install git+https://github.com/smfworks/smf-praxis.git@v0.21.6
-> ```
-> The wheel and sdist are attached to every release (see the Releases page
-> on the repo). Replace the version in the URL as needed.
+For optional extras, use a source checkout and install `.[browser,docs]` until PyPI
+publication is enabled. See [RELEASING.md](RELEASING.md) for current distribution
+status.
 
 ### Manual install
 
@@ -150,20 +144,21 @@ local, Docker, and team/LAN access — host binding, data dir, ports, and the re
 ### Updating
 
 ```bash
-praxis update            # upgrade to the latest PyPI release + migrate config
-praxis update --check    # just check whether a newer version is available
+praxis update            # install the latest GitHub Release wheel + migrate config
+praxis update --check    # check GitHub Releases without installing
 ```
 
-`update` upgrades in place (pip or pipx) and runs any config migrations; from a
-source checkout, use `git pull` instead.
+`update` resolves the latest stable GitHub Release and upgrades from its exact
+wheel URL. From a source checkout, use `git pull` and re-run `./install.sh`
+instead.
 
 ### Secrets
 
 API keys default to an **environment-variable reference** (nothing stored). When
 you paste a key, it goes to the **OS keychain** (Windows Credential Manager, macOS
-Keychain, Linux Secret Service) if the `keyring` extra is installed
-(`pip install "praxis-agent[keyring]"`), otherwise a gitignored file. Manage them
-with `praxis secrets`:
+Keychain, Linux Secret Service) if the `keyring` extra is installed. From a source
+checkout, enable it with `python -m pip install ".[keyring]"`; otherwise Praxis uses
+a gitignored file. Manage secrets with `praxis secrets`:
 
 ```bash
 praxis secrets status                  # where each provider's key resolves
@@ -651,7 +646,8 @@ Agent mode the model can `browser_navigate` to a page and read it, then a
 web.
 
 ```bash
-pip install "praxis-agent[browser]"   # enables real click/type via Playwright
+# from a source checkout:
+python -m pip install ".[browser]"   # enables real click/type via Playwright
 ```
 
 ## Knowledge base (RAG)
@@ -669,7 +665,8 @@ praxis recall "Q3 revenue follow-up for the customer"
 Embeddings and parsers are **offline-first**: a deterministic mock embedder needs
 no model or network, so RAG works out of the box. Plain text, Markdown, CSV/JSON,
 HTML, and `.eml` parse with the standard library; PDF/Word/PowerPoint/Excel/`.msg`
-need the optional extra (`pip install "praxis-agent[docs]"`). Point at a real
+need the optional `[docs]` extra. From a source checkout, run
+`python -m pip install ".[docs]"`. Point at a real
 embedding model by setting `agents.defaults.embedModel` (e.g.
 `ollama/nomic-embed-text`) and `PRAXIS_EMBED=real`.
 
@@ -677,7 +674,8 @@ embedding model by setting `agents.defaults.embedModel` (e.g.
 
 Retrieval uses a **cached, pre-normalized vector index** (`vecsim.py`) rebuilt
 only when a namespace changes (tracked by a vector-version counter). With the
-optional `[fast]` extra (`pip install "praxis-agent[fast]"`, adds numpy) scoring
+optional `[fast]` extra (from a source checkout, run
+`python -m pip install ".[fast]"`; this adds numpy), scoring
 is a single matrix–vector product built directly from raw embedding bytes —
 roughly **two orders of magnitude faster** than the previous per-query
 pure-Python cosine loop (≈945 ms → ≈4 ms per query over 4k chunks in the bundled

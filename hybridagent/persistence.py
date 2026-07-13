@@ -17,6 +17,7 @@ from __future__ import annotations
 import array
 import hashlib
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -75,6 +76,152 @@ CREATE TABLE IF NOT EXISTS approvals (
     signatures_json TEXT NOT NULL DEFAULT '[]',
     status      TEXT NOT NULL DEFAULT 'pending'
 );
+CREATE TRIGGER IF NOT EXISTS trg_approvals_status_valid_insert
+BEFORE INSERT ON approvals
+FOR EACH ROW WHEN NEW.status NOT IN ('pending','approved','rejected','expired')
+BEGIN
+    SELECT RAISE(ABORT, 'invalid approval status');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_status_valid_update
+BEFORE UPDATE OF status ON approvals
+FOR EACH ROW WHEN NEW.status NOT IN ('pending','approved','rejected','expired')
+BEGIN
+    SELECT RAISE(ABORT, 'invalid approval status');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_required_valid_insert
+BEFORE INSERT ON approvals
+FOR EACH ROW
+WHEN typeof(NEW.required_approvals) != 'integer' OR NEW.required_approvals < 1
+BEGIN
+    SELECT RAISE(ABORT, 'invalid required approval count');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_required_valid_update
+BEFORE UPDATE OF required_approvals ON approvals
+FOR EACH ROW
+WHEN typeof(NEW.required_approvals) != 'integer' OR NEW.required_approvals < 1
+BEGIN
+    SELECT RAISE(ABORT, 'invalid required approval count');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_signatures_valid_insert
+BEFORE INSERT ON approvals
+FOR EACH ROW
+WHEN json_valid(NEW.signatures_json) != 1
+    OR json_type(NEW.signatures_json) IS NOT 'array'
+    OR EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE signature.type != 'object'
+            OR (SELECT COUNT(*) FROM json_each(signature.value)) != 4
+            OR (SELECT COUNT(DISTINCT field.key)
+                FROM json_each(signature.value) AS field) != 4
+            OR EXISTS (
+                SELECT 1 FROM json_each(signature.value) AS field
+                WHERE field.key NOT IN ('approved_by','role','notes','ts')
+            )
+            OR COALESCE(json_type(signature.value, '$.approved_by'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.role'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.notes'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.ts'), '') NOT IN ('integer','real')
+            OR abs(CAST(json_extract(signature.value, '$.ts') AS REAL))
+               > 1.7976931348623157e308
+    )
+    OR (SELECT COUNT(DISTINCT json_extract(signature.value, '$.approved_by'))
+        FROM json_each(NEW.signatures_json) AS signature)
+       != json_array_length(NEW.signatures_json)
+    OR (NEW.required_approvals > 1 AND EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE trim(json_extract(signature.value, '$.approved_by')) = ''
+    ))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid approval signatures');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_signatures_valid_update
+BEFORE UPDATE OF signatures_json,required_approvals ON approvals
+FOR EACH ROW
+WHEN json_valid(NEW.signatures_json) != 1
+    OR json_type(NEW.signatures_json) IS NOT 'array'
+    OR EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE signature.type != 'object'
+            OR (SELECT COUNT(*) FROM json_each(signature.value)) != 4
+            OR (SELECT COUNT(DISTINCT field.key)
+                FROM json_each(signature.value) AS field) != 4
+            OR EXISTS (
+                SELECT 1 FROM json_each(signature.value) AS field
+                WHERE field.key NOT IN ('approved_by','role','notes','ts')
+            )
+            OR COALESCE(json_type(signature.value, '$.approved_by'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.role'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.notes'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.ts'), '') NOT IN ('integer','real')
+            OR abs(CAST(json_extract(signature.value, '$.ts') AS REAL))
+               > 1.7976931348623157e308
+    )
+    OR (SELECT COUNT(DISTINCT json_extract(signature.value, '$.approved_by'))
+        FROM json_each(NEW.signatures_json) AS signature)
+       != json_array_length(NEW.signatures_json)
+    OR (NEW.required_approvals > 1 AND EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE trim(json_extract(signature.value, '$.approved_by')) = ''
+    ))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid approval signatures');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_threshold_insert
+BEFORE INSERT ON approvals
+FOR EACH ROW
+WHEN NEW.status = 'approved' AND (
+    NEW.required_approvals < 1
+    OR json_valid(NEW.signatures_json) != 1
+    OR json_type(NEW.signatures_json) != 'array'
+    OR json_array_length(NEW.signatures_json) < NEW.required_approvals
+)
+BEGIN
+    SELECT RAISE(ABORT, 'approval signature threshold is not satisfied');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_threshold
+BEFORE UPDATE OF status,signatures_json,required_approvals ON approvals
+FOR EACH ROW
+WHEN NEW.status = 'approved' AND (
+    NEW.required_approvals < 1
+    OR json_valid(NEW.signatures_json) != 1
+    OR json_type(NEW.signatures_json) != 'array'
+    OR json_array_length(NEW.signatures_json) < NEW.required_approvals
+)
+BEGIN
+    SELECT RAISE(ABORT, 'approval signature threshold is not satisfied');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_terminal_resolution_immutable
+BEFORE UPDATE ON approvals
+FOR EACH ROW
+WHEN OLD.status != 'pending' AND (
+    NEW.approval_id IS NOT OLD.approval_id
+    OR NEW.organization_id IS NOT OLD.organization_id
+    OR NEW.cycle_id IS NOT OLD.cycle_id
+    OR NEW.decision_id IS NOT OLD.decision_id
+    OR NEW.tool IS NOT OLD.tool
+    OR NEW.args_json IS NOT OLD.args_json
+    OR NEW.preview IS NOT OLD.preview
+    OR NEW.provenance IS NOT OLD.provenance
+    OR NEW.rationale IS NOT OLD.rationale
+    OR NEW.evidence_json IS NOT OLD.evidence_json
+    OR NEW.ts IS NOT OLD.ts
+    OR NEW.expires_at IS NOT OLD.expires_at
+    OR NEW.resolved_at IS NOT OLD.resolved_at
+    OR NEW.approved_by IS NOT OLD.approved_by
+    OR NEW.approval_notes IS NOT OLD.approval_notes
+    OR NEW.required_approvals IS NOT OLD.required_approvals
+    OR NEW.signatures_json IS NOT OLD.signatures_json
+    OR NEW.status IS NOT OLD.status
+)
+BEGIN
+    SELECT RAISE(ABORT, 'resolved approval is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_terminal_delete_forbidden
+BEFORE DELETE ON approvals
+FOR EACH ROW WHEN OLD.status != 'pending'
+BEGIN
+    SELECT RAISE(ABORT, 'resolved approval is immutable');
+END;
 
 CREATE TABLE IF NOT EXISTS vectors (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,6 +263,74 @@ CREATE TABLE IF NOT EXISTS tasks (
     plan TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_tasks_status ON tasks(status);
+
+CREATE TABLE IF NOT EXISTS task_approval_actions (
+    task_id TEXT NOT NULL,
+    approval_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    effect_type TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    provider_idempotent INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending_approval'
+        CHECK(status IN ('pending_approval','pending_execution','completed',
+                         'failed','rejected','cancelled','manual_reconciliation')),
+    receipt_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT NOT NULL DEFAULT '',
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL,
+    PRIMARY KEY(task_id, approval_id),
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
+    FOREIGN KEY(approval_id) REFERENCES approvals(approval_id)
+);
+CREATE INDEX IF NOT EXISTS ix_task_approval_actions_approval
+    ON task_approval_actions(approval_id);
+CREATE INDEX IF NOT EXISTS ix_task_approval_actions_status
+    ON task_approval_actions(status);
+CREATE TRIGGER IF NOT EXISTS trg_task_approval_actions_transition
+BEFORE UPDATE OF status ON task_approval_actions
+FOR EACH ROW
+WHEN NOT (
+    (OLD.status = 'pending_approval' AND NEW.status IN
+        ('pending_execution','rejected','cancelled')) OR
+    (OLD.status = 'pending_execution' AND NEW.status IN
+        ('completed','failed','manual_reconciliation')) OR
+    OLD.status = NEW.status
+)
+BEGIN
+    SELECT RAISE(ABORT, 'invalid task approval action transition');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_task_approval_actions_identity_immutable
+BEFORE UPDATE OF task_id,approval_id,tool,args_json,fingerprint,effect_type,
+                 idempotency_key,provider_idempotent,created_ts
+ON task_approval_actions
+FOR EACH ROW
+WHEN NEW.task_id IS NOT OLD.task_id
+  OR NEW.approval_id IS NOT OLD.approval_id
+  OR NEW.tool IS NOT OLD.tool
+  OR NEW.args_json IS NOT OLD.args_json
+  OR NEW.fingerprint IS NOT OLD.fingerprint
+  OR NEW.effect_type IS NOT OLD.effect_type
+  OR NEW.idempotency_key IS NOT OLD.idempotency_key
+  OR NEW.provider_idempotent IS NOT OLD.provider_idempotent
+  OR NEW.created_ts IS NOT OLD.created_ts
+BEGIN
+    SELECT RAISE(ABORT, 'task approval action identity is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_task_approval_actions_completed_immutable
+BEFORE UPDATE ON task_approval_actions
+FOR EACH ROW WHEN OLD.status = 'completed'
+BEGIN
+    SELECT RAISE(ABORT, 'completed task effect receipt is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_task_approval_actions_append_only
+BEFORE DELETE ON task_approval_actions
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'task approval actions are append-only');
+END;
 
 CREATE TABLE IF NOT EXISTS kb_sources (
     source_id TEXT PRIMARY KEY,
@@ -305,6 +520,8 @@ CREATE TABLE IF NOT EXISTS professional_workspaces (
 );
 CREATE INDEX IF NOT EXISTS ix_workspaces_org_status
     ON professional_workspaces(organization_id, status, created_ts);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workspaces_id_org
+    ON professional_workspaces(workspace_id, organization_id);
 CREATE TABLE IF NOT EXISTS evidence_sources (
     source_id         TEXT PRIMARY KEY,
     organization_id   TEXT NOT NULL REFERENCES organizations(organization_id),
@@ -654,6 +871,187 @@ CREATE TABLE IF NOT EXISTS evolution_proposals (
 );
 CREATE INDEX IF NOT EXISTS ix_evo_status ON evolution_proposals(status);
 CREATE INDEX IF NOT EXISTS ix_evo_skill ON evolution_proposals(skill_name);
+
+-- Durable professional workflow runs and immutable checkpoints.
+CREATE TABLE IF NOT EXISTS professional_runs (
+    run_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    workspace_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    schema_manifest_json TEXT NOT NULL,
+    head_checkpoint_id TEXT NOT NULL DEFAULT '',
+    parent_run_id TEXT NOT NULL DEFAULT '',
+    forked_from_checkpoint_id TEXT NOT NULL DEFAULT '',
+    interrupt_type TEXT NOT NULL DEFAULT '',
+    interrupt_payload_json TEXT NOT NULL DEFAULT '{}',
+    cancel_reason TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL,
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_professional_runs_scope
+    ON professional_runs(organization_id, workspace_id, updated_ts);
+CREATE TABLE IF NOT EXISTS run_checkpoints (
+    checkpoint_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES professional_runs(run_id),
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    parent_checkpoint_id TEXT,
+    sequence INTEGER NOT NULL,
+    state_json TEXT NOT NULL,
+    schema_manifest_json TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    UNIQUE(run_id, sequence),
+    FOREIGN KEY (parent_checkpoint_id) REFERENCES run_checkpoints(checkpoint_id),
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_run_checkpoints_scope
+    ON run_checkpoints(organization_id, workspace_id, run_id, sequence);
+CREATE TABLE IF NOT EXISTS run_effect_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES professional_runs(run_id),
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    effect_type TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    UNIQUE(run_id, idempotency_key),
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_run_effect_receipts_scope
+    ON run_effect_receipts(organization_id, workspace_id, run_id, created_ts);
+CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_scope_insert
+BEFORE INSERT ON run_checkpoints
+WHEN NOT EXISTS (
+    SELECT 1 FROM professional_runs r
+    WHERE r.run_id=NEW.run_id
+      AND r.organization_id=NEW.organization_id
+      AND r.workspace_id=NEW.workspace_id
+) BEGIN
+    SELECT RAISE(ABORT, 'checkpoint scope must match run');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_scope_insert
+BEFORE INSERT ON run_effect_receipts
+WHEN NOT EXISTS (
+    SELECT 1 FROM professional_runs r
+    WHERE r.run_id=NEW.run_id
+      AND r.organization_id=NEW.organization_id
+      AND r.workspace_id=NEW.workspace_id
+) BEGIN
+    SELECT RAISE(ABORT, 'effect scope must match run');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_no_update
+BEFORE UPDATE ON run_effect_receipts BEGIN
+    SELECT RAISE(ABORT, 'effect receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_no_delete
+BEFORE DELETE ON run_effect_receipts BEGIN
+    SELECT RAISE(ABORT, 'effect receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_no_update
+BEFORE UPDATE ON run_checkpoints BEGIN
+    SELECT RAISE(ABORT, 'run checkpoints are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_no_delete
+BEFORE DELETE ON run_checkpoints BEGIN
+    SELECT RAISE(ABORT, 'run checkpoints are immutable');
+END;
+CREATE TABLE IF NOT EXISTS professional_reviews (
+    review_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    workspace_id TEXT NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    review_type TEXT NOT NULL,
+    required_role TEXT NOT NULL,
+    subject_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    decision TEXT NOT NULL DEFAULT '',
+    decision_payload_json TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    reviewer_user_id TEXT NOT NULL DEFAULT '',
+    created_ts REAL NOT NULL,
+    reviewed_ts REAL,
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_professional_reviews_scope
+    ON professional_reviews(organization_id, workspace_id, created_ts);
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_scope_insert
+BEFORE INSERT ON professional_reviews
+WHEN (NEW.run_id <> '' AND NOT EXISTS (
+    SELECT 1 FROM professional_runs r
+    WHERE r.run_id=NEW.run_id
+      AND r.organization_id=NEW.organization_id
+      AND r.workspace_id=NEW.workspace_id
+)) OR NEW.review_type NOT IN ('quality','professional_release','research_findings')
+   OR NEW.status <> 'pending'
+   OR NEW.decision <> ''
+   OR NEW.reviewer_user_id <> ''
+   OR NEW.reviewed_ts IS NOT NULL
+   OR (NEW.review_type='professional_release'
+       AND NEW.required_role NOT IN ('organization_admin','professional','reviewer'))
+   OR (NEW.review_type='quality'
+       AND NEW.required_role NOT IN (
+           'organization_admin','workspace_admin','professional','reviewer','auditor'))
+   OR (NEW.review_type='research_findings'
+       AND NEW.required_role NOT IN (
+           'organization_admin','professional','reviewer','auditor'))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid review request or run scope');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_decision_update_v2
+BEFORE UPDATE ON professional_reviews
+WHEN OLD.status <> 'pending'
+  OR NEW.status <> 'decided'
+  OR NEW.decision NOT IN ('approved','revise','rejected')
+  OR NEW.reviewer_user_id = OLD.created_by
+  OR NEW.reviewed_ts IS NULL
+  OR CASE WHEN json_valid(NEW.decision_payload_json)
+          THEN json_type(NEW.decision_payload_json) <> 'object'
+          ELSE 1 END
+  OR NOT EXISTS (
+      SELECT 1
+      FROM professional_workspaces w
+      JOIN organizations o ON o.organization_id=w.organization_id
+      JOIN organization_memberships m ON m.organization_id=w.organization_id
+      JOIN organization_users u ON u.user_id=m.user_id
+      WHERE w.organization_id=OLD.organization_id
+        AND w.workspace_id=OLD.workspace_id
+        AND w.status='active'
+        AND o.status='active'
+        AND m.user_id=NEW.reviewer_user_id
+        AND m.status='active'
+        AND u.status='active'
+        AND EXISTS (
+            SELECT 1 FROM json_each(m.roles_json)
+            WHERE value=OLD.required_role
+        )
+  )
+  OR NEW.review_id IS NOT OLD.review_id
+  OR NEW.organization_id IS NOT OLD.organization_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.review_type IS NOT OLD.review_type
+  OR NEW.required_role IS NOT OLD.required_role
+  OR NEW.subject_json IS NOT OLD.subject_json
+  OR NEW.created_by IS NOT OLD.created_by
+  OR NEW.created_ts IS NOT OLD.created_ts
+BEGIN
+    SELECT RAISE(ABORT, 'invalid or immutable professional review decision');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_no_delete
+BEFORE DELETE ON professional_reviews BEGIN
+    SELECT RAISE(ABORT, 'professional reviews are immutable');
+END;
 """
 
 
@@ -673,14 +1071,24 @@ class Store:
             # second process); busy_timeout backs off instead of raising
             # "database is locked" under cross-process contention.
             try:
-                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA foreign_keys=ON")
                 self._conn.execute("PRAGMA busy_timeout=5000")
+                self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA synchronous=NORMAL")
             except sqlite3.Error:  # pragma: no cover - exotic filesystems only
                 pass
-            self._conn.executescript(_SCHEMA)
-            self._migrate_locked()
-            self._conn.commit()
+            try:
+                # `executescript` commits an already-open transaction before it
+                # runs. Put BEGIN inside the script, then keep every additive
+                # migration and trigger replacement on `execute` so concurrent
+                # processes serialize the entire schema transition.
+                self._conn.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA)
+                self._migrate_locked()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                self._conn.close()
+                raise
 
     def _migrate_locked(self) -> None:
         """Best-effort additive migrations for existing ~/.praxis/praxis.db files."""
@@ -717,10 +1125,54 @@ class Store:
         self._ensure_columns_locked("runs", {
             "workspace_id": "TEXT NOT NULL DEFAULT ''",
         })
+        self._ensure_columns_locked("professional_runs", {
+            "parent_run_id": "TEXT NOT NULL DEFAULT ''",
+            "forked_from_checkpoint_id": "TEXT NOT NULL DEFAULT ''",
+        })
         self._ensure_columns_locked("tasks", {
             "output": "TEXT NOT NULL DEFAULT ''",
             "plan": "TEXT NOT NULL DEFAULT ''",
         })
+        self._ensure_columns_locked("task_approval_actions", {
+            # Rows created before risk binding cannot be safely inferred after a
+            # tool contract may have changed. The empty default therefore fails
+            # closed during approval/restart reconciliation.
+            "risk": "TEXT NOT NULL DEFAULT ''",
+        })
+        self._conn.execute(
+            "DROP TRIGGER IF EXISTS trg_task_approval_actions_identity_immutable"
+        )
+        self._conn.execute("""
+CREATE TRIGGER trg_task_approval_actions_identity_immutable
+BEFORE UPDATE OF task_id,approval_id,tool,args_json,fingerprint,effect_type,
+                 risk,idempotency_key,provider_idempotent,created_ts
+ON task_approval_actions
+FOR EACH ROW
+WHEN NEW.task_id IS NOT OLD.task_id
+  OR NEW.approval_id IS NOT OLD.approval_id
+  OR NEW.tool IS NOT OLD.tool
+  OR NEW.args_json IS NOT OLD.args_json
+  OR NEW.fingerprint IS NOT OLD.fingerprint
+  OR NEW.effect_type IS NOT OLD.effect_type
+  OR NEW.risk IS NOT OLD.risk
+  OR NEW.idempotency_key IS NOT OLD.idempotency_key
+  OR NEW.provider_idempotent IS NOT OLD.provider_idempotent
+  OR NEW.created_ts IS NOT OLD.created_ts
+BEGIN
+    SELECT RAISE(ABORT, 'task approval action identity is immutable');
+END
+""")
+        self._conn.execute(
+            "DROP TRIGGER IF EXISTS trg_task_approval_actions_risk_valid_insert"
+        )
+        self._conn.execute("""
+CREATE TRIGGER trg_task_approval_actions_risk_valid_insert
+BEFORE INSERT ON task_approval_actions
+FOR EACH ROW WHEN NEW.risk NOT IN ('send','destructive')
+BEGIN
+    SELECT RAISE(ABORT, 'invalid task approval action risk');
+END
+""")
         self._ensure_columns_locked("run_routing", {
             "escalations": "INTEGER NOT NULL DEFAULT 0",
             "escalation_reason": "TEXT NOT NULL DEFAULT ''",
@@ -840,35 +1292,224 @@ class Store:
                         evidence: list[dict] | None = None,
                         required_approvals: int = 1,
                         organization_id: str = "") -> None:
-        evidence_json = json.dumps(evidence or [])
+        """Insert a new approval without replacing an existing immutable decision."""
+        text_fields = (
+            approval_id, tool, preview, provenance, cycle_id, decision_id,
+            rationale, organization_id,
+        )
+        if any(type(value) is not str for value in text_fields):
+            raise ValueError("approval identity and text fields must be strings")
+        if not approval_id.strip() or not tool.strip():
+            raise ValueError("approval id and tool are required")
+        if type(args) is not dict:
+            raise ValueError("approval args must be an exact dict")
+        if evidence is not None and type(evidence) is not list:
+            raise ValueError("approval evidence must be an exact list")
+        if type(required_approvals) is not int or required_approvals < 1:
+            raise ValueError("approval requires a positive integer threshold")
+        if expires_at is not None and (
+            type(expires_at) not in {int, float} or not math.isfinite(float(expires_at))
+        ):
+            raise ValueError("approval expiry must be a finite number or null")
+        args_json = self._task_action_json(args, "approval args")
+        evidence_json = self._task_action_json(evidence or [], "approval evidence")
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO approvals"
+                "INSERT INTO approvals"
                 "(approval_id,organization_id,cycle_id,decision_id,tool,args_json,preview,"
                 "provenance,rationale,evidence_json,ts,expires_at,required_approvals,"
                 "signatures_json,status) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, '[]', 'pending')",
                 (approval_id, organization_id, cycle_id, decision_id, tool,
-                 json.dumps(args), preview, provenance, rationale, evidence_json,
+                 args_json, preview, provenance, rationale, evidence_json,
                  time.time(), expires_at, required_approvals),
             )
             self._conn.commit()
 
+    @staticmethod
+    def _decode_approval_signatures(raw: str) -> list[dict]:
+        try:
+            signatures = json.loads(raw or "[]")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("approval signatures must be strict JSON") from exc
+        if type(signatures) is not list:
+            raise ValueError("approval signatures must be a JSON list")
+        for signature in signatures:
+            if type(signature) is not dict:
+                raise ValueError("approval signature must be a JSON object")
+            if set(signature) != {"approved_by", "role", "notes", "ts"}:
+                raise ValueError("approval signature has invalid fields")
+            if any(
+                type(signature[field]) is not str
+                for field in ("approved_by", "role", "notes")
+            ):
+                raise ValueError("approval signature text fields must be strings")
+            ts = signature["ts"]
+            if type(ts) not in {int, float} or not math.isfinite(float(ts)):
+                raise ValueError("approval signature timestamp must be finite")
+        return signatures
+
+    @staticmethod
+    def _validate_approval_signer(
+        approver: str, notes: str, role: str
+    ) -> tuple[str, str, str]:
+        if type(approver) is not str or type(notes) is not str or type(role) is not str:
+            raise ValueError("approval signature fields must be strings")
+        return approver.strip(), notes, role
+
     def add_approval_signature(self, approval_id: str, approver: str,
                                notes: str = "", role: str = "") -> int:
-        """Append a signature to an approval and return the new signature count."""
+        """Compatibility wrapper for the atomic approval-signature transaction."""
+        result = self.approve_with_signature(approval_id, approver, notes, role)
+        return len(result.get("signatures", []))
+
+    def approve_with_signature(
+        self,
+        approval_id: str,
+        approver: str,
+        notes: str = "",
+        role: str = "",
+    ) -> dict:
+        """Append an authoritative signature and atomically resolve/claim when full."""
+        signer, notes, role = self._validate_approval_signer(approver, notes, role)
+        now = time.time()
         with self._lock:
-            row = self._conn.execute(
-                "SELECT signatures_json FROM approvals WHERE approval_id=?",
-                (approval_id,)).fetchone()
-            sigs = json.loads(row["signatures_json"] if row else "[]") or []
-            sigs.append({"approved_by": approver, "role": role,
-                         "notes": notes, "ts": time.time()})
-            self._conn.execute(
-                "UPDATE approvals SET signatures_json=? WHERE approval_id=?",
-                (json.dumps(sigs), approval_id))
-            self._conn.commit()
-            return len(sigs)
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT status,expires_at,required_approvals,signatures_json "
+                    "FROM approvals WHERE approval_id=?",
+                    (approval_id,),
+                ).fetchone()
+                if row is None:
+                    self._conn.rollback()
+                    return {
+                        "accepted": False, "fully_approved": False,
+                        "task_claimed": False, "status": "missing", "signatures": [],
+                    }
+                signatures = self._decode_approval_signatures(row["signatures_json"])
+                status = str(row["status"])
+                expires_at = row["expires_at"]
+                if status == "pending" and expires_at is not None and expires_at < now:
+                    self._conn.execute(
+                        "UPDATE approvals SET status='expired',resolved_at=? "
+                        "WHERE approval_id=? AND status='pending'",
+                        (now, approval_id),
+                    )
+                    self._conn.commit()
+                    return {
+                        "accepted": False, "fully_approved": False,
+                        "task_claimed": False, "status": "expired",
+                        "signatures": signatures,
+                    }
+                if status != "pending":
+                    self._conn.rollback()
+                    return {
+                        "accepted": False, "fully_approved": status == "approved",
+                        "task_claimed": False, "status": status,
+                        "signatures": signatures,
+                    }
+                required = int(row["required_approvals"])
+                if required < 1:
+                    raise ValueError("approval requires at least one signature")
+                if required > 1 and not signer:
+                    self._conn.rollback()
+                    return {
+                        "accepted": False, "fully_approved": False,
+                        "task_claimed": False, "status": "pending",
+                        "required_approvals": required, "signatures": signatures,
+                    }
+                if signer and any(item["approved_by"] == signer for item in signatures):
+                    self._conn.rollback()
+                    return {
+                        "accepted": False,
+                        "fully_approved": len(signatures) >= required,
+                        "task_claimed": False, "status": "pending",
+                        "required_approvals": required, "signatures": signatures,
+                    }
+                signatures.append(
+                    {"approved_by": signer, "role": role, "notes": notes, "ts": now}
+                )
+                signatures_json = self._task_action_json(
+                    signatures, "approval signatures"
+                )
+                fully_approved = len(signatures) >= required
+                task_claimed = False
+                if fully_approved:
+                    action_rows = self._conn.execute(
+                        "SELECT a.task_id FROM task_approval_actions a "
+                        "JOIN tasks t ON t.task_id=a.task_id "
+                        "WHERE a.approval_id=? AND a.status='pending_approval' "
+                        "AND t.status='waiting_approval'",
+                        (approval_id,),
+                    ).fetchall()
+                    has_task_actions = self._conn.execute(
+                        "SELECT 1 FROM task_approval_actions WHERE approval_id=? LIMIT 1",
+                        (approval_id,),
+                    ).fetchone() is not None
+                    if has_task_actions:
+                        if not action_rows:
+                            self._conn.rollback()
+                            return {
+                                "accepted": False, "fully_approved": False,
+                                "task_claimed": False, "status": "pending",
+                                "required_approvals": required,
+                                "signatures": signatures[:-1],
+                            }
+                        task_ids = [item["task_id"] for item in action_rows]
+                        marks = ",".join("?" for _ in task_ids)
+                        in_flight = self._conn.execute(
+                            "SELECT 1 FROM task_approval_actions "
+                            "WHERE status='pending_execution' "
+                            f"AND task_id IN ({marks}) LIMIT 1",
+                            task_ids,
+                        ).fetchone()
+                        if in_flight is not None:
+                            self._conn.rollback()
+                            return {
+                                "accepted": False, "fully_approved": False,
+                                "task_claimed": False, "status": "pending",
+                                "required_approvals": required,
+                                "signatures": signatures[:-1],
+                            }
+                        claimed = self._conn.execute(
+                            "UPDATE task_approval_actions "
+                            "SET status='pending_execution',updated_ts=? "
+                            "WHERE approval_id=? AND status='pending_approval'",
+                            (now, approval_id),
+                        )
+                        if claimed.rowcount < 1:
+                            raise ValueError("task approval claim lost its transaction race")
+                        task_claimed = True
+                    resolved = self._conn.execute(
+                        "UPDATE approvals SET status='approved',resolved_at=?,"
+                        "approved_by=?,approval_notes=?,signatures_json=? "
+                        "WHERE approval_id=? AND status='pending'",
+                        (now, signer, notes, signatures_json, approval_id),
+                    )
+                    if resolved.rowcount != 1:
+                        raise ValueError("approval signature lost its transaction race")
+                    status = "approved"
+                else:
+                    updated = self._conn.execute(
+                        "UPDATE approvals SET signatures_json=? "
+                        "WHERE approval_id=? AND status='pending'",
+                        (signatures_json, approval_id),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError("approval signature lost its transaction race")
+                self._conn.commit()
+                return {
+                    "accepted": True,
+                    "fully_approved": fully_approved,
+                    "task_claimed": task_claimed,
+                    "status": status,
+                    "required_approvals": required,
+                    "signatures": signatures,
+                }
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def list_approvals(self, include_expired: bool = False) -> list[dict]:
         now = time.time()
@@ -925,9 +1566,13 @@ class Store:
 
     def resolve_approval(self, approval_id: str, status: str,
                          approved_by: str = "", approval_notes: str = "") -> bool:
-        """Atomically transition a still-pending approval. Returns True only if
-        THIS call won the pending->status transition (guards cross-process
-        double-execution of consequential actions)."""
+        """Atomically reject or expire a pending approval.
+
+        Approval success must use :meth:`approve_with_signature` so the persisted
+        signer threshold and any durable task-action claim cannot be bypassed.
+        """
+        if status not in {"rejected", "expired"}:
+            raise ValueError("approved decisions require approve_with_signature")
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE approvals SET status=?, resolved_at=?, approved_by=?, "
@@ -1136,6 +1781,650 @@ class Store:
                 f"UPDATE tasks SET {cols} WHERE task_id=?", vals)
             self._conn.commit()
             return cur.rowcount == 1
+
+    @staticmethod
+    def _task_action_json(value: object, label: str) -> str:
+        def is_exact_json(item: object) -> bool:
+            item_type = type(item)
+            if item is None or item_type in {bool, int, str}:
+                return True
+            if item_type is float:
+                assert isinstance(item, float)
+                return math.isfinite(item)
+            if item_type is list:
+                assert isinstance(item, list)
+                return all(is_exact_json(child) for child in item)
+            if item_type is dict:
+                assert isinstance(item, dict)
+                return all(
+                    type(key) is str and is_exact_json(child)
+                    for key, child in item.items()
+                )
+            return False
+
+        if not is_exact_json(value):
+            raise ValueError(f"{label} must be strict JSON")
+        try:
+            return json.dumps(
+                value, sort_keys=True, separators=(",", ":"), allow_nan=False
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be strict JSON") from exc
+
+    @staticmethod
+    def _task_action_fingerprint(effect_type: str, args_json: str) -> str:
+        return hashlib.sha256(f"{effect_type}\n{args_json}".encode()).hexdigest()
+
+    def hold_task_for_approvals(
+        self,
+        task_id: str,
+        *,
+        cycle_id: str,
+        result: dict,
+        output: str,
+        plan: str,
+        actions: list[dict],
+    ) -> None:
+        """Atomically attach exact held actions and move a running task to waiting."""
+        if type(actions) is not list or not all(type(item) is dict for item in actions):
+            raise ValueError("task approval actions must be a strict list of objects")
+        result_json = self._task_action_json(result, "task result")
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self._conn.execute(
+                    "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+                ).fetchone()
+                if task is None or task["status"] != "running":
+                    raise ValueError("task must be running before approval hold")
+                seen: set[str] = set()
+                for spec in actions:
+                    approval_id = spec.get("approval_id")
+                    if type(approval_id) is not str or not approval_id.strip():
+                        raise ValueError("task action approval id must be a nonempty string")
+                    approval_id = approval_id.strip()
+                    if approval_id in seen:
+                        continue
+                    seen.add(approval_id)
+                    approval = self._conn.execute(
+                        "SELECT tool,args_json,provenance,status FROM approvals "
+                        "WHERE approval_id=?",
+                        (approval_id,),
+                    ).fetchone()
+                    if approval is None or approval["status"] != "pending":
+                        raise ValueError("held task approval must be pending")
+                    if approval["provenance"] != f"task:{task_id}":
+                        raise ValueError("held task approval provenance does not match task")
+                    args = json.loads(approval["args_json"] or "{}")
+                    args_json = self._task_action_json(args, "task action args")
+                    spec_args_json = self._task_action_json(
+                        spec.get("args"), "held task action args"
+                    )
+                    if spec_args_json != args_json:
+                        raise ValueError("held task action arguments do not match approval")
+                    tool = spec.get("tool")
+                    if type(tool) is not str:
+                        raise ValueError("task action tool must be a string")
+                    tool = tool.strip()
+                    if not tool or tool != approval["tool"]:
+                        raise ValueError("held task action does not match approval")
+                    effect_type = spec.get("effect_type")
+                    if type(effect_type) is not str:
+                        raise ValueError("task action effect type must be a string")
+                    effect_type = effect_type.strip()
+                    if not effect_type:
+                        raise ValueError("task action effect type is required")
+                    risk = spec.get("risk")
+                    if type(risk) is not str or risk not in {"send", "destructive"}:
+                        raise ValueError("task action risk must be consequential")
+                    idempotency_key = spec.get("idempotency_key")
+                    if type(idempotency_key) is not str:
+                        raise ValueError("task action idempotency key must be a string")
+                    provider_idempotent = spec.get("provider_idempotent")
+                    if type(provider_idempotent) is not bool:
+                        raise ValueError("task action provider idempotency must be boolean")
+                    self._conn.execute(
+                        "INSERT INTO task_approval_actions("
+                        "task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
+                        "idempotency_key,provider_idempotent,status,created_ts,updated_ts) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            task_id,
+                            approval_id,
+                            tool,
+                            args_json,
+                            self._task_action_fingerprint(effect_type, args_json),
+                            effect_type,
+                            risk,
+                            idempotency_key,
+                            1 if provider_idempotent else 0,
+                            "pending_approval",
+                            now,
+                            now,
+                        ),
+                    )
+                if not seen:
+                    raise ValueError("waiting task requires at least one approval action")
+                updated = self._conn.execute(
+                    "UPDATE tasks SET status='waiting_approval',cycle_id=?,result_json=?,"
+                    "output=?,plan=?,error='',updated_ts=? "
+                    "WHERE task_id=? AND status='running'",
+                    (cycle_id, result_json, output, plan, now, task_id),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError("task approval hold lost its state race")
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def backfill_legacy_task_approval_action(
+        self,
+        task_id: str,
+        approval_id: str,
+        *,
+        effect_type: str,
+        risk: str,
+        idempotency_key: str = "",
+        provider_idempotent: bool = False,
+    ) -> bool:
+        """Bind one pre-outbox waiting-task approval to an exact durable action."""
+        if any(type(value) is not str for value in (
+            task_id, approval_id, effect_type, risk, idempotency_key
+        )):
+            raise ValueError("legacy task action identity fields must be strings")
+        task_id = task_id.strip()
+        approval_id = approval_id.strip()
+        effect_type = effect_type.strip()
+        if not task_id or not approval_id or not effect_type:
+            raise ValueError("legacy task action identity fields are required")
+        if risk not in {"send", "destructive"}:
+            raise ValueError("legacy task action risk must be consequential")
+        if type(provider_idempotent) is not bool:
+            raise ValueError("legacy provider idempotency must be boolean")
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                waiting_rows = self._conn.execute(
+                    "SELECT task_id,result_json FROM tasks "
+                    "WHERE status='waiting_approval'"
+                ).fetchall()
+                shared_task_ids: list[str] = []
+                for waiting in waiting_rows:
+                    try:
+                        waiting_result = json.loads(waiting["result_json"] or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    waiting_pending = (
+                        waiting_result.get("pending_approvals")
+                        if type(waiting_result) is dict
+                        else None
+                    )
+                    if type(waiting_pending) is list and any(
+                        type(item) is dict and item.get("approval_id") == approval_id
+                        for item in waiting_pending
+                    ):
+                        shared_task_ids.append(str(waiting["task_id"]))
+                if len(shared_task_ids) > 1:
+                    reason = (
+                        "manual reconciliation required: legacy approval is shared "
+                        "by multiple waiting tasks"
+                    )
+                    marks = ",".join("?" for _ in shared_task_ids)
+                    failed = self._conn.execute(
+                        "UPDATE tasks SET status='failed',error=?,output=?,updated_ts=? "
+                        f"WHERE task_id IN ({marks}) AND status='waiting_approval'",
+                        (reason, reason, now, *shared_task_ids),
+                    )
+                    if failed.rowcount != len(shared_task_ids):
+                        raise ValueError("shared legacy task failure lost its state race")
+                    self._conn.execute(
+                        "UPDATE task_approval_actions SET status='rejected',error=?,"
+                        "updated_ts=? WHERE approval_id=? AND status='pending_approval'",
+                        (reason, now, approval_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE task_approval_actions SET status='manual_reconciliation',"
+                        "error=?,updated_ts=? WHERE approval_id=? "
+                        "AND status='pending_execution'",
+                        (reason, now, approval_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE approvals SET status='rejected',resolved_at=? "
+                        "WHERE approval_id=? AND status='pending'",
+                        (now, approval_id),
+                    )
+                    self._conn.commit()
+                    return False
+                existing = self._conn.execute(
+                    "SELECT 1 FROM task_approval_actions "
+                    "WHERE task_id=? AND approval_id=?",
+                    (task_id, approval_id),
+                ).fetchone()
+                if existing is not None:
+                    self._conn.rollback()
+                    return False
+                task = self._conn.execute(
+                    "SELECT status,result_json FROM tasks WHERE task_id=?",
+                    (task_id,),
+                ).fetchone()
+                approval = self._conn.execute(
+                    "SELECT tool,args_json,provenance,status FROM approvals "
+                    "WHERE approval_id=?",
+                    (approval_id,),
+                ).fetchone()
+                if (
+                    task is None
+                    or task["status"] != "waiting_approval"
+                    or approval is None
+                    or approval["status"] != "pending"
+                    or approval["provenance"] != "plan"
+                ):
+                    self._conn.rollback()
+                    return False
+                try:
+                    result = json.loads(task["result_json"] or "{}")
+                    args = json.loads(approval["args_json"] or "{}")
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("legacy task approval contains malformed JSON") from exc
+                self._task_action_json(result, "legacy task result")
+                args_json = self._task_action_json(args, "legacy task action args")
+                pending = result.get("pending_approvals") if type(result) is dict else None
+                if type(pending) is not list or not any(
+                    type(item) is dict
+                    and item.get("approval_id") == approval_id
+                    and item.get("tool") == approval["tool"]
+                    and item.get("risk") == risk
+                    for item in pending
+                ):
+                    self._conn.rollback()
+                    return False
+                self._conn.execute(
+                    "INSERT INTO task_approval_actions("
+                    "task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
+                    "idempotency_key,provider_idempotent,status,created_ts,updated_ts) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        task_id,
+                        approval_id,
+                        approval["tool"],
+                        args_json,
+                        self._task_action_fingerprint(effect_type, args_json),
+                        effect_type,
+                        risk,
+                        idempotency_key,
+                        1 if provider_idempotent else 0,
+                        "pending_approval",
+                        now,
+                        now,
+                    ),
+                )
+                self._conn.commit()
+                return True
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def fail_legacy_waiting_task_approval(
+        self, task_id: str, approval_id: str, *, reason: str
+    ) -> bool:
+        """Fail a legacy waiting task whose approval has no durable action receipt."""
+        if any(type(value) is not str for value in (task_id, approval_id, reason)):
+            raise ValueError("legacy task failure fields must be strings")
+        if not task_id.strip() or not approval_id.strip() or not reason.strip():
+            raise ValueError("legacy task failure fields are required")
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self._conn.execute(
+                    "SELECT status,result_json FROM tasks WHERE task_id=?",
+                    (task_id,),
+                ).fetchone()
+                action = self._conn.execute(
+                    "SELECT 1 FROM task_approval_actions "
+                    "WHERE task_id=? AND approval_id=?",
+                    (task_id, approval_id),
+                ).fetchone()
+                if task is None or task["status"] != "waiting_approval" or action:
+                    self._conn.rollback()
+                    return False
+                try:
+                    result = json.loads(task["result_json"] or "{}")
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("legacy task result contains malformed JSON") from exc
+                self._task_action_json(result, "legacy task result")
+                pending = result.get("pending_approvals") if type(result) is dict else None
+                if type(pending) is not list or not any(
+                    type(item) is dict and item.get("approval_id") == approval_id
+                    for item in pending
+                ):
+                    self._conn.rollback()
+                    return False
+                updated = self._conn.execute(
+                    "UPDATE tasks SET status='failed',error=?,output=?,updated_ts=? "
+                    "WHERE task_id=? AND status='waiting_approval'",
+                    (reason, reason, now, task_id),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError("legacy task failure lost its state race")
+                self._conn.execute(
+                    "UPDATE approvals SET status='rejected',resolved_at=? "
+                    "WHERE approval_id=? AND status='pending'",
+                    (now, approval_id),
+                )
+                self._conn.commit()
+                return True
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def list_task_approval_actions(
+        self, *, approval_id: str = "", status: str = ""
+    ) -> list[dict]:
+        clauses: list[str] = []
+        values: list[object] = []
+        if approval_id:
+            clauses.append("approval_id=?")
+            values.append(approval_id)
+        if status:
+            clauses.append("status=?")
+            values.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
+                "idempotency_key,provider_idempotent,status,receipt_json,error,"
+                "created_ts,updated_ts FROM task_approval_actions" + where
+                + " ORDER BY created_ts,task_id",
+                values,
+            ).fetchall()
+        out: list[dict] = []
+        for row in rows:
+            item = dict(row)
+            item["args"] = json.loads(item.pop("args_json") or "{}")
+            item["receipt"] = json.loads(item.pop("receipt_json") or "{}")
+            item["provider_idempotent"] = bool(item["provider_idempotent"])
+            out.append(item)
+        return out
+
+    def has_task_approval_action(self, approval_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM task_approval_actions WHERE approval_id=? LIMIT 1",
+                (approval_id,),
+            ).fetchone()
+        return row is not None
+
+    def claim_task_approval_action(
+        self,
+        approval_id: str,
+        *,
+        signatures: list[dict],
+        approved_by: str,
+        approval_notes: str,
+    ) -> bool:
+        """Compatibility wrapper that cannot bypass the persisted threshold."""
+        encoded = self._task_action_json(signatures, "approval signatures")
+        supplied = self._decode_approval_signatures(encoded)
+        role = next(
+            (
+                item["role"]
+                for item in reversed(supplied)
+                if item["approved_by"] == approved_by
+            ),
+            "",
+        )
+        result = self.approve_with_signature(
+            approval_id,
+            approved_by,
+            approval_notes,
+            role,
+        )
+        return bool(
+            result.get("accepted")
+            and result.get("fully_approved")
+            and result.get("task_claimed")
+        )
+
+    def _reconcile_task_actions_locked(self, task_ids: set[str]) -> dict:
+        transitions: list[dict] = []
+        cancelled_approvals: set[str] = set()
+        now = time.time()
+        for task_id in task_ids:
+            task = self._conn.execute(
+                "SELECT status,result_json FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if task is None:
+                continue
+            actions = self._conn.execute(
+                "SELECT approval_id,status,receipt_json,error FROM task_approval_actions "
+                "WHERE task_id=? ORDER BY created_ts,approval_id",
+                (task_id,),
+            ).fetchall()
+            statuses = {row["status"] for row in actions}
+            failed = statuses & {"failed", "rejected", "manual_reconciliation"}
+            if failed:
+                pending = [
+                    row["approval_id"] for row in actions
+                    if row["status"] == "pending_approval"
+                ]
+                if pending:
+                    marks = ",".join("?" for _ in pending)
+                    self._conn.execute(
+                        "UPDATE task_approval_actions SET status='cancelled',updated_ts=? "
+                        f"WHERE task_id=? AND approval_id IN ({marks}) "
+                        "AND status='pending_approval'",
+                        [now, task_id, *pending],
+                    )
+                    for other_id in pending:
+                        active_elsewhere = self._conn.execute(
+                            "SELECT 1 FROM task_approval_actions WHERE approval_id=? "
+                            "AND status='pending_approval' LIMIT 1",
+                            (other_id,),
+                        ).fetchone()
+                        if active_elsewhere is None:
+                            self._conn.execute(
+                                "UPDATE approvals SET status='rejected',resolved_at=? "
+                                "WHERE approval_id=? AND status='pending'",
+                                (now, other_id),
+                            )
+                            cancelled_approvals.add(other_id)
+                new_status = "failed"
+            elif actions and statuses <= {"completed"}:
+                new_status = "completed"
+            else:
+                new_status = "waiting_approval"
+            result = json.loads(task["result_json"] or "{}")
+            if not isinstance(result, dict):
+                result = {}
+            current = self._conn.execute(
+                "SELECT approval_id,status,receipt_json,error FROM task_approval_actions "
+                "WHERE task_id=? ORDER BY created_ts,approval_id",
+                (task_id,),
+            ).fetchall()
+            pending_ids = {
+                row["approval_id"] for row in current
+                if row["status"] in {"pending_approval", "pending_execution"}
+            }
+            result["pending_approvals"] = [
+                item for item in result.get("pending_approvals", [])
+                if isinstance(item, dict) and item.get("approval_id") in pending_ids
+            ]
+            result["approval_actions"] = [
+                {
+                    "approval_id": row["approval_id"],
+                    "status": row["status"],
+                    "receipt": json.loads(row["receipt_json"] or "{}"),
+                    "error": row["error"],
+                }
+                for row in current
+            ]
+            outputs = [
+                str(json.loads(row["receipt_json"] or "{}").get("output", ""))
+                for row in current if row["status"] == "completed"
+            ]
+            errors = [row["error"] for row in current if row["error"]]
+            display_output = "\n".join(value for value in outputs if value)
+            if not display_output and errors:
+                display_output = "; ".join(errors)
+            old_status = task["status"]
+            self._conn.execute(
+                "UPDATE tasks SET status=?,result_json=?,output=?,error=?,updated_ts=? "
+                "WHERE task_id=?",
+                (
+                    new_status,
+                    self._task_action_json(result, "task result"),
+                    display_output,
+                    "; ".join(errors),
+                    now,
+                    task_id,
+                ),
+            )
+            transitions.append(
+                {"task_id": task_id, "old_status": old_status, "new_status": new_status}
+            )
+        return {
+            "transitions": transitions,
+            "cancelled_approvals": sorted(cancelled_approvals),
+        }
+
+    def finish_task_approval_action(
+        self,
+        approval_id: str,
+        *,
+        status: str,
+        output: str = "",
+        error: str = "",
+    ) -> dict:
+        if status not in {"completed", "failed", "manual_reconciliation"}:
+            raise ValueError("invalid terminal task approval action status")
+        receipt_json = self._task_action_json(
+            {"output": output} if status == "completed" else {}, "task effect receipt"
+        )
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                rows = self._conn.execute(
+                    "SELECT task_id FROM task_approval_actions "
+                    "WHERE approval_id=? AND status='pending_execution'",
+                    (approval_id,),
+                ).fetchall()
+                if not rows:
+                    self._conn.rollback()
+                    return {"transitions": [], "cancelled_approvals": []}
+                self._conn.execute(
+                    "UPDATE task_approval_actions SET status=?,receipt_json=?,error=?,updated_ts=? "
+                    "WHERE approval_id=? AND status='pending_execution'",
+                    (status, receipt_json, error, now, approval_id),
+                )
+                result = self._reconcile_task_actions_locked(
+                    {row["task_id"] for row in rows}
+                )
+                self._conn.commit()
+                return result
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def reject_task_approval_action(
+        self,
+        approval_id: str,
+        *,
+        reason: str = "approval rejected",
+        approval_status: str = "rejected",
+    ) -> dict:
+        if approval_status not in {"rejected", "expired"}:
+            raise ValueError("invalid terminal approval status")
+        if type(reason) is not str or not reason:
+            raise ValueError("task approval rejection reason is required")
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                rows = self._conn.execute(
+                    "SELECT task_id FROM task_approval_actions "
+                    "WHERE approval_id=? AND status='pending_approval'",
+                    (approval_id,),
+                ).fetchall()
+                if not rows:
+                    self._conn.rollback()
+                    return {"transitions": [], "cancelled_approvals": []}
+                self._conn.execute(
+                    "UPDATE approvals SET status=?,resolved_at=? "
+                    "WHERE approval_id=? AND status='pending'",
+                    (approval_status, now, approval_id),
+                )
+                self._conn.execute(
+                    "UPDATE task_approval_actions SET status='rejected',error=?,"
+                    "updated_ts=? WHERE approval_id=? AND status='pending_approval'",
+                    (reason, now, approval_id),
+                )
+                result = self._reconcile_task_actions_locked(
+                    {row["task_id"] for row in rows}
+                )
+                self._conn.commit()
+                return result
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def cancel_task_approval_actions(self, task_id: str) -> bool:
+        """Cancel a task and its unclaimed actions; never race an in-flight effect."""
+        now = time.time()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                task = self._conn.execute(
+                    "SELECT status FROM tasks WHERE task_id=?", (task_id,)
+                ).fetchone()
+                if task is None or task["status"] in {"completed", "failed", "cancelled"}:
+                    self._conn.rollback()
+                    return False
+                in_flight = self._conn.execute(
+                    "SELECT 1 FROM task_approval_actions WHERE task_id=? "
+                    "AND status='pending_execution' LIMIT 1",
+                    (task_id,),
+                ).fetchone()
+                if in_flight is not None:
+                    self._conn.rollback()
+                    return False
+                approvals = [
+                    row["approval_id"] for row in self._conn.execute(
+                        "SELECT approval_id FROM task_approval_actions WHERE task_id=? "
+                        "AND status='pending_approval'",
+                        (task_id,),
+                    ).fetchall()
+                ]
+                self._conn.execute(
+                    "UPDATE task_approval_actions SET status='cancelled',updated_ts=? "
+                    "WHERE task_id=? AND status='pending_approval'",
+                    (now, task_id),
+                )
+                for approval_id in approvals:
+                    active_elsewhere = self._conn.execute(
+                        "SELECT 1 FROM task_approval_actions WHERE approval_id=? "
+                        "AND status='pending_approval' LIMIT 1",
+                        (approval_id,),
+                    ).fetchone()
+                    if active_elsewhere is None:
+                        self._conn.execute(
+                            "UPDATE approvals SET status='rejected',resolved_at=? "
+                            "WHERE approval_id=? AND status='pending'",
+                            (now, approval_id),
+                        )
+                updated = self._conn.execute(
+                    "UPDATE tasks SET status='cancelled',updated_ts=? WHERE task_id=?",
+                    (now, task_id),
+                )
+                self._conn.commit()
+                return updated.rowcount == 1
+            except Exception:
+                self._conn.rollback()
+                raise
 
     # ------------------------------------------------------------ KB sources
     @staticmethod

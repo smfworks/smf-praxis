@@ -96,6 +96,30 @@ def test_task_lifecycle(capsys):
     assert _run(["task-cancel", tid]) == 0
 
 
+def test_cli_task_approval_completes_task(capsys):
+    assert _run(["task-create", "Prepare a customer follow-up email"]) == 0
+    import re
+    task_match = re.search(r"task-[0-9a-f]{10}", capsys.readouterr().out)
+    assert task_match is not None
+    tid = task_match.group(0)
+    assert _run(["task-run", tid]) == 0
+    assert "waiting_approval" in capsys.readouterr().out
+    assert _run(["approvals"]) == 0
+    approval_match = re.search(
+        r"appr-[0-9a-f]{8}", capsys.readouterr().out
+    )
+    assert approval_match is not None
+    approval_id = approval_match.group(0)
+
+    assert _run(["approve", approval_id, "--approved-by", "michael"]) == 0
+    approval_output = capsys.readouterr().out
+    assert "task-bound approval requires daemon execution" not in approval_output
+    assert _run(["tasks"]) == 0
+    tasks_output = capsys.readouterr().out
+    assert tid in tasks_output
+    assert f"{tid} [completed]" in tasks_output
+
+
 def test_ingest_recall_ask(capsys, tmp_path):
     doc = tmp_path / "fin.md"
     doc.write_text("AdventHealth Q3 revenue grew 12 percent on inpatient volume.",

@@ -1,7 +1,11 @@
 """Tests for the Goal Runner (H10) — Level 1 autonomous loop."""
 from __future__ import annotations
 
+from hybridagent.checkpoints import CheckpointRegistry
 from hybridagent.goal_runner import GoalRunner
+from hybridagent.organizations import OrganizationDirectory
+from hybridagent.persistence import Store
+from hybridagent.workspaces import WorkspaceDirectory
 
 
 class _FakeAgent:
@@ -107,3 +111,58 @@ def test_goal_loop_max_turns_guardrail():
     result = runner.run("goal")
     assert result.n_turns == 2
     assert result.stopped_reason == "max_turns"
+
+
+def _durable_scope(tmp_path):
+    store = Store(tmp_path / "praxis.db")
+    org, owner = OrganizationDirectory(store).bootstrap("Practice", "owner@example.com")
+    workspace = WorkspaceDirectory(store).create(
+        org.organization_id, "MAT-1", "matter", "Matter", owner_user_id=owner.user_id)
+    checkpoints = CheckpointRegistry(store)
+    run = checkpoints.create_run(
+        org.organization_id, workspace.workspace_id, kind="goal",
+        created_by=owner.user_id, state={"goal": "work", "turns": []},
+        schema_manifest={"name": "goal-runner", "version": 1})
+    return checkpoints, run, org.organization_id, workspace.workspace_id, owner.user_id
+
+
+def test_durable_goal_runner_checkpoints_completed_turn(tmp_path):
+    checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    runner = GoalRunner(
+        _FakeAgent(["done"]), max_turns=2,
+        verifier=_AlwaysApproveVerifier(), threshold=1.0,
+        checkpoints=checkpoints, organization_id=org_id,
+        workspace_id=workspace_id, run_id=run.run_id, actor_id=actor_id)
+    result = runner.run("work")
+    latest = checkpoints.latest(org_id, workspace_id, run.run_id)
+    assert result.stopped_reason == "approved"
+    assert latest is not None
+    assert latest.state["turns"][0]["verdict"] == "approved"
+    assert latest.state["stopped_reason"] == "approved"
+
+
+def test_durable_goal_runner_interrupts_for_held_approval(tmp_path):
+    checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    runner = GoalRunner(
+        _FakeAgent(["held"], pending=[{"approval_id": "a1"}]),
+        verifier=_AlwaysApproveVerifier(), threshold=1.0,
+        checkpoints=checkpoints, organization_id=org_id,
+        workspace_id=workspace_id, run_id=run.run_id, actor_id=actor_id)
+    runner.run("work")
+    durable = checkpoints.get_run(org_id, workspace_id, run.run_id)
+    assert durable is not None and durable.status == "interrupted"
+    assert durable.interrupt_type == "approval"
+    assert durable.interrupt_payload == {"approval_ids": ["a1"], "turn": 1}
+
+
+def test_durable_goal_runner_honors_preexisting_cancellation(tmp_path):
+    checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    checkpoints.cancel(org_id, workspace_id, run.run_id,
+                       actor_id=actor_id, reason="operator stop")
+    agent = _FakeAgent(["must not execute"])
+    result = GoalRunner(
+        agent, checkpoints=checkpoints, organization_id=org_id,
+        workspace_id=workspace_id, run_id=run.run_id, actor_id=actor_id).run("work")
+    assert result.stopped_reason == "cancelled"
+    assert result.n_turns == 0
+    assert agent._summaries == ["must not execute"]

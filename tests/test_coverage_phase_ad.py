@@ -2,6 +2,7 @@
 feature/regression tests skipped so the 80% CI gate holds. These assert real
 behavior, not just line execution."""
 
+import sys
 
 from hybridagent import config as cfg
 
@@ -38,7 +39,11 @@ def test_sandbox_local_timeout(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     from hybridagent.sandbox import run
     # a sleep longer than the timeout returns exit 124 (timeout), not a hang
-    r = run(["python", "-c", "import time; time.sleep(5)"], backend="local", timeout=1)
+    r = run(
+        [sys.executable, "-c", "import time; time.sleep(5)"],
+        backend="local",
+        timeout=1,
+    )
     assert r.exit_code == 124 and not r.ok
 
 
