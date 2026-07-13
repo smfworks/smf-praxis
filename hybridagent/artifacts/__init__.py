@@ -17,6 +17,15 @@ from hybridagent.artifacts.models import (
     SourceManifestEntry,
     TableBlock,
 )
+from hybridagent.artifacts.render_common import (
+    ArtifactRenderError,
+    MissingArtifactBackendError,
+)
+from hybridagent.artifacts.renderers import (
+    extension_for,
+    render_artifact,
+    supported_formats,
+)
 from hybridagent.artifacts.validation import (
     ArtifactValidationError,
     ValidationIssue,
@@ -29,11 +38,13 @@ __all__ = [
     "SCHEMA_VERSION",
     "ArtifactDocument",
     "ArtifactModelError",
+    "ArtifactRenderError",
     "ArtifactValidationError",
     "Citation",
     "DocumentMetadata",
     "FigureBlock",
     "ListBlock",
+    "MissingArtifactBackendError",
     "PageBreakBlock",
     "ParagraphBlock",
     "ReviewRecord",
@@ -44,6 +55,9 @@ __all__ = [
     "TableBlock",
     "ValidationIssue",
     "ValidationReport",
+    "extension_for",
+    "render_artifact",
+    "supported_formats",
     "validate_document",
     "validate_or_raise",
 ]
