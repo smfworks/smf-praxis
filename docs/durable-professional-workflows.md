@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.8`)
+Status: Phase 4 release candidate (`0.26.9`)
 
 ## Scope
 
@@ -142,4 +142,4 @@ python3 -m hybridagent.cli demo
 python3 scripts/check_architecture.py
 ```
 
-The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. The `0.26.8` candidate passes 1,203 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 121 PP40 contracts, 1,214 total tests with 17 expected skips at 81.82% coverage, 40/40 capability evals, static and architecture checks, semantic demo, populated `v0.25.20` and real isolated `v0.26.6` migrations, artifact/install verification, rebuilt-container dashboard smoke, and added-line security scanning. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
+The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. The `0.26.9` candidate passes 1,203 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 121 PP40 contracts, 1,214 total tests with 17 expected skips at 81.81% coverage, 40/40 capability evals, static and architecture checks, semantic demo, populated `v0.25.20` and real isolated `v0.26.6` migrations, artifact/install verification, rebuilt-container dashboard smoke, and added-line security scanning. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.

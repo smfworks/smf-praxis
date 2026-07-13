@@ -88,6 +88,84 @@ FOR EACH ROW WHEN NEW.status NOT IN ('pending','approved','rejected','expired')
 BEGIN
     SELECT RAISE(ABORT, 'invalid approval status');
 END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_required_valid_insert
+BEFORE INSERT ON approvals
+FOR EACH ROW
+WHEN typeof(NEW.required_approvals) != 'integer' OR NEW.required_approvals < 1
+BEGIN
+    SELECT RAISE(ABORT, 'invalid required approval count');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_required_valid_update
+BEFORE UPDATE OF required_approvals ON approvals
+FOR EACH ROW
+WHEN typeof(NEW.required_approvals) != 'integer' OR NEW.required_approvals < 1
+BEGIN
+    SELECT RAISE(ABORT, 'invalid required approval count');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_signatures_valid_insert
+BEFORE INSERT ON approvals
+FOR EACH ROW
+WHEN json_valid(NEW.signatures_json) != 1
+    OR json_type(NEW.signatures_json) IS NOT 'array'
+    OR EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE signature.type != 'object'
+            OR (SELECT COUNT(*) FROM json_each(signature.value)) != 4
+            OR (SELECT COUNT(DISTINCT field.key)
+                FROM json_each(signature.value) AS field) != 4
+            OR EXISTS (
+                SELECT 1 FROM json_each(signature.value) AS field
+                WHERE field.key NOT IN ('approved_by','role','notes','ts')
+            )
+            OR COALESCE(json_type(signature.value, '$.approved_by'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.role'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.notes'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.ts'), '') NOT IN ('integer','real')
+            OR abs(CAST(json_extract(signature.value, '$.ts') AS REAL))
+               > 1.7976931348623157e308
+    )
+    OR (SELECT COUNT(DISTINCT json_extract(signature.value, '$.approved_by'))
+        FROM json_each(NEW.signatures_json) AS signature)
+       != json_array_length(NEW.signatures_json)
+    OR (NEW.required_approvals > 1 AND EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE trim(json_extract(signature.value, '$.approved_by')) = ''
+    ))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid approval signatures');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_approvals_signatures_valid_update
+BEFORE UPDATE OF signatures_json,required_approvals ON approvals
+FOR EACH ROW
+WHEN json_valid(NEW.signatures_json) != 1
+    OR json_type(NEW.signatures_json) IS NOT 'array'
+    OR EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE signature.type != 'object'
+            OR (SELECT COUNT(*) FROM json_each(signature.value)) != 4
+            OR (SELECT COUNT(DISTINCT field.key)
+                FROM json_each(signature.value) AS field) != 4
+            OR EXISTS (
+                SELECT 1 FROM json_each(signature.value) AS field
+                WHERE field.key NOT IN ('approved_by','role','notes','ts')
+            )
+            OR COALESCE(json_type(signature.value, '$.approved_by'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.role'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.notes'), '') != 'text'
+            OR COALESCE(json_type(signature.value, '$.ts'), '') NOT IN ('integer','real')
+            OR abs(CAST(json_extract(signature.value, '$.ts') AS REAL))
+               > 1.7976931348623157e308
+    )
+    OR (SELECT COUNT(DISTINCT json_extract(signature.value, '$.approved_by'))
+        FROM json_each(NEW.signatures_json) AS signature)
+       != json_array_length(NEW.signatures_json)
+    OR (NEW.required_approvals > 1 AND EXISTS (
+        SELECT 1 FROM json_each(NEW.signatures_json) AS signature
+        WHERE trim(json_extract(signature.value, '$.approved_by')) = ''
+    ))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid approval signatures');
+END;
 CREATE TRIGGER IF NOT EXISTS trg_approvals_threshold_insert
 BEFORE INSERT ON approvals
 FOR EACH ROW
@@ -1165,6 +1243,24 @@ class Store:
                         required_approvals: int = 1,
                         organization_id: str = "") -> None:
         """Insert a new approval without replacing an existing immutable decision."""
+        text_fields = (
+            approval_id, tool, preview, provenance, cycle_id, decision_id,
+            rationale, organization_id,
+        )
+        if any(type(value) is not str for value in text_fields):
+            raise ValueError("approval identity and text fields must be strings")
+        if not approval_id.strip() or not tool.strip():
+            raise ValueError("approval id and tool are required")
+        if type(args) is not dict:
+            raise ValueError("approval args must be an exact dict")
+        if evidence is not None and type(evidence) is not list:
+            raise ValueError("approval evidence must be an exact list")
+        if type(required_approvals) is not int or required_approvals < 1:
+            raise ValueError("approval requires a positive integer threshold")
+        if expires_at is not None and (
+            type(expires_at) not in {int, float} or not math.isfinite(float(expires_at))
+        ):
+            raise ValueError("approval expiry must be a finite number or null")
         args_json = self._task_action_json(args, "approval args")
         evidence_json = self._task_action_json(evidence or [], "approval evidence")
         with self._lock:
