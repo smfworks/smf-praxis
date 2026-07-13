@@ -793,13 +793,34 @@ WHEN (NEW.run_id <> '' AND NOT EXISTS (
 BEGIN
     SELECT RAISE(ABORT, 'invalid review request or run scope');
 END;
-CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_decision_update
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_decision_update_v2
 BEFORE UPDATE ON professional_reviews
 WHEN OLD.status <> 'pending'
   OR NEW.status <> 'decided'
   OR NEW.decision NOT IN ('approved','revise','rejected')
   OR NEW.reviewer_user_id = OLD.created_by
   OR NEW.reviewed_ts IS NULL
+  OR CASE WHEN json_valid(NEW.decision_payload_json)
+          THEN json_type(NEW.decision_payload_json) <> 'object'
+          ELSE 1 END
+  OR NOT EXISTS (
+      SELECT 1
+      FROM professional_workspaces w
+      JOIN organizations o ON o.organization_id=w.organization_id
+      JOIN organization_memberships m ON m.organization_id=w.organization_id
+      JOIN organization_users u ON u.user_id=m.user_id
+      WHERE w.organization_id=OLD.organization_id
+        AND w.workspace_id=OLD.workspace_id
+        AND w.status='active'
+        AND o.status='active'
+        AND m.user_id=NEW.reviewer_user_id
+        AND m.status='active'
+        AND u.status='active'
+        AND EXISTS (
+            SELECT 1 FROM json_each(m.roles_json)
+            WHERE value=OLD.required_role
+        )
+  )
   OR NEW.review_id IS NOT OLD.review_id
   OR NEW.organization_id IS NOT OLD.organization_id
   OR NEW.workspace_id IS NOT OLD.workspace_id

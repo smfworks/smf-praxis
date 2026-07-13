@@ -156,6 +156,7 @@ class PlanExecutor:
         report = ExecutionReport(goal=goal, steps=list(steps))
         cycle_id = f"plan-{uuid.uuid4().hex[:10]}"
         durable_state = self._load_durable_state(goal, report)
+        report.replans = durable_state["replans"]
         self._emit(
             report,
             "plan",
@@ -182,9 +183,13 @@ class PlanExecutor:
         for step in report.steps:
             if step.status == DONE:
                 done.add(step.id)
-            elif step.status in (HELD, DENIED, FAILED, SKIPPED, REPLANNED, SUPERSEDED):
+            elif step.status == HELD:
                 blocked.add(step.id)
-        replans_left = self.max_replans
+                if held_step is None:
+                    held_step = step
+            elif step.status in (DENIED, FAILED, SKIPPED, REPLANNED, SUPERSEDED):
+                blocked.add(step.id)
+        replans_left = max(0, self.max_replans - report.replans)
         executed = len(done)
         guard = 0
         while True:
@@ -296,7 +301,6 @@ class PlanExecutor:
         durable_state: dict[str, Any],
     ) -> str:
         step.status = RUNNING
-        self._checkpoint_report(goal, report, durable_state)
         tool = self.registry.get(step.tool)
         if tool is None:
             step.status, step.output = FAILED, f"unknown tool '{step.tool}'"
@@ -334,6 +338,8 @@ class PlanExecutor:
         if decision.verdict is Verdict.ALLOW:
             if not self._prepare_consequential_allow(step, tool, report, goal, durable_state):
                 return FAILED
+            if tool.risk.value not in {"send", "destructive"}:
+                self._checkpoint_report(goal, report, durable_state)
             try:
                 step.output = str(tool.run(**step.args))
             except Exception as exc:  # a tool failure is a step failure, not a crash
@@ -439,8 +445,6 @@ class PlanExecutor:
             except Exception:  # UI/trace plumbing must never break execution
                 pass
     def _initial_steps(self, goal: str, steps: "list[PlanStep] | None") -> list[PlanStep]:
-        if steps is not None:
-            return steps
         if self.checkpoints is not None:
             latest = self.checkpoints.latest(self.organization_id, self.workspace_id, self.run_id)
             if latest is not None:
@@ -451,6 +455,8 @@ class PlanExecutor:
                     restored = [self._deserialize_step(item) for item in persisted_steps]
                     self._reconcile_restored_steps(restored, latest.state)
                     return restored
+        if steps is not None:
+            return steps
         return to_plan_steps(self.planner.plan(goal).steps)
 
     def _reconcile_restored_steps(self, steps: list[PlanStep], state: dict[str, Any]) -> None:
@@ -485,8 +491,32 @@ class PlanExecutor:
             elif step.status == HELD and approval and approval.get("status") == "approved":
                 step.status = FAILED
                 step.output = "approved action no longer matches persisted step"
+            if step.status == PENDING and entry.get("status") == "pending_approval":
+                pending_tool = self.registry.get(step.tool)
+                pending_effect_type = (
+                    step.tool
+                    if pending_tool is None
+                    else (getattr(pending_tool, "effect_type", "") or step.tool)
+                )
+                if (
+                    approved_action
+                    and entry.get("tool") == step.tool
+                    and entry.get("effect_type") == pending_effect_type
+                    and entry.get("args") == step.args
+                ):
+                    self.broker.allow_tool_once(step.tool)
             if step.status != RUNNING:
                 continue
+            tool = self.registry.get(step.tool)
+            effect_type = (
+                step.tool if tool is None else (getattr(tool, "effect_type", "") or step.tool)
+            )
+            entry_matches = bool(
+                entry
+                and entry.get("tool") == step.tool
+                and entry.get("effect_type") == effect_type
+                and entry.get("args") == step.args
+            )
             idempotency_key = entry.get("idempotency_key")
             if isinstance(idempotency_key, str) and idempotency_key:
                 assert self.checkpoints is not None
@@ -494,12 +524,33 @@ class PlanExecutor:
                     self.organization_id, self.workspace_id, self.run_id, idempotency_key
                 )
                 if receipt is not None:
-                    step.status = DONE
-                    step.output = str(receipt.result.get("output", ""))
+                    expected_fingerprint = CheckpointRegistry.effect_fingerprint(
+                        effect_type, step.args
+                    )
+                    if not entry_matches or receipt.fingerprint != expected_fingerprint:
+                        step.status = FAILED
+                        step.output = "idempotency key conflicts with the persisted action"
+                    else:
+                        step.status = DONE
+                        step.output = str(receipt.result.get("output", ""))
                     continue
-            tool = self.registry.get(step.tool)
+            entry_status = entry.get("status")
+            if entry_status == "pending_approval":
+                if approved_action and entry_matches:
+                    self.broker.allow_tool_once(step.tool)
+                    step.status = PENDING
+                elif approval and approval.get("status") in {"rejected", "expired"}:
+                    step.status = DENIED
+                    step.output = f"approval {approval['status']}"
+                elif approval and approval.get("status") == "approved":
+                    step.status = FAILED
+                    step.output = "approved action no longer matches persisted step"
+                else:
+                    step.status = HELD
+                continue
             provider_retry = (
-                entry.get("status") == "pending_execution"
+                entry_status == "pending_execution"
+                and entry_matches
                 and entry.get("requires_provider_idempotency") is True
                 and isinstance(idempotency_key, str)
                 and bool(idempotency_key)
@@ -511,6 +562,8 @@ class PlanExecutor:
                 step.status = FAILED
                 step.output = "manual reconciliation requires the durable approved action"
             elif tool is not None and tool.risk.value in {"read", "draft"}:
+                step.status = PENDING
+            elif not entry and tool is not None and tool.risk.value in {"send", "destructive"}:
                 step.status = PENDING
             else:
                 step.status = FAILED
@@ -536,6 +589,7 @@ class PlanExecutor:
             "outbox": [],
             "effect_receipts": [],
             "delivery_semantics": {},
+            "replans": 0,
         }
         if self.checkpoints is None:
             return state
@@ -553,6 +607,11 @@ class PlanExecutor:
         semantics = latest.state.get("delivery_semantics")
         if isinstance(semantics, dict):
             state["delivery_semantics"] = dict(semantics)
+        replans = latest.state.get("replans", 0)
+        if type(replans) is not int or replans < 0:
+            raise ValueError("persisted replan count is invalid")
+        state["replans"] = replans
+        steps_by_id = {step.id: step for step in report.steps}
         for item in list(state["outbox"]):
             if not isinstance(item, dict):
                 continue
@@ -564,6 +623,20 @@ class PlanExecutor:
                 self.organization_id, self.workspace_id, self.run_id, key
             )
             if receipt is None:
+                continue
+            step = steps_by_id.get(step_id)
+            tool = None if step is None else self.registry.get(step.tool)
+            effect_type = "" if step is None else (
+                step.tool if tool is None else (getattr(tool, "effect_type", "") or step.tool)
+            )
+            if (
+                step is None
+                or item.get("tool") != step.tool
+                or item.get("effect_type") != effect_type
+                or item.get("args") != step.args
+                or receipt.fingerprint
+                != CheckpointRegistry.effect_fingerprint(effect_type, step.args)
+            ):
                 continue
             completed = dict(item)
             completed["status"] = "completed"
@@ -639,6 +712,7 @@ class PlanExecutor:
             "steps": [self._serialize_step(step) for step in report.steps],
             "outbox": list(durable_state.get("outbox", [])),
             "effect_receipts": list(durable_state.get("effect_receipts", [])),
+            "replans": report.replans,
         }
         if durable_state.get("delivery_semantics"):
             payload["delivery_semantics"] = dict(durable_state["delivery_semantics"])

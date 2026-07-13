@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.4`)
+Status: Phase 4 release candidate (`0.26.5`)
 
 ## Scope
 
@@ -56,7 +56,7 @@ A durable executor requires all of:
 - `run_id`;
 - `actor_id`.
 
-It checkpoints the plan and every step transition. Restart reconstruction preserves completed work and evaluates held or interrupted work as follows:
+It checkpoints the plan and every durable step transition. Persisted progress always takes precedence over caller-reconstructed `steps`; the caller may supply steps only for a run whose durable seed has not initialized execution state. Replan generation and consumed budget are checkpointed, so restarts cannot reset the budget or reuse generated step IDs. Restart reconstruction preserves completed work and evaluates held or interrupted work as follows:
 
 - `done`: never re-executed;
 - `held`: remains held unless its durable approval is `approved` and exactly matches organization, tool, and arguments;
@@ -73,7 +73,7 @@ Praxis does **not** claim exactly-once network execution.
 The protocol is:
 
 1. validate and authorize the exact action;
-2. persist an immutable checkpoint containing a `pending_execution` intent;
+2. persist an immutable checkpoint containing a `pending_execution` intent; a step is not durably `running` before that intent exists;
 3. call the external provider with its idempotency key when available;
 4. persist an immutable effect receipt;
 5. checkpoint the completed outbox entry and receipt reference.
@@ -81,7 +81,7 @@ The protocol is:
 Two crash windows are handled explicitly:
 
 - **Provider accepted, receipt absent:** retry only when the durable approved action and provider idempotency key match. Delivery is provider-idempotent at-least-once.
-- **Receipt committed, completion checkpoint absent:** reconstruct completion from the immutable receipt without calling the provider again.
+- **Receipt committed, completion checkpoint absent:** reconstruct completion only when the receipt fingerprint exactly matches the current effect type and strict-JSON arguments; otherwise fail closed without calling the provider.
 
 Providers without idempotency support require manual reconciliation after an ambiguous crash.
 
@@ -99,7 +99,9 @@ Supported decisions:
 - `revise`;
 - `rejected`.
 
-A review is organization/workspace scoped, role bound, strict-JSON validated, and maker-checker separated. The reviewer must be an active member with the required role and must differ from the creator.
+A review is organization/workspace scoped, role bound, strict-JSON validated, and maker-checker separated. The reviewer must be an active user and active member with the exact required role and must differ from the creator. These authorization and object-payload requirements are enforced in both application transactions and SQLite triggers.
+
+`research_findings` reviews additionally require an exact research run schema, an immutable expected head, and a pending-review checkpoint bound to the same review and run. Invalid combinations fail before any review, checkpoint, or interrupt is committed.
 
 Decision submission uses `BEGIN IMMEDIATE` and a pending-only conditional update. Across concurrent processes, exactly one decision wins. Database triggers enforce run-scope matching, prohibit self-review, prevent changes after decision, and prevent deletion.
 
@@ -107,7 +109,7 @@ Creating a normal run-backed review and interrupting its run occurs in one trans
 
 ## Research supervision
 
-`ResearchSupervisor` stores:
+`ResearchSupervisor` requires an active user and active workspace membership for reads and revalidates that authorization inside each winning write transaction. It validates the complete initial state before creating a durable run and stores:
 
 - the query;
 - hypotheses;

@@ -83,6 +83,17 @@ class CheckpointRegistry:
             conn = self.store._conn
             try:
                 conn.execute("BEGIN IMMEDIATE")
+                active = conn.execute(
+                    "SELECT 1 FROM professional_workspaces w JOIN organizations o ON "
+                    "o.organization_id=w.organization_id JOIN organization_memberships m ON "
+                    "m.organization_id=w.organization_id JOIN organization_users u ON "
+                    "u.user_id=m.user_id WHERE w.organization_id=? AND w.workspace_id=? "
+                    "AND w.status='active' AND o.status='active' AND m.user_id=? "
+                    "AND m.status='active' AND u.status='active'",
+                    (organization_id, workspace_id, created_by),
+                ).fetchone()
+                if active is None:
+                    raise CheckpointError("active workspace membership is required")
                 conn.execute(
                     "INSERT INTO professional_runs(run_id,organization_id,workspace_id,"
                     "kind,status,schema_manifest_json,head_checkpoint_id,created_by,"
@@ -195,6 +206,17 @@ class CheckpointRegistry:
             conn = self.store._conn
             try:
                 conn.execute("BEGIN IMMEDIATE")
+                active = conn.execute(
+                    "SELECT 1 FROM professional_workspaces w JOIN organizations o ON "
+                    "o.organization_id=w.organization_id JOIN organization_memberships m ON "
+                    "m.organization_id=w.organization_id JOIN organization_users u ON "
+                    "u.user_id=m.user_id WHERE w.organization_id=? AND w.workspace_id=? "
+                    "AND w.status='active' AND o.status='active' AND m.user_id=? "
+                    "AND m.status='active' AND u.status='active'",
+                    (organization_id, workspace_id, actor_id),
+                ).fetchone()
+                if active is None:
+                    raise CheckpointError("active workspace membership is required")
                 current = conn.execute(
                     "SELECT head_checkpoint_id,status FROM professional_runs WHERE "
                     "organization_id=? AND workspace_id=? AND run_id=?",
@@ -294,6 +316,14 @@ class CheckpointRegistry:
             organization_id, workspace_id, run_id, actor_id, "failed", cancel_reason=reason.strip()
         )
 
+    @classmethod
+    def effect_fingerprint(cls, effect_type: str, request: dict[str, Any]) -> str:
+        clean_type = effect_type.strip()
+        if not clean_type:
+            raise CheckpointError("effect type is required")
+        request_json = cls._json_object(request, "effect request")
+        return hashlib.sha256((clean_type + "\n" + request_json).encode()).hexdigest()
+
     def record_effect(self, organization_id: str, workspace_id: str, run_id: str, *,
                       actor_id: str, idempotency_key: str, effect_type: str,
                       request: dict[str, Any], result: dict[str, Any]) -> tuple[EffectReceipt, bool]:
@@ -303,10 +333,8 @@ class CheckpointRegistry:
             raise CheckpointError("idempotency key must contain 1 to 256 characters")
         if not effect_type.strip():
             raise CheckpointError("effect type is required")
-        request_json = self._json_object(request, "effect request")
         result_json = self._json_object(result, "effect result")
-        fingerprint = hashlib.sha256(
-            (effect_type.strip() + "\n" + request_json).encode()).hexdigest()
+        fingerprint = self.effect_fingerprint(effect_type, request)
         now = time.time()
         receipt_id = f"effect-{uuid.uuid4().hex}"
         with self.store._lock:
@@ -409,14 +437,21 @@ class CheckpointRegistry:
             raise CheckpointError("run does not exist in workspace")
         return result
 
+    def require_active_scope(
+        self, organization_id: str, workspace_id: str, actor_id: str
+    ) -> None:
+        self._validate_scope(organization_id, workspace_id, actor_id)
+
     def _validate_scope(self, organization_id: str, workspace_id: str,
                         actor_id: str) -> None:
         row = self.store._directory_one(
             "SELECT 1 FROM professional_workspaces w JOIN organizations o ON "
             "o.organization_id=w.organization_id JOIN organization_memberships m ON "
-            "m.organization_id=w.organization_id WHERE w.organization_id=? AND "
+            "m.organization_id=w.organization_id JOIN organization_users u ON "
+            "u.user_id=m.user_id WHERE w.organization_id=? AND "
             "w.workspace_id=? AND w.status='active' AND o.status='active' AND "
-            "m.user_id=? AND m.status='active'", (organization_id, workspace_id, actor_id))
+            "m.user_id=? AND m.status='active' AND u.status='active'",
+            (organization_id, workspace_id, actor_id))
         if row is None:
             raise CheckpointError("active workspace membership is required")
 

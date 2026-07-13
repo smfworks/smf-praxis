@@ -14,6 +14,7 @@ from .persistence import Store
 
 REVIEW_TYPES = frozenset({"quality", "professional_release", "research_findings"})
 REVIEW_DECISIONS = frozenset({"approved", "revise", "rejected"})
+RESEARCH_SCHEMA_MANIFEST = {"name": "research-supervisor", "version": 1}
 REVIEW_ROLES = {
     "quality": frozenset(
         {
@@ -101,6 +102,15 @@ class ReviewRegistry:
             raise ReviewError("run-backed reviews require checkpoints")
         if checkpoint_state is not None and (not run_id or not interrupt_run):
             raise ReviewError("review checkpoint state requires an interrupting run")
+        if rtype == "research_findings" and (
+            not run_id
+            or not interrupt_run
+            or checkpoint_state is None
+            or expected_head_checkpoint_id is None
+        ):
+            raise ReviewError(
+                "research findings review requires a compatible research run and bound checkpoint"
+            )
         review_id = review_id or self.new_review_id()
         if (
             type(review_id) is not str
@@ -112,6 +122,26 @@ class ReviewRegistry:
         base_subject_json = self._json_object(subject, "review subject")
         checkpoint_id = f"checkpoint-{uuid.uuid4().hex}" if checkpoint_state is not None else ""
         subject_payload = json.loads(base_subject_json)
+        if rtype == "research_findings":
+            if (
+                type(checkpoint_state) is not dict
+                or not CheckpointRegistry._is_exact_json(checkpoint_state)
+            ):
+                raise ReviewError("research review checkpoint state is invalid")
+            assert checkpoint_state is not None
+            if subject_payload.get("run_id") != run_id:
+                raise ReviewError("research review subject must match its run")
+            if (
+                type(checkpoint_state.get("query")) is not str
+                or not checkpoint_state["query"].strip()
+                or type(checkpoint_state.get("hypotheses")) is not list
+                or not all(type(item) is str for item in checkpoint_state["hypotheses"])
+                or type(checkpoint_state.get("findings")) is not list
+                or not all(type(item) is dict for item in checkpoint_state["findings"])
+                or checkpoint_state.get("status") != "pending_review"
+                or checkpoint_state.get("review") != {"review_id": review_id}
+            ):
+                raise ReviewError("research review checkpoint state is invalid")
         if checkpoint_id:
             subject_payload["checkpoint_id"] = checkpoint_id
         subject_json = self._json_object(subject_payload, "review subject")
@@ -141,13 +171,19 @@ class ReviewRegistry:
                 run = None
                 if run_id:
                     run = self.store._conn.execute(
-                        "SELECT status,schema_manifest_json,head_checkpoint_id FROM "
+                        "SELECT kind,status,schema_manifest_json,head_checkpoint_id FROM "
                         "professional_runs WHERE organization_id=? AND workspace_id=? "
                         "AND run_id=?",
                         (organization_id, workspace_id, run_id),
                     ).fetchone()
                     if run is None:
                         raise ReviewError("run does not exist in workspace")
+                    if rtype == "research_findings" and (
+                        run["kind"] != "research"
+                        or json.loads(run["schema_manifest_json"])
+                        != RESEARCH_SCHEMA_MANIFEST
+                    ):
+                        raise ReviewError("run is not a compatible research run")
                     if (
                         expected_head_checkpoint_id is not None
                         and run["head_checkpoint_id"] != expected_head_checkpoint_id
@@ -319,6 +355,18 @@ class ReviewRegistry:
 
     @staticmethod
     def _review(row: dict[str, Any]) -> ProfessionalReview:
+        try:
+            subject = json.loads(row["subject_json"])
+            decision_payload = json.loads(row["decision_payload_json"])
+        except (TypeError, ValueError) as exc:
+            raise ReviewError("persisted review payload is invalid") from exc
+        if (
+            type(subject) is not dict
+            or type(decision_payload) is not dict
+            or not CheckpointRegistry._is_exact_json(subject)
+            or not CheckpointRegistry._is_exact_json(decision_payload)
+        ):
+            raise ReviewError("persisted review payload is invalid")
         return ProfessionalReview(
             review_id=row["review_id"],
             organization_id=row["organization_id"],
@@ -326,10 +374,10 @@ class ReviewRegistry:
             run_id=row["run_id"],
             review_type=row["review_type"],
             required_role=row["required_role"],
-            subject=json.loads(row["subject_json"]),
+            subject=subject,
             status=row["status"],
             decision=row["decision"],
-            decision_payload=json.loads(row["decision_payload_json"]),
+            decision_payload=decision_payload,
             created_by=row["created_by"],
             reviewer_user_id=row["reviewer_user_id"],
             created_ts=float(row["created_ts"]),

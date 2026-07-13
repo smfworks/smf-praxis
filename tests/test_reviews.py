@@ -296,3 +296,110 @@ def test_run_backed_review_request_is_atomic_with_interrupt(tmp_path):
         "SELECT COUNT(*) AS n FROM professional_reviews WHERE run_id=?", (run.run_id,)
     )
     assert row is not None and row["n"] == 0
+
+
+def test_research_review_requires_compatible_bound_checkpoint(tmp_path):
+    from hybridagent.research_run import RESEARCH_SCHEMA_MANIFEST, ResearchSupervisor
+    from hybridagent.reviews import ReviewError, ReviewRegistry
+
+    store, _, org_id, workspace_id, owner_id, _ = _scope(tmp_path)
+    checkpoints = CheckpointRegistry(store)
+    reviews = ReviewRegistry(store, checkpoints=checkpoints)
+    plan = checkpoints.create_run(
+        org_id, workspace_id, kind="plan", created_by=owner_id,
+        state={"goal": "not research", "steps": []},
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    plan_review_id = reviews.new_review_id()
+    with pytest.raises(ReviewError, match="compatible research"):
+        reviews.request_review(
+            org_id, workspace_id, created_by=owner_id,
+            review_type="research_findings", required_role="reviewer",
+            subject={"run_id": plan.run_id}, run_id=plan.run_id,
+            review_id=plan_review_id,
+            checkpoint_state={
+                "query": "not research", "hypotheses": [], "findings": [],
+                "status": "pending_review", "review": {"review_id": plan_review_id},
+            },
+            expected_head_checkpoint_id=plan.head_checkpoint_id,
+        )
+    plan_after = checkpoints.get_run(org_id, workspace_id, plan.run_id)
+    assert plan_after is not None and plan_after.status == "running"
+
+    research = ResearchSupervisor(
+        checkpoints, reviews, organization_id=org_id,
+        workspace_id=workspace_id, actor_id=owner_id,
+    ).start("bound review")
+    assert research.schema_manifest == RESEARCH_SCHEMA_MANIFEST
+    with pytest.raises(ReviewError, match="checkpoint"):
+        reviews.request_review(
+            org_id, workspace_id, created_by=owner_id,
+            review_type="research_findings", required_role="reviewer",
+            subject={"run_id": research.run_id}, run_id=research.run_id,
+        )
+    research_after = checkpoints.get_run(org_id, workspace_id, research.run_id)
+    assert research_after is not None and research_after.status == "running"
+
+
+def test_database_rejects_unauthorized_or_malformed_raw_decision(tmp_path):
+    from hybridagent.reviews import ReviewRegistry
+
+    store, orgs, org_id, workspace_id, owner_id, reviewer_id = _scope(tmp_path)
+    reviews = ReviewRegistry(store)
+    review = reviews.request_review(
+        org_id, workspace_id, created_by=owner_id,
+        review_type="quality", required_role="reviewer",
+        subject={"artifact_id": "raw-update"},
+    )
+    member = orgs.create_user("disabled-member@example.com")
+    orgs.add_membership(org_id, member.user_id, roles=("member",))
+    store._directory_execute(
+        "UPDATE organization_users SET status='disabled' WHERE user_id=?", (member.user_id,)
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="invalid"):
+        store._directory_execute(
+            "UPDATE professional_reviews SET status='decided',decision='approved',"
+            "decision_payload_json='{}',reviewer_user_id=?,reviewed_ts=1.0 "
+            "WHERE review_id=?",
+            (member.user_id, review.review_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="invalid"):
+        store._directory_execute(
+            "UPDATE professional_reviews SET status='decided',decision='approved',"
+            "decision_payload_json='[]',reviewer_user_id=?,reviewed_ts=1.0 "
+            "WHERE review_id=?",
+            (reviewer_id, review.review_id),
+        )
+    pending = reviews.get_review(org_id, workspace_id, review.review_id)
+    assert pending is not None and pending.status == "pending"
+
+
+def test_review_trigger_upgrade_preserves_existing_trigger(tmp_path):
+    db_path = tmp_path / "upgrade.db"
+    store = Store(db_path)
+    store.close()
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TRIGGER trg_professional_reviews_decision_update_v2")
+    conn.execute(
+        "CREATE TRIGGER trg_professional_reviews_decision_update "
+        "BEFORE UPDATE ON professional_reviews "
+        "WHEN OLD.status <> 'pending' OR NEW.status <> 'decided' "
+        "BEGIN SELECT RAISE(ABORT, 'review decision is immutable'); END"
+    )
+    conn.commit()
+    conn.close()
+
+    upgraded = Store(db_path)
+    rows = upgraded._directory_all(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN (?,?) ORDER BY name",
+        (
+            "trg_professional_reviews_decision_update",
+            "trg_professional_reviews_decision_update_v2",
+        ),
+    )
+    assert [row["name"] for row in rows] == [
+        "trg_professional_reviews_decision_update",
+        "trg_professional_reviews_decision_update_v2",
+    ]
+    upgraded.close()

@@ -13,9 +13,12 @@ from .checkpoints import (
     CheckpointRegistry,
     WorkflowRun,
 )
-from .reviews import ProfessionalReview, ReviewRegistry
+from .reviews import (
+    RESEARCH_SCHEMA_MANIFEST,
+    ProfessionalReview,
+    ReviewRegistry,
+)
 
-RESEARCH_SCHEMA_MANIFEST = {"name": "research-supervisor", "version": 1}
 _RESEARCH_STATUSES = frozenset({"collecting", "pending_review", "reviewed", "rejected"})
 
 
@@ -45,18 +48,21 @@ class ResearchSupervisor:
         clean = query.strip()
         if not clean:
             raise ResearchRunError("research query is required")
-        return self.checkpoints.create_run(
-            self.organization_id,
-            self.workspace_id,
-            kind="research",
-            created_by=self.actor_id,
-            state={
+        initial = self._validate_state(
+            {
                 "query": clean,
                 "hypotheses": list(hypotheses or []),
                 "findings": [],
                 "status": "collecting",
                 "review": {},
-            },
+            }
+        )
+        return self.checkpoints.create_run(
+            self.organization_id,
+            self.workspace_id,
+            kind="research",
+            created_by=self.actor_id,
+            state=initial,
             schema_manifest=RESEARCH_SCHEMA_MANIFEST,
         )
 
@@ -238,6 +244,12 @@ class ResearchSupervisor:
         return self.load(run_id)
 
     def _snapshot(self, run_id: str) -> tuple[WorkflowRun, Checkpoint, dict[str, Any]]:
+        try:
+            self.checkpoints.require_active_scope(
+                self.organization_id, self.workspace_id, self.actor_id
+            )
+        except CheckpointError as exc:
+            raise ResearchRunError(str(exc)) from exc
         run = self.checkpoints.get_run(self.organization_id, self.workspace_id, run_id)
         if run is None:
             raise ResearchRunError("research run does not exist in workspace")
@@ -259,7 +271,7 @@ class ResearchSupervisor:
             raise ResearchRunError("run is not a compatible research run")
 
     @staticmethod
-    def _validate_state(state: Any) -> None:
+    def _validate_state(state: Any) -> dict[str, Any]:
         if not CheckpointRegistry._is_exact_json(state) or type(state) is not dict:
             raise ResearchRunError("research state must be strict JSON")
         if (
@@ -273,6 +285,7 @@ class ResearchSupervisor:
             or type(state.get("review")) is not dict
         ):
             raise ResearchRunError("research state shape is invalid")
+        return dict(state)
 
     @staticmethod
     def _public_state(state: dict[str, Any]) -> dict[str, Any]:
