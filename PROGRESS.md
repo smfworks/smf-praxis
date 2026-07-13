@@ -6,13 +6,14 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.26.3` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.26.4` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-4`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
 - **Current WIP:** PP40 — durable professional workflows
-- **Current blocker:** none; durable run/checkpoint protocol is the active test-first slice
-- **Phase 4 implementation:** `0.26.3` checkpoint substrate and GoalRunner integration in progress — tenant/workspace-owned runs, strict exact-domain JSON state/schema manifests, immutable append-only checkpoint ancestry, transactional lifecycle transitions, typed interrupts, resume compatibility, cancellation, restart durability, foreign-key and database scope enforcement, atomic immutable effect receipts with fingerprinted idempotent replay, race-safe checkpoint returns, scoped fork/replay lineage that never inherits prior effects, completed GoalRunner turn checkpoints, durable approval interrupts, and pre-turn cancellation enforcement; 28 GoalRunner/checkpoint contracts green.
+- **Current blocker:** independent exact-head maker-checker review; all local Definition of Done gates pass, but PP40 remains `in_progress` until that review passes.
+- **Phase 4 implementation:** `0.26.4` expands the checkpoint substrate from GoalRunner into planner-driven professional workflows — durable `PlanExecutor` state mapping; expected-head checkpoint CAS; scoped checkpoints on step transitions; terminal-run and pre-step cancellation enforcement; typed approval interrupts; exact durable approval reconstruction; resumable held, running, and skipped-dependent `PlanStep` state; durable consequential outbox intents; immutable effect receipts; explicit provider-idempotent at-least-once crash-gap semantics; typed workspace-scoped professional reviews with maker-checker, role, user-status, database immutability, and concurrent-decision enforcement; and a structured research supervisor with atomic review interruption/application and decision-specific outcomes.
+- **Phase 4 local verification:** full non-fuzz repository suite, PP40 verification command, 40/40 capability evals, deterministic offline demo semantics, Ruff, mypy across 121 source files, architecture/WIP/version checks, wheel/sdist build, clean-wheel install, and `0.26.4` import all pass.
 
 ## Baseline verification (captured 2026-07-11)
 

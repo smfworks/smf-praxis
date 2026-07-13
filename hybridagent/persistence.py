@@ -750,6 +750,72 @@ CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_no_delete
 BEFORE DELETE ON run_checkpoints BEGIN
     SELECT RAISE(ABORT, 'run checkpoints are immutable');
 END;
+CREATE TABLE IF NOT EXISTS professional_reviews (
+    review_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    workspace_id TEXT NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    review_type TEXT NOT NULL,
+    required_role TEXT NOT NULL,
+    subject_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    decision TEXT NOT NULL DEFAULT '',
+    decision_payload_json TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    reviewer_user_id TEXT NOT NULL DEFAULT '',
+    created_ts REAL NOT NULL,
+    reviewed_ts REAL,
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_professional_reviews_scope
+    ON professional_reviews(organization_id, workspace_id, created_ts);
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_scope_insert
+BEFORE INSERT ON professional_reviews
+WHEN (NEW.run_id <> '' AND NOT EXISTS (
+    SELECT 1 FROM professional_runs r
+    WHERE r.run_id=NEW.run_id
+      AND r.organization_id=NEW.organization_id
+      AND r.workspace_id=NEW.workspace_id
+)) OR NEW.review_type NOT IN ('quality','professional_release','research_findings')
+   OR NEW.status <> 'pending'
+   OR NEW.decision <> ''
+   OR NEW.reviewer_user_id <> ''
+   OR NEW.reviewed_ts IS NOT NULL
+   OR (NEW.review_type='professional_release'
+       AND NEW.required_role NOT IN ('organization_admin','professional','reviewer'))
+   OR (NEW.review_type='quality'
+       AND NEW.required_role NOT IN (
+           'organization_admin','workspace_admin','professional','reviewer','auditor'))
+   OR (NEW.review_type='research_findings'
+       AND NEW.required_role NOT IN (
+           'organization_admin','professional','reviewer','auditor'))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid review request or run scope');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_decision_update
+BEFORE UPDATE ON professional_reviews
+WHEN OLD.status <> 'pending'
+  OR NEW.status <> 'decided'
+  OR NEW.decision NOT IN ('approved','revise','rejected')
+  OR NEW.reviewer_user_id = OLD.created_by
+  OR NEW.reviewed_ts IS NULL
+  OR NEW.review_id IS NOT OLD.review_id
+  OR NEW.organization_id IS NOT OLD.organization_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.review_type IS NOT OLD.review_type
+  OR NEW.required_role IS NOT OLD.required_role
+  OR NEW.subject_json IS NOT OLD.subject_json
+  OR NEW.created_by IS NOT OLD.created_by
+  OR NEW.created_ts IS NOT OLD.created_ts
+BEGIN
+    SELECT RAISE(ABORT, 'invalid or immutable professional review decision');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_professional_reviews_no_delete
+BEFORE DELETE ON professional_reviews BEGIN
+    SELECT RAISE(ABORT, 'professional reviews are immutable');
+END;
 """
 
 

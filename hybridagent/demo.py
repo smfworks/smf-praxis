@@ -9,11 +9,14 @@ the installed wheel and works identically for editable and non-editable installs
 from __future__ import annotations
 
 from . import PraxisAgent
+from .llm import LLMClient
 from .tools import RiskClass, Tool
 
 
 def main() -> None:
-    agent = PraxisAgent()
+    # Keep the documented demo deterministic and offline even when the operator
+    # has configured a real provider for normal Praxis work.
+    agent = PraxisAgent(llm=LLMClient(mode="mock"))
 
     # Seed a durable preference (memory with provenance).
     agent.learn(

@@ -1,12 +1,18 @@
+import pytest
+
 from hybridagent.broker import GovernanceBroker, GovernancePolicy, RiskClass
+from hybridagent.checkpoints import CheckpointRegistry
+from hybridagent.organizations import OrganizationDirectory
+from hybridagent.persistence import Store
 from hybridagent.plan_execute import (
     ExecutionReport,
     PlanExecutor,
     PlanStep,
     to_plan_steps,
 )
-from hybridagent.planner import Step
+from hybridagent.planner import Plan, Planner, Step
 from hybridagent.tools import Tool, ToolRegistry
+from hybridagent.workspaces import WorkspaceDirectory
 
 
 def _schema(*req):
@@ -170,13 +176,471 @@ def test_cyclic_dependency_fails():
 
 
 def test_compliance_events_recorded_when_store_present(tmp_path):
-    from hybridagent.persistence import Store
     store = Store.open(tmp_path / "praxis.db")
     try:
         steps = to_plan_steps([Step("read", "get_data")])
-        PlanExecutor(_registry(READ), _broker("get_data"),
-                     store=store).execute("g", steps=steps)
+        PlanExecutor(_registry(READ), _broker("get_data"), store=store).execute("g", steps=steps)
         events = store.list_compliance_events()
         assert any(e["event_type"].startswith("plan_") for e in events)
     finally:
         store.close()
+def _durable_scope(tmp_path):
+    store = Store(tmp_path / "praxis.db")
+    org, owner = OrganizationDirectory(store).bootstrap("Practice", "owner@example.com")
+    workspace = WorkspaceDirectory(store).create(
+        org.organization_id, "MAT-1", "matter", "Matter", owner_user_id=owner.user_id
+    )
+    checkpoints = CheckpointRegistry(store)
+    run = checkpoints.create_run(
+        org.organization_id,
+        workspace.workspace_id,
+        kind="plan",
+        created_by=owner.user_id,
+        state={"goal": "work", "steps": [], "outbox": [], "effect_receipts": []},
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    return store, checkpoints, run, org.organization_id, workspace.workspace_id, owner.user_id
+
+def test_fresh_durable_executor_plans_instead_of_accepting_empty_seed(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+
+    class OneStepPlanner(Planner):
+        def __init__(self):
+            pass
+
+        def plan(self, goal):
+            return Plan(goal, [Step("read", "get_data")])
+
+    report = PlanExecutor(
+        _registry(READ),
+        _broker("get_data"),
+        planner=OneStepPlanner(),
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute("fresh work")
+    assert report.status == "completed"
+    assert [(step.tool, step.status) for step in report.steps] == [("get_data", "done")]
+
+def test_durable_plan_executor_interrupts_with_typed_outbox_checkpoint(tmp_path):
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"get_data", "send_it"}), store=store)
+    steps = [
+        PlanStep(id="s1", intent="read", tool="get_data", args={}),
+        PlanStep(
+            id="s2",
+            intent="send",
+            tool="send_it",
+            args={
+                "target": "public_web",
+                "text": "hello",
+                "classification": "public",
+                "connector": "public_web",
+            },
+            depends_on=["s1"],
+        ),
+        PlanStep(id="s3", intent="after", tool="get_data", args={}, depends_on=["s2"]),
+    ]
+    report = PlanExecutor(
+        _registry(READ, SEND),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute("g", steps=steps)
+    durable = checkpoints.get_run(org_id, workspace_id, run.run_id)
+    latest = checkpoints.latest(org_id, workspace_id, run.run_id)
+    assert report.status == "needs_approval"
+    assert durable is not None and durable.status == "interrupted"
+    assert durable.interrupt_type == "approval"
+    assert durable.interrupt_payload["step_id"] == "s2"
+    assert durable.interrupt_payload["approval_id"].startswith("appr-")
+    assert latest is not None
+    assert [step["status"] for step in latest.state["steps"]] == ["done", "held", "skipped"]
+    assert latest.state["outbox"] == [
+        {
+            "approval_id": durable.interrupt_payload["approval_id"],
+            "args": {
+                "classification": "public",
+                "connector": "public_web",
+                "target": "public_web",
+                "text": "hello",
+            },
+            "effect_type": "send_it",
+            "intent": "send",
+            "requires_provider_idempotency": False,
+            "status": "pending_approval",
+            "step_id": "s2",
+            "tool": "send_it",
+        }
+    ]
+
+def test_durable_plan_executor_resumes_from_checkpointed_plan_steps(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    checkpoints.checkpoint(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        state={
+            "goal": "resume work",
+            "steps": [
+                {
+                    "id": "s1",
+                    "intent": "already done",
+                    "tool": "get_data",
+                    "args": {},
+                    "depends_on": [],
+                    "status": "done",
+                    "output": "data",
+                    "approval_id": "",
+                },
+                {
+                    "id": "s2",
+                    "intent": "resume pending",
+                    "tool": "get_more",
+                    "args": {},
+                    "depends_on": ["s1"],
+                    "status": "pending",
+                    "output": "",
+                    "approval_id": "",
+                },
+            ],
+            "outbox": [],
+            "effect_receipts": [],
+        },
+    )
+    report = PlanExecutor(
+        _registry(READ, READ2),
+        _broker("get_data", "get_more"),
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute("resume work")
+    latest = checkpoints.latest(org_id, workspace_id, run.run_id)
+    assert report.status == "completed"
+    assert [step.status for step in report.steps] == ["done", "done"]
+    assert latest is not None
+    assert [step["status"] for step in latest.state["steps"]] == ["done", "done"]
+
+def test_durable_plan_executor_honors_cancellation_before_next_step(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    calls: list[str] = []
+    counting = Tool(
+        "counting_read", RiskClass.READ, "counts", lambda **k: calls.append("ran") or "ok"
+    )
+    checkpoints.checkpoint(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        state={
+            "goal": "cancelled",
+            "steps": [
+                {
+                    "id": "s1",
+                    "intent": "already done",
+                    "tool": "get_data",
+                    "args": {},
+                    "depends_on": [],
+                    "status": "done",
+                    "output": "data",
+                    "approval_id": "",
+                },
+                {
+                    "id": "s2",
+                    "intent": "must not run",
+                    "tool": "counting_read",
+                    "args": {},
+                    "depends_on": ["s1"],
+                    "status": "pending",
+                    "output": "",
+                    "approval_id": "",
+                },
+            ],
+            "outbox": [],
+            "effect_receipts": [],
+        },
+    )
+    checkpoints.cancel(org_id, workspace_id, run.run_id, actor_id=actor_id, reason="stop")
+    report = PlanExecutor(
+        _registry(READ, counting),
+        _broker("get_data", "counting_read"),
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute("cancelled")
+    assert report.status == "cancelled"
+    assert calls == []
+
+def test_durable_plan_executor_never_executes_terminal_run(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    calls: list[str] = []
+    counting = Tool(
+        "counting_read", RiskClass.READ, "counts", lambda **kwargs: calls.append("ran") or "ok"
+    )
+    checkpoints.fail(org_id, workspace_id, run.run_id, actor_id=actor_id, reason="failed")
+
+    report = PlanExecutor(
+        _registry(counting),
+        _broker("counting_read"),
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute(
+        "must not run", steps=[PlanStep(id="s1", intent="blocked", tool="counting_read", args={})]
+    )
+    assert report.status == "failed"
+    assert calls == []
+
+def test_durable_plan_executor_resumes_approved_held_step(tmp_path):
+    calls: list[str] = []
+    send = Tool(
+        "approved_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(
+        GovernancePolicy(allowed_tools={"approved_send", "get_data"}), store=store
+    )
+    executor = PlanExecutor(
+        _registry(send, READ),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "hello",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-key-approved",
+    }
+    held = executor.execute(
+        "send",
+        steps=[
+            PlanStep(id="s1", intent="send", tool="approved_send", args=args),
+            PlanStep(
+                id="s2",
+                intent="read after send",
+                tool="get_data",
+                args={},
+                depends_on=["s1"],
+            ),
+        ],
+    )
+    approval_id = held.held_approvals()[0]
+    assert [step.status for step in held.steps] == ["held", "skipped"]
+    assert broker.approve(approval_id, approved_by=actor_id, approved_role="owner") is not None
+    checkpoints.resume(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+
+    resumed = executor.execute("send")
+    assert resumed.status == "completed"
+    assert [step.status for step in resumed.steps] == ["done", "done"]
+    assert calls == ["hello"]
+    assert (
+        checkpoints.get_effect(org_id, workspace_id, run.run_id, "provider-key-approved")
+        is not None
+    )
+
+def test_durable_plan_executor_retries_provider_idempotent_intent_after_crash(tmp_path):
+    calls: list[dict] = []
+
+    def _send_effect(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise SystemExit("simulated process crash after provider accepted request")
+        return "SENT"
+
+    send_effect = Tool(
+        "send_effect",
+        RiskClass.SEND,
+        "send",
+        _send_effect,
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"send_effect"}), store=store)
+    executor = PlanExecutor(
+        _registry(send_effect),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "hello",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-key-1",
+    }
+    held = executor.execute(
+        "send", steps=[PlanStep(id="s1", intent="send", tool="send_effect", args=args)]
+    )
+    approval_id = held.held_approvals()[0]
+    assert calls == []
+    assert broker.approve(approval_id, approved_by=actor_id, approved_role="owner") is not None
+    checkpoints.resume(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    with pytest.raises(SystemExit, match="simulated process crash"):
+        executor.execute("send")
+    crashed = checkpoints.latest(org_id, workspace_id, run.run_id)
+    assert crashed is not None
+    assert crashed.state["steps"][0]["status"] == "running"
+    assert crashed.state["outbox"][0]["status"] == "pending_execution"
+
+    report = executor.execute("send")
+    latest = checkpoints.latest(org_id, workspace_id, run.run_id)
+    receipt = checkpoints.get_effect(org_id, workspace_id, run.run_id, "provider-key-1")
+    assert report.status == "completed"
+    assert len(calls) == 2
+    assert receipt is not None and receipt.effect_type == "send_message"
+    assert latest is not None
+    assert latest.state["effect_receipts"] == [
+        {
+            "effect_type": "send_message",
+            "idempotency_key": "provider-key-1",
+            "receipt_id": receipt.receipt_id,
+            "step_id": "s1",
+        }
+    ]
+    assert latest.state["delivery_semantics"] == {
+        "consequential_side_effects": "provider_idempotent_at_least_once",
+        "exactly_once_network_execution": False,
+    }
+
+def test_durable_plan_executor_recovers_receipt_written_before_checkpoint(tmp_path):
+    calls: list[str] = []
+    send = Tool(
+        "receipt_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"receipt_send"}), store=store)
+    original_checkpoint = checkpoints.checkpoint
+
+    def crash_after_receipt(*args, **kwargs):
+        if (
+            checkpoints.get_effect(org_id, workspace_id, run.run_id, "provider-key-receipt")
+            is not None
+        ):
+            raise SystemExit("simulated crash after receipt commit")
+        return original_checkpoint(*args, **kwargs)
+
+    executor = PlanExecutor(
+        _registry(send),
+        broker,
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system",
+        "text": "hello",
+        "classification": "internal",
+        "connector": "approved_business_system",
+        "idempotency_key": "provider-key-receipt",
+    }
+    held = executor.execute(
+        "send", steps=[PlanStep(id="s1", intent="send", tool="receipt_send", args=args)]
+    )
+    approval_id = held.held_approvals()[0]
+    assert broker.approve(approval_id, approved_by=actor_id, approved_role="owner") is not None
+    checkpoints.resume(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    checkpoints.checkpoint = crash_after_receipt
+    with pytest.raises(SystemExit, match="after receipt commit"):
+        executor.execute("send")
+    checkpoints.checkpoint = original_checkpoint
+
+    report = executor.execute("send")
+    latest = checkpoints.latest(org_id, workspace_id, run.run_id)
+    assert report.status == "completed"
+    assert calls == ["hello"]
+    assert latest is not None
+    assert latest.state["steps"][0]["status"] == "done"
+    assert latest.state["outbox"][0]["status"] == "completed"
+    assert latest.state["effect_receipts"][0]["idempotency_key"] == "provider-key-receipt"
+
+def test_durable_plan_executor_rejects_malformed_persisted_step(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    checkpoints.checkpoint(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        state={
+            "goal": "malformed",
+            "steps": [
+                {
+                    "id": 1,
+                    "intent": "read",
+                    "tool": "get_data",
+                    "args": {},
+                    "depends_on": [],
+                    "status": "pending",
+                    "output": "",
+                    "approval_id": "",
+                }
+            ],
+            "outbox": [],
+            "effect_receipts": [],
+        },
+    )
+    executor = PlanExecutor(
+        _registry(READ),
+        _broker("get_data"),
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    )
+    with pytest.raises(ValueError, match="string fields"):
+        executor.execute("malformed")
