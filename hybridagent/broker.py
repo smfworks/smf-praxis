@@ -184,6 +184,11 @@ class KillSwitch:
 
     @property
     def tripped(self) -> bool:
+        # The durable brake is authoritative across independent daemon processes.
+        # Refresh on every safety check so a trip in one worker cannot be bypassed
+        # by another worker's construction-time cache.
+        if self._store is not None:
+            self._tripped = bool(self._store.get_killswitch())
         return self._tripped
 
 

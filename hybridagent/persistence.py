@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS task_approval_actions (
     args_json TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     effect_type TEXT NOT NULL,
+    risk TEXT NOT NULL,
     idempotency_key TEXT NOT NULL DEFAULT '',
     provider_idempotent INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending_approval'
@@ -1123,6 +1124,40 @@ class Store:
             "output": "TEXT NOT NULL DEFAULT ''",
             "plan": "TEXT NOT NULL DEFAULT ''",
         })
+        self._ensure_columns_locked("task_approval_actions", {
+            # Rows created before risk binding cannot be safely inferred after a
+            # tool contract may have changed. The empty default therefore fails
+            # closed during approval/restart reconciliation.
+            "risk": "TEXT NOT NULL DEFAULT ''",
+        })
+        self._conn.executescript("""
+DROP TRIGGER IF EXISTS trg_task_approval_actions_identity_immutable;
+CREATE TRIGGER trg_task_approval_actions_identity_immutable
+BEFORE UPDATE OF task_id,approval_id,tool,args_json,fingerprint,effect_type,
+                 risk,idempotency_key,provider_idempotent,created_ts
+ON task_approval_actions
+FOR EACH ROW
+WHEN NEW.task_id IS NOT OLD.task_id
+  OR NEW.approval_id IS NOT OLD.approval_id
+  OR NEW.tool IS NOT OLD.tool
+  OR NEW.args_json IS NOT OLD.args_json
+  OR NEW.fingerprint IS NOT OLD.fingerprint
+  OR NEW.effect_type IS NOT OLD.effect_type
+  OR NEW.risk IS NOT OLD.risk
+  OR NEW.idempotency_key IS NOT OLD.idempotency_key
+  OR NEW.provider_idempotent IS NOT OLD.provider_idempotent
+  OR NEW.created_ts IS NOT OLD.created_ts
+BEGIN
+    SELECT RAISE(ABORT, 'task approval action identity is immutable');
+END;
+DROP TRIGGER IF EXISTS trg_task_approval_actions_risk_valid_insert;
+CREATE TRIGGER trg_task_approval_actions_risk_valid_insert
+BEFORE INSERT ON task_approval_actions
+FOR EACH ROW WHEN NEW.risk NOT IN ('send','destructive')
+BEGIN
+    SELECT RAISE(ABORT, 'invalid task approval action risk');
+END;
+""")
         self._ensure_columns_locked("run_routing", {
             "escalations": "INTEGER NOT NULL DEFAULT 0",
             "escalation_reason": "TEXT NOT NULL DEFAULT ''",
@@ -1825,6 +1860,9 @@ class Store:
                     effect_type = effect_type.strip()
                     if not effect_type:
                         raise ValueError("task action effect type is required")
+                    risk = spec.get("risk")
+                    if type(risk) is not str or risk not in {"send", "destructive"}:
+                        raise ValueError("task action risk must be consequential")
                     idempotency_key = spec.get("idempotency_key")
                     if type(idempotency_key) is not str:
                         raise ValueError("task action idempotency key must be a string")
@@ -1833,9 +1871,9 @@ class Store:
                         raise ValueError("task action provider idempotency must be boolean")
                     self._conn.execute(
                         "INSERT INTO task_approval_actions("
-                        "task_id,approval_id,tool,args_json,fingerprint,effect_type,"
+                        "task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
                         "idempotency_key,provider_idempotent,status,created_ts,updated_ts) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             task_id,
                             approval_id,
@@ -1843,6 +1881,7 @@ class Store:
                             args_json,
                             self._task_action_fingerprint(effect_type, args_json),
                             effect_type,
+                            risk,
                             idempotency_key,
                             1 if provider_idempotent else 0,
                             "pending_approval",
@@ -1871,12 +1910,13 @@ class Store:
         approval_id: str,
         *,
         effect_type: str,
+        risk: str,
         idempotency_key: str = "",
         provider_idempotent: bool = False,
     ) -> bool:
         """Bind one pre-outbox waiting-task approval to an exact durable action."""
         if any(type(value) is not str for value in (
-            task_id, approval_id, effect_type, idempotency_key
+            task_id, approval_id, effect_type, risk, idempotency_key
         )):
             raise ValueError("legacy task action identity fields must be strings")
         task_id = task_id.strip()
@@ -1884,6 +1924,8 @@ class Store:
         effect_type = effect_type.strip()
         if not task_id or not approval_id or not effect_type:
             raise ValueError("legacy task action identity fields are required")
+        if risk not in {"send", "destructive"}:
+            raise ValueError("legacy task action risk must be consequential")
         if type(provider_idempotent) is not bool:
             raise ValueError("legacy provider idempotency must be boolean")
         now = time.time()
@@ -1928,15 +1970,16 @@ class Store:
                     type(item) is dict
                     and item.get("approval_id") == approval_id
                     and item.get("tool") == approval["tool"]
+                    and item.get("risk") == risk
                     for item in pending
                 ):
                     self._conn.rollback()
                     return False
                 self._conn.execute(
                     "INSERT INTO task_approval_actions("
-                    "task_id,approval_id,tool,args_json,fingerprint,effect_type,"
+                    "task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
                     "idempotency_key,provider_idempotent,status,created_ts,updated_ts) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         task_id,
                         approval_id,
@@ -1944,6 +1987,7 @@ class Store:
                         args_json,
                         self._task_action_fingerprint(effect_type, args_json),
                         effect_type,
+                        risk,
                         idempotency_key,
                         1 if provider_idempotent else 0,
                         "pending_approval",
@@ -2000,6 +2044,11 @@ class Store:
                 )
                 if updated.rowcount != 1:
                     raise ValueError("legacy task failure lost its state race")
+                self._conn.execute(
+                    "UPDATE approvals SET status='rejected',resolved_at=? "
+                    "WHERE approval_id=? AND status='pending'",
+                    (now, approval_id),
+                )
                 self._conn.commit()
                 return True
             except Exception:
@@ -2020,7 +2069,7 @@ class Store:
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT task_id,approval_id,tool,args_json,fingerprint,effect_type,"
+                "SELECT task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
                 "idempotency_key,provider_idempotent,status,receipt_json,error,"
                 "created_ts,updated_ts FROM task_approval_actions" + where
                 + " ORDER BY created_ts,task_id",
