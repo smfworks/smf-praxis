@@ -1,0 +1,38 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_pyproject_discovers_all_hybridagent_subpackages():
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert not any(
+        line.strip().startswith("packages =") for line in text.splitlines()
+    )
+    marker = "[tool.setuptools.packages.find]"
+    assert marker in text
+    section = text.split(marker, 1)[1].split("\n[", 1)[0]
+    assert 'include = ["hybridagent*"]' in section
+
+    nested_packages = {
+        init.parent.relative_to(ROOT).as_posix()
+        for init in (ROOT / "hybridagent").rglob("__init__.py")
+        if init.parent != ROOT / "hybridagent"
+    }
+    assert "hybridagent/verticals/legal" in nested_packages
+    assert len(nested_packages) >= 7
+
+
+def test_release_verifier_uses_installed_package_outside_checkout():
+    script = (ROOT / "scripts" / "verify-release.sh").read_text(encoding="utf-8")
+    assert 'cd "$TMP"' in script
+    assert "package_file.is_relative_to(venv)" in script
+    assert "not package_file.is_relative_to(checkout)" in script
+    for vertical in (
+        "architecture",
+        "dental",
+        "education",
+        "forensic_engineering",
+        "legal",
+        "medical",
+    ):
+        assert f"hybridagent.verticals.{vertical}.authority" in script
