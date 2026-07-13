@@ -6,12 +6,13 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.25.20` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.26.0` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `feat/professional-platform-phase-4`
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
 - **Current WIP:** PP40 — durable professional workflows
 - **Current blocker:** none; durable run/checkpoint protocol is the active test-first slice
+- **Phase 4 implementation:** `0.26.0` checkpoint substrate in progress — tenant/workspace-owned runs, strict JSON state/schema manifests, immutable append-only checkpoint ancestry, typed interrupts, resume compatibility, cancellation, restart durability, and atomic immutable effect receipts with fingerprinted idempotent replay; 11 focused contracts green.
 
 ## Baseline verification (captured 2026-07-11)
 
