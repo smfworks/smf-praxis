@@ -664,6 +664,8 @@ CREATE TABLE IF NOT EXISTS professional_runs (
     status TEXT NOT NULL,
     schema_manifest_json TEXT NOT NULL,
     head_checkpoint_id TEXT NOT NULL DEFAULT '',
+    parent_run_id TEXT NOT NULL DEFAULT '',
+    forked_from_checkpoint_id TEXT NOT NULL DEFAULT '',
     interrupt_type TEXT NOT NULL DEFAULT '',
     interrupt_payload_json TEXT NOT NULL DEFAULT '{}',
     cancel_reason TEXT NOT NULL DEFAULT '',
@@ -788,6 +790,10 @@ class Store:
         })
         self._ensure_columns_locked("runs", {
             "workspace_id": "TEXT NOT NULL DEFAULT ''",
+        })
+        self._ensure_columns_locked("professional_runs", {
+            "parent_run_id": "TEXT NOT NULL DEFAULT ''",
+            "forked_from_checkpoint_id": "TEXT NOT NULL DEFAULT ''",
         })
         self._ensure_columns_locked("tasks", {
             "output": "TEXT NOT NULL DEFAULT ''",

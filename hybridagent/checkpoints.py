@@ -25,6 +25,8 @@ class WorkflowRun:
     status: str
     schema_manifest: dict[str, Any]
     head_checkpoint_id: str
+    parent_run_id: str
+    forked_from_checkpoint_id: str
     interrupt_type: str
     interrupt_payload: dict[str, Any]
     cancel_reason: str
@@ -114,6 +116,58 @@ class CheckpointRegistry:
             "AND run_id=? ORDER BY sequence DESC LIMIT 1",
             (organization_id, workspace_id, run_id))
         return self._checkpoint(row) if row else None
+
+    def get_checkpoint(self, organization_id: str, workspace_id: str,
+                       checkpoint_id: str) -> Checkpoint | None:
+        row = self.store._directory_one(
+            "SELECT * FROM run_checkpoints WHERE organization_id=? AND workspace_id=? "
+            "AND checkpoint_id=?", (organization_id, workspace_id, checkpoint_id))
+        return self._checkpoint(row) if row else None
+
+    def fork(self, organization_id: str, workspace_id: str, source_run_id: str, *,
+             checkpoint_id: str, actor_id: str) -> WorkflowRun:
+        """Fork a new lineage from one immutable scoped checkpoint."""
+        self._validate_scope(organization_id, workspace_id, actor_id)
+        source = self.get_run(organization_id, workspace_id, source_run_id)
+        checkpoint = self.get_checkpoint(organization_id, workspace_id, checkpoint_id)
+        if source is None or checkpoint is None or checkpoint.run_id != source_run_id:
+            raise CheckpointError("source checkpoint does not exist in run")
+        run_id = f"run-{uuid.uuid4().hex}"
+        initial_id = f"checkpoint-{uuid.uuid4().hex}"
+        state_json = self._json_object(checkpoint.state, "checkpoint state")
+        manifest_json = self._json_object(checkpoint.schema_manifest, "schema manifest")
+        now = time.time()
+        with self.store._lock:
+            conn = self.store._conn
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                current = conn.execute(
+                    "SELECT 1 FROM run_checkpoints WHERE organization_id=? AND workspace_id=? "
+                    "AND run_id=? AND checkpoint_id=?",
+                    (organization_id, workspace_id, source_run_id, checkpoint_id)).fetchone()
+                if current is None:
+                    raise CheckpointError("source checkpoint does not exist in run")
+                conn.execute(
+                    "INSERT INTO professional_runs(run_id,organization_id,workspace_id,kind,"
+                    "status,schema_manifest_json,head_checkpoint_id,parent_run_id,"
+                    "forked_from_checkpoint_id,created_by,created_ts,updated_ts) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (run_id, organization_id, workspace_id, source.kind, "running",
+                     manifest_json, initial_id, source_run_id, checkpoint_id,
+                     actor_id, now, now))
+                conn.execute(
+                    "INSERT INTO run_checkpoints(checkpoint_id,run_id,organization_id,"
+                    "workspace_id,parent_checkpoint_id,sequence,state_json,"
+                    "schema_manifest_json,created_by,created_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (initial_id, run_id, organization_id, workspace_id, checkpoint_id, 1,
+                     state_json, manifest_json, actor_id, now))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        result = self.get_run(organization_id, workspace_id, run_id)
+        assert result is not None
+        return result
 
     def checkpoint(self, organization_id: str, workspace_id: str, run_id: str, *,
                    actor_id: str, state: dict[str, Any]) -> Checkpoint:
@@ -293,6 +347,8 @@ class CheckpointRegistry:
             workspace_id=row["workspace_id"], kind=row["kind"], status=row["status"],
             schema_manifest=json.loads(row["schema_manifest_json"]),
             head_checkpoint_id=row["head_checkpoint_id"],
+            parent_run_id=row["parent_run_id"],
+            forked_from_checkpoint_id=row["forked_from_checkpoint_id"],
             interrupt_type=row["interrupt_type"],
             interrupt_payload=json.loads(row["interrupt_payload_json"]),
             cancel_reason=row["cancel_reason"], created_by=row["created_by"],

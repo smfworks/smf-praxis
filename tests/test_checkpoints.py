@@ -139,3 +139,41 @@ def test_effect_receipt_rejects_key_reuse_with_different_request(tmp_path):
             org_id, workspace_id, run.run_id, actor_id=actor_id,
             idempotency_key="effect-1", effect_type="export",
             request={"format": "docx"}, result={"artifact": "b"})
+
+
+def test_fork_replays_checkpoint_state_without_inheriting_effects(tmp_path):
+    store, org_id, workspace_id, actor_id = setup_scope(tmp_path)
+    registry = CheckpointRegistry(store)
+    source = registry.create_run(
+        org_id, workspace_id, kind="research", created_by=actor_id,
+        state={"step": 1}, schema_manifest={"name": "research", "version": 1})
+    selected = registry.checkpoint(
+        org_id, workspace_id, source.run_id, actor_id=actor_id, state={"step": 2})
+    registry.record_effect(
+        org_id, workspace_id, source.run_id, actor_id=actor_id,
+        idempotency_key="publish-1", effect_type="publish",
+        request={"artifact": "a"}, result={"url": "https://example.test/a"})
+
+    fork = registry.fork(
+        org_id, workspace_id, source.run_id,
+        checkpoint_id=selected.checkpoint_id, actor_id=actor_id)
+    replay = registry.latest(org_id, workspace_id, fork.run_id)
+    assert fork.parent_run_id == source.run_id
+    assert fork.forked_from_checkpoint_id == selected.checkpoint_id
+    assert replay is not None and replay.state == {"step": 2}
+    assert replay.parent_checkpoint_id == selected.checkpoint_id
+    assert registry.get_effect(org_id, workspace_id, fork.run_id, "publish-1") is None
+
+
+def test_fork_conceals_checkpoint_from_another_workspace(tmp_path):
+    store, org_id, workspace_id, actor_id = setup_scope(tmp_path)
+    other = WorkspaceDirectory(store).create(
+        org_id, "MAT-002", "matter", "Other", owner_user_id=actor_id)
+    registry = CheckpointRegistry(store)
+    source = registry.create_run(
+        org_id, workspace_id, kind="research", created_by=actor_id,
+        state={"step": 1}, schema_manifest={"name": "research", "version": 1})
+    with pytest.raises(CheckpointError, match="does not exist"):
+        registry.fork(
+            org_id, other.workspace_id, source.run_id,
+            checkpoint_id=source.head_checkpoint_id, actor_id=actor_id)
