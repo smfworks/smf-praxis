@@ -546,8 +546,19 @@ def cmd_approvals(args: argparse.Namespace) -> int:
 
 def cmd_approve(args: argparse.Namespace) -> int:
     agent = _make_agent(args)
-    print(agent.approve(args.approval_id, approved_by=args.approved_by,
-                        approval_notes=args.notes or ""))
+    from .daemon import Daemon
+    daemon = Daemon(store=agent.store, agent=agent)
+    if agent.store is not None and agent.store.has_task_approval_action(args.approval_id):
+        approved = daemon.approve(
+            args.approval_id,
+            approved_by=args.approved_by,
+            approval_notes=args.notes or "",
+        )
+        row = agent.store.get_approval(args.approval_id) or {}
+        print("task approval executed" if approved else f"task approval {row.get('status', 'pending')}")
+    else:
+        print(agent.approve(args.approval_id, approved_by=args.approved_by,
+                            approval_notes=args.notes or ""))
     return 0
 
 

@@ -462,6 +462,11 @@ def test_durable_plan_executor_resumes_approved_held_step(tmp_path):
     assert resumed.status == "completed"
     assert [step.status for step in resumed.steps] == ["done", "done"]
     assert calls == ["hello"]
+    assert broker._session_one_shot_actions == {}
+    repeated = broker.authorize(
+        actor_id, "approved_send", RiskClass.SEND, args
+    )
+    assert repeated.verdict.value == "needs_approval"
     assert (
         checkpoints.get_effect(org_id, workspace_id, run.run_id, "provider-key-approved")
         is not None

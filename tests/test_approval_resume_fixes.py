@@ -1,6 +1,7 @@
 """Regressions for approval resume + idle heartbeat throttle (0.19.13)."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -412,6 +413,136 @@ def test_daemon_waits_for_every_held_task_action(tmp_store, mock_agent):
     assert mock_agent._send_counter["n"] == 2  # type: ignore[attr-defined]
 
 
+def test_identical_actions_from_two_tasks_keep_independent_approvals(
+    tmp_store, mock_agent
+):
+    daemon = Daemon(store=tmp_store, agent=mock_agent, heartbeat_interval=9999)
+    first = daemon.submit("same-action", max_attempts=1)
+    second = daemon.submit("same-action", max_attempts=1)
+
+    daemon.tick()
+    daemon.tick()
+
+    assert daemon.manager is not None
+    first_task = daemon.manager.get(first)
+    second_task = daemon.manager.get(second)
+    assert first_task is not None and first_task.status == "waiting_approval"
+    assert second_task is not None and second_task.status == "waiting_approval"
+    actions = tmp_store.list_task_approval_actions(status="pending_approval")
+    assert {item["task_id"] for item in actions} == {first, second}
+    approval_ids = {item["approval_id"] for item in actions}
+    assert len(approval_ids) == 2
+    assert approval_ids == set(mock_agent.broker.pending)
+
+
+def test_legacy_waiting_task_approval_is_backfilled_and_executes_once(tmp_store):
+    calls = {"n": 0}
+    registry = ToolRegistry()
+    registry.register(_send_tool(calls))
+    task_id = "task-legacy"
+    approval_id = "appr-legacy"
+    args = {"message": "legacy"}
+    tmp_store.add_task(task_id, "legacy", status="waiting_approval", max_attempts=1)
+    tmp_store.upsert_approval(
+        approval_id,
+        "send",
+        args,
+        "legacy send",
+        "plan",
+        None,
+        cycle_id="cycle-legacy",
+    )
+    tmp_store.update_task(
+        task_id,
+        cycle_id="cycle-legacy",
+        result_json=json.dumps(
+            {
+                "cycle_id": "cycle-legacy",
+                "pending_approvals": [
+                    {
+                        "approval_id": approval_id,
+                        "tool": "send",
+                        "risk": "send",
+                        "preview": "legacy send",
+                    }
+                ],
+            }
+        ),
+    )
+    agent = PraxisAgent(
+        registry=registry,
+        llm=LLMClient(mode="mock"),
+        store=tmp_store,
+        planner=_SendPlanner(registry),
+    )
+    agent.broker.policy.allowed_tools = {"send"}
+
+    daemon = Daemon(store=tmp_store, agent=agent, heartbeat_interval=9999)
+    actions = tmp_store.list_task_approval_actions(approval_id=approval_id)
+    assert len(actions) == 1
+    assert actions[0]["task_id"] == task_id
+    assert actions[0]["args"] == args
+    assert daemon.approve(approval_id, approved_by="reviewer") is True
+    assert calls["n"] == 1
+    assert daemon.manager is not None
+    task = daemon.manager.get(task_id)
+    assert task is not None and task.status == "completed"
+    assert agent.broker._session_one_shot_actions == {}
+    assert agent.broker._session_one_shot_tools == set()
+
+
+def test_legacy_resolved_task_approval_fails_for_manual_reconciliation(tmp_store):
+    calls = {"n": 0}
+    registry = ToolRegistry()
+    registry.register(_send_tool(calls))
+    task_id = "task-legacy-resolved"
+    approval_id = "appr-legacy-resolved"
+    tmp_store.add_task(task_id, "legacy resolved", status="waiting_approval")
+    tmp_store.upsert_approval(
+        approval_id,
+        "send",
+        {"message": "legacy"},
+        "legacy send",
+        "plan",
+        None,
+    )
+    tmp_store.update_task(
+        task_id,
+        result_json=json.dumps(
+            {
+                "pending_approvals": [
+                    {"approval_id": approval_id, "tool": "send", "risk": "send"}
+                ]
+            }
+        ),
+    )
+    legacy_signature = json.dumps(
+        [{"approved_by": "legacy-cli", "role": "", "notes": "", "ts": time.time()}]
+    )
+    tmp_store._conn.execute(
+        "UPDATE approvals SET status='approved',resolved_at=?,approved_by=?,"
+        "signatures_json=? WHERE approval_id=?",
+        (time.time(), "legacy-cli", legacy_signature, approval_id),
+    )
+    tmp_store._conn.commit()
+    agent = PraxisAgent(
+        registry=registry,
+        llm=LLMClient(mode="mock"),
+        store=tmp_store,
+        planner=_SendPlanner(registry),
+    )
+    agent.broker.policy.allowed_tools = {"send"}
+
+    daemon = Daemon(store=tmp_store, agent=agent, heartbeat_interval=9999)
+    assert daemon.manager is not None
+    task = daemon.manager.get(task_id)
+    assert task is not None and task.status == "failed"
+    assert "manual reconciliation required" in task.error
+    assert "provider outcome unknown" in task.error
+    assert calls["n"] == 0
+    assert tmp_store.list_task_approval_actions(approval_id=approval_id) == []
+
+
 def test_daemon_rejected_task_approval_fails_waiting_task(tmp_store, mock_agent):
     daemon = Daemon(
         store=tmp_store,
@@ -577,6 +708,230 @@ def test_two_store_approval_claim_has_one_provider_winner(tmp_path):
     assert calls["n"] == 1
     task = store1.get_task(task_id)
     assert task is not None and task["status"] == "completed"
+
+
+def test_two_store_dual_task_signatures_atomically_claim_once(tmp_path):
+    database = tmp_path / "dual-task-race.db"
+    calls = {"n": 0}
+    calls_lock = threading.Lock()
+
+    def run_send(message: str, **kwargs) -> str:
+        with calls_lock:
+            calls["n"] += 1
+        return f"sent:{message}"
+
+    def make_agent(store):
+        registry = ToolRegistry()
+        registry.register(_send_tool())
+        tool = registry.get("send")
+        assert tool is not None
+        tool.run = run_send
+        agent = PraxisAgent(
+            registry=registry,
+            llm=LLMClient(mode="mock"),
+            store=store,
+            planner=_SendPlanner(registry),
+        )
+        agent.broker.policy.allowed_tools = {"send"}
+        agent.broker.policy.dual_approval_risks = {RiskClass.SEND}
+        return agent
+
+    store1 = Store.open(database)
+    agent1 = make_agent(store1)
+    daemon1 = Daemon(store=store1, agent=agent1, heartbeat_interval=9999)
+    task_id = daemon1.submit("dual-race", max_attempts=1)
+    daemon1.tick()
+    approval_id = next(iter(agent1.broker.pending))
+    assert agent1.broker.pending[approval_id].required_approvals == 2
+
+    store2 = Store.open(database)
+    agent2 = make_agent(store2)
+    daemon2 = Daemon(store=store2, agent=agent2, heartbeat_interval=9999)
+    assert approval_id in agent2.broker.pending
+
+    barrier = threading.Barrier(3)
+    results: list[bool] = []
+    errors: list[BaseException] = []
+
+    def approve(daemon, signer):
+        try:
+            barrier.wait()
+            results.append(daemon.approve(approval_id, approved_by=signer))
+        except BaseException as exc:  # pragma: no cover - assertion reports detail
+            errors.append(exc)
+
+    workers = [
+        threading.Thread(target=approve, args=(daemon1, "alice")),
+        threading.Thread(target=approve, args=(daemon2, "bob")),
+    ]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(timeout=5)
+
+    assert not errors
+    assert all(not worker.is_alive() for worker in workers)
+    assert sorted(results) == [False, True]
+    approval = store1.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "approved"
+    assert {item["approved_by"] for item in approval["signatures"]} == {"alice", "bob"}
+    assert calls["n"] == 1
+    task = store1.get_task(task_id)
+    assert task is not None and task["status"] == "completed"
+
+
+def test_compatibility_claim_cannot_bypass_dual_signature_threshold(tmp_store, mock_agent):
+    mock_agent.broker.policy.dual_approval_risks = {RiskClass.SEND}
+    daemon = Daemon(store=tmp_store, agent=mock_agent, heartbeat_interval=9999)
+    task_id = daemon.submit("compatibility-claim", max_attempts=1)
+    daemon.tick()
+    approval_id = next(iter(mock_agent.broker.pending))
+    supplied = [
+        {"approved_by": signer, "role": "reviewer", "notes": "", "ts": time.time()}
+        for signer in ("alice", "bob")
+    ]
+
+    assert not tmp_store.claim_task_approval_action(
+        approval_id,
+        signatures=supplied,
+        approved_by="alice",
+        approval_notes="first",
+    )
+    approval = tmp_store.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "pending"
+    assert [item["approved_by"] for item in approval["signatures"]] == ["alice"]
+    action = tmp_store.list_task_approval_actions(approval_id=approval_id)[0]
+    assert action["status"] == "pending_approval"
+
+    assert tmp_store.claim_task_approval_action(
+        approval_id,
+        signatures=supplied,
+        approved_by="bob",
+        approval_notes="second",
+    )
+    approval = tmp_store.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "approved"
+    assert [item["approved_by"] for item in approval["signatures"]] == ["alice", "bob"]
+    action = tmp_store.list_task_approval_actions(approval_id=approval_id)[0]
+    assert action["status"] == "pending_execution"
+    task = tmp_store.get_task(task_id)
+    assert task is not None and task["status"] == "waiting_approval"
+
+
+def test_sql_cannot_approve_below_threshold_or_mutate_resolution(tmp_store):
+    tmp_store.upsert_approval(
+        "appr-threshold",
+        "send",
+        {"message": "strict"},
+        "strict",
+        "chat",
+        None,
+        required_approvals=2,
+    )
+    one_signature = json.dumps(
+        [{"approved_by": "alice", "role": "reviewer", "notes": "", "ts": time.time()}]
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="threshold"):
+        tmp_store._conn.execute(
+            "INSERT INTO approvals(approval_id,tool,ts,required_approvals,"
+            "signatures_json,status) VALUES (?,?,?,?,?,?)",
+            ("appr-insert-bypass", "send", time.time(), 2, one_signature, "approved"),
+        )
+    tmp_store._conn.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="threshold"):
+        tmp_store._conn.execute(
+            "UPDATE approvals SET status='approved',signatures_json=? "
+            "WHERE approval_id='appr-threshold'",
+            (one_signature,),
+        )
+    tmp_store._conn.rollback()
+    approval = tmp_store.get_approval("appr-threshold")
+    assert approval is not None and approval["status"] == "pending"
+    with pytest.raises(ValueError, match="approve_with_signature"):
+        tmp_store.resolve_approval("appr-threshold", "approved")
+
+    assert not tmp_store.approve_with_signature(
+        "appr-threshold", "alice", role="reviewer"
+    )["fully_approved"]
+    assert tmp_store.approve_with_signature(
+        "appr-threshold", "bob", role="reviewer"
+    )["fully_approved"]
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        tmp_store._conn.execute(
+            "UPDATE approvals SET approval_notes='changed' "
+            "WHERE approval_id='appr-threshold'"
+        )
+    tmp_store._conn.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        tmp_store._conn.execute(
+            "UPDATE approvals SET tool='changed' WHERE approval_id='appr-threshold'"
+        )
+    tmp_store._conn.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        tmp_store._conn.execute(
+            "DELETE FROM approvals WHERE approval_id='appr-threshold'"
+        )
+    tmp_store._conn.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+        tmp_store.upsert_approval(
+            "appr-threshold",
+            "changed",
+            {"message": "replacement"},
+            "replacement",
+            "chat",
+            None,
+        )
+    tmp_store._conn.rollback()
+    approval = tmp_store.get_approval("appr-threshold")
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert approval["tool"] == "send"
+    assert approval["args"] == {"message": "strict"}
+
+
+def test_two_store_dual_chat_signatures_are_not_lost(tmp_path):
+    database = tmp_path / "dual-chat-race.db"
+    policy1 = GovernancePolicy(allowed_tools={"send"})
+    policy1.dual_approval_risks = {RiskClass.SEND}
+    store1 = Store.open(database)
+    broker1 = GovernanceBroker(policy1, store=store1)
+    decision = broker1.authorize(
+        "praxis", "send", RiskClass.SEND, {"message": "chat"}, provenance="chat"
+    )
+    approval_id = decision.approval_id
+    assert approval_id
+
+    policy2 = GovernancePolicy(allowed_tools={"send"})
+    policy2.dual_approval_risks = {RiskClass.SEND}
+    store2 = Store.open(database)
+    broker2 = GovernanceBroker(policy2, store=store2)
+    assert approval_id in broker2.pending
+
+    barrier = threading.Barrier(3)
+    results: list[bool] = []
+
+    def approve(broker, signer):
+        barrier.wait()
+        results.append(
+            broker.approve(approval_id, approved_by=signer) is not None
+        )
+
+    workers = [
+        threading.Thread(target=approve, args=(broker1, "alice")),
+        threading.Thread(target=approve, args=(broker2, "bob")),
+    ]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(timeout=5)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert sorted(results) == [False, True]
+    approval = store1.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "approved"
+    assert {item["approved_by"] for item in approval["signatures"]} == {"alice", "bob"}
 
 
 def _idempotent_task_agent(store, run_send, *, effect_type="send_message"):
