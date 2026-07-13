@@ -152,7 +152,14 @@ class PlanExecutor:
             raise ValueError("durable PlanExecutor requires complete scoped run context")
 
     def execute(self, goal: str, steps: "list[PlanStep] | None" = None) -> ExecutionReport:
-        steps = self._initial_steps(goal, steps)
+        stopping_status = self._stopping_status()
+        restored_approved_steps: set[str] = set()
+        steps = self._initial_steps(
+            goal,
+            steps,
+            reconcile=not stopping_status,
+            restored_approved_steps=restored_approved_steps,
+        )
         report = ExecutionReport(goal=goal, steps=list(steps))
         cycle_id = f"plan-{uuid.uuid4().hex[:10]}"
         durable_state = self._load_durable_state(goal, report)
@@ -176,6 +183,15 @@ class PlanExecutor:
             cycle_id,
         )
         self._checkpoint_report(goal, report, durable_state)
+        if stopping_status:
+            report.status = stopping_status
+            self._emit(
+                report,
+                "final",
+                {"status": report.status, "summary": report.summary()},
+                cycle_id,
+            )
+            return report
 
         done: set[str] = set()
         blocked: set[str] = set()
@@ -253,7 +269,14 @@ class PlanExecutor:
                 blocked.add(step.id)
                 self._checkpoint_report(goal, report, durable_state)
                 continue
-            outcome = self._run_step(step, report, cycle_id, goal, durable_state)
+            outcome = self._run_step(
+                step,
+                report,
+                cycle_id,
+                goal,
+                durable_state,
+                restored_approved_steps,
+            )
             if outcome == DONE:
                 done.add(step.id)
             elif outcome == HELD:
@@ -299,6 +322,7 @@ class PlanExecutor:
         cycle_id: str,
         goal: str,
         durable_state: dict[str, Any],
+        restored_approved_steps: set[str],
     ) -> str:
         step.status = RUNNING
         tool = self.registry.get(step.tool)
@@ -324,17 +348,30 @@ class PlanExecutor:
             )
             self._checkpoint_report(goal, report, durable_state)
             return FAILED
-        decision = self.broker.authorize(
-            actor=self.actor,
-            tool=step.tool,
-            risk=tool.risk,
-            args=step.args,
-            preview=f"{step.tool}({step.args})",
-            provenance="plan",
-            cycle_id=cycle_id,
-            rationale=f"Plan step: {step.intent}",
-            organization_id=(self.organization_id if self.checkpoints is not None else ""),
-        )
+        restored_grant = step.id in restored_approved_steps
+        if restored_grant:
+            self.broker.allow_tool_once(step.tool, step.args)
+        try:
+            decision = self.broker.authorize(
+                actor=self.actor,
+                tool=step.tool,
+                risk=tool.risk,
+                args=step.args,
+                preview=f"{step.tool}({step.args})",
+                provenance=f"plan:{self.run_id or cycle_id}:{step.id}",
+                cycle_id=cycle_id,
+                rationale=f"Plan step: {step.intent}",
+                organization_id=(self.organization_id if self.checkpoints is not None else ""),
+            )
+        except BaseException:
+            if restored_grant:
+                self.broker.revoke_tool_once(step.tool, step.args)
+                restored_approved_steps.discard(step.id)
+            raise
+        if restored_grant:
+            restored_approved_steps.discard(step.id)
+            if decision.policy_rule != "session_exact_oneshot_allow":
+                self.broker.revoke_tool_once(step.tool, step.args)
         if decision.verdict is Verdict.ALLOW:
             if not self._prepare_consequential_allow(step, tool, report, goal, durable_state):
                 return FAILED
@@ -444,7 +481,14 @@ class PlanExecutor:
                 self.on_event(etype, data)
             except Exception:  # UI/trace plumbing must never break execution
                 pass
-    def _initial_steps(self, goal: str, steps: "list[PlanStep] | None") -> list[PlanStep]:
+    def _initial_steps(
+        self,
+        goal: str,
+        steps: "list[PlanStep] | None",
+        *,
+        reconcile: bool = True,
+        restored_approved_steps: set[str] | None = None,
+    ) -> list[PlanStep]:
         if self.checkpoints is not None:
             latest = self.checkpoints.latest(self.organization_id, self.workspace_id, self.run_id)
             if latest is not None:
@@ -453,20 +497,49 @@ class PlanExecutor:
                     persisted_steps or "status" in latest.state
                 ):
                     restored = [self._deserialize_step(item) for item in persisted_steps]
-                    self._reconcile_restored_steps(restored, latest.state)
+                    if reconcile:
+                        self._reconcile_restored_steps(
+                            restored,
+                            latest.state,
+                            restored_approved_steps
+                            if restored_approved_steps is not None else set(),
+                        )
                     return restored
         if steps is not None:
             return steps
         return to_plan_steps(self.planner.plan(goal).steps)
 
-    def _reconcile_restored_steps(self, steps: list[PlanStep], state: dict[str, Any]) -> None:
+    def _reconcile_restored_steps(
+        self,
+        steps: list[PlanStep],
+        state: dict[str, Any],
+        restored_approved_steps: set[str],
+    ) -> None:
         outbox = {
             item.get("step_id"): item
             for item in state.get("outbox", [])
             if isinstance(item, dict) and isinstance(item.get("step_id"), str)
         }
+        approval_owner_counts: dict[str, int] = {}
+        for candidate in steps:
+            if candidate.approval_id:
+                approval_owner_counts[candidate.approval_id] = (
+                    approval_owner_counts.get(candidate.approval_id, 0) + 1
+                )
+        shared_approvals = {
+            approval_id
+            for approval_id, count in approval_owner_counts.items()
+            if count > 1
+        }
         approval_store = self.store or getattr(self.broker, "store", None)
         for step in steps:
+            if step.approval_id in shared_approvals:
+                if step.status in {HELD, PENDING, RUNNING}:
+                    step.status = FAILED
+                    step.output = (
+                        "manual reconciliation: approval is bound to multiple plan steps"
+                    )
+                continue
             entry = outbox.get(step.id, {})
             approval = None
             if step.approval_id and approval_store is not None:
@@ -479,7 +552,7 @@ class PlanExecutor:
                 and approval.get("args") == step.args
             )
             if step.status == HELD and approved_action:
-                self.broker.allow_tool_once(step.tool, step.args)
+                restored_approved_steps.add(step.id)
                 step.status = PENDING
             elif (
                 step.status == HELD
@@ -504,7 +577,7 @@ class PlanExecutor:
                     and entry.get("effect_type") == pending_effect_type
                     and entry.get("args") == step.args
                 ):
-                    self.broker.allow_tool_once(step.tool, step.args)
+                    restored_approved_steps.add(step.id)
             if step.status != RUNNING:
                 continue
             tool = self.registry.get(step.tool)
@@ -537,7 +610,7 @@ class PlanExecutor:
             entry_status = entry.get("status")
             if entry_status == "pending_approval":
                 if approved_action and entry_matches:
-                    self.broker.allow_tool_once(step.tool, step.args)
+                    restored_approved_steps.add(step.id)
                     step.status = PENDING
                 elif approval and approval.get("status") in {"rejected", "expired"}:
                     step.status = DENIED
@@ -556,7 +629,7 @@ class PlanExecutor:
                 and bool(idempotency_key)
             )
             if provider_retry and approved_action:
-                self.broker.allow_tool_once(step.tool, step.args)
+                restored_approved_steps.add(step.id)
                 step.status = PENDING
             elif provider_retry:
                 step.status = FAILED

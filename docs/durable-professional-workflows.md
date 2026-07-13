@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.10`)
+Status: Phase 4 release candidate (`0.26.11`)
 
 ## Scope
 
@@ -63,6 +63,8 @@ It checkpoints the plan and every durable step transition. Persisted progress al
 - `running` read/draft: may be retried;
 - `running` consequential intent: may be retried only with a provider idempotency key and the exact durable approved action;
 - consequential intent without safe reconciliation evidence: fails closed for manual reconciliation.
+
+Every execution-scoped PlanExecutor step uses stable `plan:<run-or-cycle>:<step>` provenance, so identical independent steps require independent approvals; the legacy literal `plan` provenance still deduplicates conversational re-proposals. Restored approvals do not mint grants while deserializing. After terminal/cancellation checks, an eligible step receives an exact just-in-time grant immediately before authorization; denial or authorization failure revokes it, and successful authorization consumes it exactly once. Terminal, interrupted, cancelled, and failed runs therefore cannot leak restored grants into later work.
 
 Approval resumption is a separate executor invocation. `SEND` and `DESTRUCTIVE` actions remain held in enforced mode and are never executed in the same invocation that created their approval. In the daemon task path, every held action is bound to the exact task provenance, tool, strict-JSON arguments, effect type, consequential risk class, and action fingerprint. Each task action owns an independent approval even when another task proposes identical tool arguments. Distinct signer append, persisted threshold evaluation, final approval resolution, and transition to `pending_execution` commit in one `BEGIN IMMEDIATE` transaction before the provider call. SQLite rejects below-threshold approval and mutation of resolved decisions or durable action identity. The task completes only after every linked action has an immutable receipt; rejecting one action fails the task and cancels its remaining unclaimed actions. A pre-claim kill-switch or egress denial leaves the task and approval waiting, and store-backed kill checks refresh durable state across daemon processes.
 
@@ -142,4 +144,4 @@ python3 -m hybridagent.cli demo
 python3 scripts/check_architecture.py
 ```
 
-The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. The `0.26.10` candidate passes 1,208 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 126 PP40 contracts, 1,219 total tests with 17 expected skips at 81.79% coverage, 40/40 capability evals, static and architecture checks, semantic demo, populated `v0.25.20`, real isolated `v0.26.6`, and fail-closed rejected-`v0.26.9` migrations, artifact/install verification, rebuilt-container dashboard smoke, security scanning, and repeated concurrency stress. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
+The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. The `0.26.11` candidate passes 1,216 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 131 PP40 contracts, 1,227 total tests with 17 expected skips at 81.78% coverage, 40/40 capability evals, static and architecture checks, semantic demo, populated `v0.25.20`, real isolated `v0.26.6`, fail-closed rejected-`v0.26.9`, and fail-closed shared-plan `v0.26.10` migrations, artifact/install verification, rebuilt-container dashboard smoke, security scanning, and 25 repeated eight-outcome lifecycle stress runs. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.

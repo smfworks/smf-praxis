@@ -31,6 +31,47 @@ def test_identical_proposal_reuses_pending_approval():
     assert len(b.pending) == 1
 
 
+def test_execution_scoped_plan_actions_do_not_deduplicate():
+    b = _broker("send_email")
+    args = {"draft_id": "d1"}
+    d1 = b.authorize(
+        "agent", "send_email", RiskClass.SEND, args, provenance="plan:run-1:s1"
+    )
+    d2 = b.authorize(
+        "agent", "send_email", RiskClass.SEND, args, provenance="plan:run-1:s2"
+    )
+    assert d1.approval_id != d2.approval_id
+    assert len(b.pending) == 2
+
+
+def test_legacy_literal_plan_proposals_still_deduplicate():
+    b = _broker("send_email")
+    args = {"draft_id": "d1"}
+    d1 = b.authorize(
+        "agent", "send_email", RiskClass.SEND, args, provenance="plan"
+    )
+    d2 = b.authorize(
+        "agent", "send_email", RiskClass.SEND, args, provenance="plan"
+    )
+    assert d1.approval_id == d2.approval_id
+    assert d2.policy_rule == "approval_deduped"
+
+
+def test_exact_grant_revocation_decrements_one_count():
+    b = _broker("send_email")
+    args = {"draft_id": "d1"}
+    b.allow_tool_once("send_email", args)
+    b.allow_tool_once("send_email", args)
+    b.revoke_tool_once("send_email", args)
+
+    allowed = _send(b, args)
+    held = _send(b, args)
+    assert allowed.verdict is Verdict.ALLOW
+    assert allowed.policy_rule == "session_exact_oneshot_allow"
+    assert held.verdict is Verdict.NEEDS_APPROVAL
+    assert b._session_one_shot_actions == {}
+
+
 def test_different_args_queue_separate_approvals():
     b = _broker("send_email")
     d1 = _send(b, {"draft_id": "d1"})
