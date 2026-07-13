@@ -187,7 +187,7 @@ def test_daemon_resume_after_approval(tmp_store, mock_agent):
     assert task.status in ("waiting_approval", "failed")
     if task.status == "waiting_approval":
         approval_id = list(mock_agent.broker.pending.keys())[0]
-        mock_agent.approve(approval_id, approved_by="tester")
+        daemon.approve(approval_id, approved_by="tester")
         daemon.resume(task_id)
         task = daemon.manager.get(task_id)
         assert task is not None

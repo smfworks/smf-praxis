@@ -33,6 +33,8 @@ class Tool:
     description: str
     run: Callable[..., str]
     parameters: dict | None = None  # optional JSON-schema arg spec (function-calling)
+    effect_type: str = ""
+    idempotency_key_arg: str = ""
 
 
 class ToolRegistry:

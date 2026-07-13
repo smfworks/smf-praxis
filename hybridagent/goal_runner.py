@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .agent import CycleReport, PraxisAgent
+from .checkpoints import CheckpointRegistry
 from .verifier import AnswerVerifier
 
 
@@ -91,11 +92,22 @@ class GoalRunner:
 
     def __init__(self, agent: PraxisAgent, *, max_turns: int = 8,
                  verifier: AnswerVerifier | None = None,
-                 threshold: float = 0.3) -> None:
+                 threshold: float = 0.3,
+                 checkpoints: CheckpointRegistry | None = None,
+                 organization_id: str = "", workspace_id: str = "",
+                 run_id: str = "", actor_id: str = "") -> None:
         self.agent = agent
         self.max_turns = max(1, max_turns)
         self.verifier = verifier or AnswerVerifier()
         self.threshold = max(0.0, min(1.0, threshold))
+        self.checkpoints = checkpoints
+        self.organization_id = organization_id
+        self.workspace_id = workspace_id
+        self.run_id = run_id
+        self.actor_id = actor_id
+        if checkpoints is not None and not all(
+                (organization_id, workspace_id, run_id, actor_id)):
+            raise ValueError("durable GoalRunner requires complete scoped run context")
 
     def run(self, goal: str, *, approve_all: bool = False) -> GoalResult:
         """Loop the agent on ``goal`` until done or the budget is spent.
@@ -110,6 +122,9 @@ class GoalRunner:
         """
         result = GoalResult(goal=goal, max_turns=self.max_turns)
         for turn_i in range(1, self.max_turns + 1):
+            if self._is_cancelled():
+                result.stopped_reason = "cancelled"
+                break
             t0 = time.monotonic()
             try:
                 report = self.agent.handle(goal)
@@ -140,6 +155,18 @@ class GoalRunner:
                             verdict=verdict, elapsed_s=elapsed)
             result.turns.append(turn)
             result.final_progress = progress
+            self._checkpoint_result(result)
+            if held and self.checkpoints is not None:
+                self.checkpoints.interrupt(
+                    self.organization_id, self.workspace_id, self.run_id,
+                    actor_id=self.actor_id, interrupt_type="approval",
+                    payload={
+                        "approval_ids": [
+                            str(item.get("approval_id", ""))
+                            for item in report.pending_approvals
+                        ],
+                        "turn": turn_i,
+                    })
             if result.stopped_reason in ("approved", "blocked"):
                 break
         else:
@@ -147,6 +174,21 @@ class GoalRunner:
             if not result.stopped_reason:
                 result.stopped_reason = "max_turns"
         return result
+
+    def _is_cancelled(self) -> bool:
+        if self.checkpoints is None:
+            return False
+        run = self.checkpoints.get_run(
+            self.organization_id, self.workspace_id, self.run_id)
+        return run is None or run.status == "cancelled"
+
+    def _checkpoint_result(self, result: GoalResult) -> None:
+        if self.checkpoints is None:
+            return
+        record = self.to_record(result)
+        self.checkpoints.checkpoint(
+            self.organization_id, self.workspace_id, self.run_id,
+            actor_id=self.actor_id, state=record)
 
     def _score(self, goal: str, answer: str) -> float:
         """Score the answer's progress toward the goal in [0, 1].

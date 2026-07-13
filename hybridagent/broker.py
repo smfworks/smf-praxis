@@ -184,6 +184,11 @@ class KillSwitch:
 
     @property
     def tripped(self) -> bool:
+        # The durable brake is authoritative across independent daemon processes.
+        # Refresh on every safety check so a trip in one worker cannot be bypassed
+        # by another worker's construction-time cache.
+        if self._store is not None:
+            self._tripped = bool(self._store.get_killswitch())
         return self._tripped
 
 
@@ -237,6 +242,9 @@ class GovernanceBroker:
         # dashboard "Approve once" so a held chat turn can resume without
         # permanently waiving approval for the tool).
         self._session_one_shot_tools: set[str] = set()
+        # Durable workflow resumes bind grants to the exact tool+args fingerprint.
+        # Counts matter when multiple independently approved actions use one tool.
+        self._session_one_shot_actions: dict[str, int] = {}
         self.store = store
         self.log = get_logger("praxis.broker")
         self.mode = (coerce_compliance_mode(store.get_compliance_mode())
@@ -423,6 +431,18 @@ class GovernanceBroker:
                                           args_hash=args_hash)
         # One-shot allow: consume exactly once (dashboard "Approve once" + chat resume).
         # Still respects allowlist, pack, kill-switch, and egress firewall.
+        exact_grant = self._one_shot_action_key(tool, args)
+        exact_count = self._session_one_shot_actions.get(exact_grant, 0)
+        if exact_count:
+            if exact_count == 1:
+                self._session_one_shot_actions.pop(exact_grant, None)
+            else:
+                self._session_one_shot_actions[exact_grant] = exact_count - 1
+            return self._log_decision(
+                actor, tool, risk, Verdict.ALLOW,
+                "auto-allowed (exact one-shot approval)",
+                decision_id=decision_id, cycle_id=cycle_id,
+                policy_rule="session_exact_oneshot_allow", args_hash=args_hash)
         if tool in self._session_one_shot_tools:
             self._session_one_shot_tools.discard(tool)
             return self._log_decision(
@@ -457,11 +477,17 @@ class GovernanceBroker:
                 f"auto-allowed (compliance {mode.value})",
                 decision_id=decision_id, cycle_id=cycle_id,
                 policy_rule="compliance_off_allow", args_hash=args_hash)
-        # Idempotency: an identical action (same tool + args) already pending and
-        # unexpired reuses that approval instead of queuing a duplicate, so a
-        # re-proposed action (e.g. a verifier-revised turn) can't mint a second
-        # approval a human could approve twice -> double execution.
-        existing = self._find_pending(tool, args_hash, organization_id)
+        # Idempotency applies to conversational re-proposals only. Every queued task
+        # action and every execution-scoped PlanExecutor step owns its approval:
+        # sharing one approval across independent effects can authorize multiple
+        # provider calls from a single human decision. The legacy literal ``plan``
+        # provenance remains conversationally deduplicated for API compatibility.
+        execution_scoped = str(provenance).startswith(("task:", "plan:"))
+        existing = (
+            None
+            if execution_scoped
+            else self._find_pending(tool, args_hash, organization_id)
+        )
         if existing is not None:
             return self._log_decision(
                 actor, tool, risk, Verdict.NEEDS_APPROVAL,
@@ -503,24 +529,50 @@ class GovernanceBroker:
 
     def approve(self, approval_id: str, approved_by: str = "",
                 approval_notes: str = "", approved_role: str = "") -> PendingApproval | None:
+        """Persist one signature; return only after the authoritative threshold."""
         pending = self.pending.get(approval_id)
         if pending is None:
             return None
+        signer = (approved_by or "").strip()
         if pending.expires_at and pending.expires_at < time.time():
             self.pending.pop(approval_id, None)
             if self.store is not None:
                 self.store.resolve_approval(approval_id, "expired")
             self.log.info("approval %s expired", approval_id)
             return None
-        signer = (approved_by or "").strip()
-        # Four-eyes: dual-approval requires a non-empty distinct identity so two
-        # blank signatures cannot satisfy required_approvals > 1.
+
+        if self.store is not None:
+            result = self.store.approve_with_signature(
+                approval_id, signer, approval_notes, approved_role
+            )
+            pending.approvals = [dict(item) for item in result.get("signatures", [])]
+            pending.required_approvals = int(
+                result.get("required_approvals", pending.required_approvals)
+            )
+            status = str(result.get("status") or "")
+            if not result.get("accepted"):
+                if status != "pending":
+                    self.pending.pop(approval_id, None)
+                self.log.info(
+                    "approval %s signature refused in state %s", approval_id, status
+                )
+                return None
+            if not result.get("fully_approved"):
+                self.log.info("approval %s: %d/%d signatures collected",
+                              approval_id, len(pending.approvals),
+                              pending.required_approvals)
+                return None
+            self.pending.pop(approval_id, None)
+            return pending
+
+        if pending.expires_at and pending.expires_at < time.time():
+            self.pending.pop(approval_id, None)
+            self.log.info("approval %s expired", approval_id)
+            return None
         if pending.required_approvals > 1 and not signer:
             self.log.info("approval %s: dual-approval requires non-empty approved_by",
                           approval_id)
             return None
-        # Four-eyes principle: an approver who already signed THIS approval
-        # cannot sign it a second time to satisfy the dual-approval requirement.
         if signer and any(a.get("approved_by") == signer
                           for a in pending.approvals):
             self.log.info("approval %s: %s already signed; second approver required",
@@ -530,20 +582,10 @@ class GovernanceBroker:
             "approved_by": signer, "role": approved_role,
             "notes": approval_notes, "ts": time.time(),
         })
-        if self.store is not None:
-            self.store.add_approval_signature(
-                approval_id, signer, approval_notes, approved_role)
         if not pending.fully_approved:
             self.log.info("approval %s: %d/%d signatures collected",
                           approval_id, len(pending.approvals),
                           pending.required_approvals)
-            return None
-        # All signatures collected -> atomically claim execution.
-        if self.store is not None and not self.store.resolve_approval(
-                approval_id, "approved", approved_by=signer,
-                approval_notes=approval_notes):
-            self.pending.pop(approval_id, None)        # already resolved elsewhere
-            self.log.info("approval %s already resolved; refusing", approval_id)
             return None
         self.pending.pop(approval_id, None)
         return pending
@@ -558,17 +600,18 @@ class GovernanceBroker:
         self._session_allowed_tools.add(tool)
         self.log.info("tool %s added to session allowlist", tool)
 
-    def allow_tool_once(self, tool: str) -> None:
-        """Allow a tool for exactly one subsequent authorize() in this session.
-
-        Used by dashboard "Approve once" so a held chat turn can resume and the
-        model can complete the action without permanently waiving approval.
-        """
+    def allow_tool_once(self, tool: str, args: dict | None = None) -> None:
+        """Allow one subsequent authorization, optionally for an exact action."""
         name = (tool or "").strip()
         if not name:
             return
-        self._session_one_shot_tools.add(name)
-        self.log.info("tool %s granted one-shot session allow", name)
+        if args is None:
+            self._session_one_shot_tools.add(name)
+            self.log.info("tool %s granted one-shot session allow", name)
+            return
+        key = self._one_shot_action_key(name, args)
+        self._session_one_shot_actions[key] = self._session_one_shot_actions.get(key, 0) + 1
+        self.log.info("tool %s granted exact one-shot session allow", name)
 
     def reject(self, approval_id: str) -> bool:
         """Reject a pending approval. Returns True if it was pending."""
@@ -578,11 +621,23 @@ class GovernanceBroker:
             self.store.resolve_approval(approval_id, "rejected")
         return existed
 
-    def revoke_tool_once(self, tool: str) -> None:
-        """Drop a previously granted one-shot allow (if still unused)."""
+    def revoke_tool_once(self, tool: str, args: dict | None = None) -> None:
+        """Drop one unconsumed generic or exact one-shot grant."""
         name = (tool or "").strip()
-        if name:
+        if not name:
+            return
+        if args is None:
             self._session_one_shot_tools.discard(name)
+            return
+        key = self._one_shot_action_key(name, args)
+        count = self._session_one_shot_actions.get(key, 0)
+        if count <= 1:
+            self._session_one_shot_actions.pop(key, None)
+        else:
+            self._session_one_shot_actions[key] = count - 1
+
+    def _one_shot_action_key(self, tool: str, args: dict) -> str:
+        return f"{tool}\n{self._hash_args(args)}"
 
     def egress_blocked_for(self, args: dict) -> str:
         """Public egress check: non-empty reason string if the action is blocked.
@@ -625,9 +680,15 @@ class GovernanceBroker:
     def _find_pending(self, tool: str, args_hash: str,
                       organization_id: str = "") -> str | None:
         now = time.time()
-        for aid, p in self.pending.items():
+        for aid, p in list(self.pending.items()):
             if aid not in self._session_approvals:
                 continue  # only dedup re-proposals made in this broker session
+            if self.store is not None:
+                row = self.store.get_approval(aid)
+                if row is None or row.get("status") != "pending":
+                    self.pending.pop(aid, None)
+                    self._session_approvals.discard(aid)
+                    continue
             if p.tool != tool:
                 continue
             if p.organization_id != organization_id:

@@ -52,6 +52,8 @@ from .planner import Plan, Planner, Step
 from .rag import Rag, RetrievedChunk, chunk_text, reciprocal_rank_fusion
 from .reflection import Reflector
 from .reflexion import ReflexionConfig, ReflexiveChatAgent
+from .research_run import ResearchRunError, ResearchSupervisor
+from .reviews import ProfessionalReview, ReviewError, ReviewRegistry
 from .router import ModelRouter, classify_sensitivity
 from .router_model import RouterModel
 from .scratchpad import Scratchpad, ScratchpadEntry
@@ -71,6 +73,8 @@ __all__ = [
     "Tool", "ToolRegistry", "default_registry",
     "Planner", "Step", "Plan",
     "PlanExecutor", "PlanStep", "ExecutionReport", "to_plan_steps",
+    "ResearchSupervisor", "ResearchRunError",
+    "ReviewRegistry", "ProfessionalReview", "ReviewError",
     "AgentService",
     "Perception", "Signal",
     "Reflector",
@@ -106,4 +110,4 @@ __all__ = [
     "UnsafeSourceError", "fetch_url", "validate_uri",
 ]
 
-__version__ = "0.25.20"
+__version__ = "0.26.16"
