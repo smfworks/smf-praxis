@@ -51,7 +51,7 @@ LOCAL_MODULES = {
     "onboard", "orchestrator", "organizations", "pack", "perception", "persona",
     "persistence", "plan_execute", "planner", "plugins", "pricing", "pulse",
     "rag", "readiness", "real_tools", "reflection", "reflexion", "router", "run_state",
-    "router_model", "sandbox", "scratchpad", "search", "security_scan",
+    "research_run", "reviews", "router_model", "sandbox", "scratchpad", "search", "security_scan",
     "skill_evaluator", "skills", "structured", "task_manager", "tools",
     "validation", "vault", "vecsim", "vertical_evals", "voice", "wiki",
     "wiki_safe", "workspaces", "workspace_context", "workspace_timeline", "wsutil", "verifier", "verifier_llm", "benchmark", "errors",

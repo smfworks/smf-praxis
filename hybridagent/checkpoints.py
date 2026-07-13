@@ -170,8 +170,16 @@ class CheckpointRegistry:
         assert result is not None
         return result
 
-    def checkpoint(self, organization_id: str, workspace_id: str, run_id: str, *,
-                   actor_id: str, state: dict[str, Any]) -> Checkpoint:
+    def checkpoint(
+        self,
+        organization_id: str,
+        workspace_id: str,
+        run_id: str,
+        *,
+        actor_id: str,
+        state: dict[str, Any],
+        expected_head_checkpoint_id: str | None = None,
+    ) -> Checkpoint:
         self._validate_scope(organization_id, workspace_id, actor_id)
         state_json = self._json_object(state, "checkpoint state")
         run = self.get_run(organization_id, workspace_id, run_id)
@@ -190,25 +198,47 @@ class CheckpointRegistry:
                 current = conn.execute(
                     "SELECT head_checkpoint_id,status FROM professional_runs WHERE "
                     "organization_id=? AND workspace_id=? AND run_id=?",
-                    (organization_id, workspace_id, run_id)).fetchone()
+                    (organization_id, workspace_id, run_id),
+                ).fetchone()
                 if current is None:
                     raise CheckpointError("run does not exist in workspace")
-                if current[1] == "cancelled":
-                    raise CheckpointError("cancelled run cannot be checkpointed")
+                if current[1] not in {"running", "interrupted"}:
+                    raise CheckpointError(f"{current[1]} run cannot be checkpointed")
+                if (
+                    expected_head_checkpoint_id is not None
+                    and current[0] != expected_head_checkpoint_id
+                ):
+                    raise CheckpointError("stale checkpoint head")
                 sequence_row = conn.execute(
-                    "SELECT COALESCE(MAX(sequence),0)+1 FROM run_checkpoints "
-                    "WHERE run_id=?", (run_id,)).fetchone()
+                    "SELECT COALESCE(MAX(sequence),0)+1 FROM run_checkpoints WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()
                 sequence = int(sequence_row[0])
                 conn.execute(
                     "INSERT INTO run_checkpoints(checkpoint_id,run_id,organization_id,"
                     "workspace_id,parent_checkpoint_id,sequence,state_json,"
                     "schema_manifest_json,created_by,created_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (checkpoint_id, run_id, organization_id, workspace_id,
-                     current[0] or None, sequence, state_json,
-                     self._json_object(run.schema_manifest, "schema manifest"), actor_id, now))
-                conn.execute(
+                    (
+                        checkpoint_id,
+                        run_id,
+                        organization_id,
+                        workspace_id,
+                        current[0] or None,
+                        sequence,
+                        state_json,
+                        self._json_object(run.schema_manifest, "schema manifest"),
+                        actor_id,
+                        now,
+                    ),
+                )
+                cur = conn.execute(
                     "UPDATE professional_runs SET head_checkpoint_id=?,updated_ts=? "
-                    "WHERE run_id=?", (checkpoint_id, now, run_id))
+                    "WHERE organization_id=? AND workspace_id=? AND run_id=? "
+                    "AND head_checkpoint_id=?",
+                    (checkpoint_id, now, organization_id, workspace_id, run_id, current[0]),
+                )
+                if cur.rowcount != 1:
+                    raise CheckpointError("stale checkpoint head")
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -245,6 +275,24 @@ class CheckpointRegistry:
             raise CheckpointError("cancel reason is required")
         return self._transition(organization_id, workspace_id, run_id, actor_id,
                                 "cancelled", cancel_reason=reason.strip())
+
+    def complete(
+        self, organization_id: str, workspace_id: str, run_id: str, *, actor_id: str
+    ) -> WorkflowRun:
+        return self._transition(organization_id, workspace_id, run_id, actor_id, "completed")
+
+    def fail(
+        self,
+        organization_id: str,
+        workspace_id: str,
+        run_id: str,
+        *,
+        actor_id: str,
+        reason: str = "",
+    ) -> WorkflowRun:
+        return self._transition(
+            organization_id, workspace_id, run_id, actor_id, "failed", cancel_reason=reason.strip()
+        )
 
     def record_effect(self, organization_id: str, workspace_id: str, run_id: str, *,
                       actor_id: str, idempotency_key: str, effect_type: str,
@@ -303,15 +351,26 @@ class CheckpointRegistry:
             (organization_id, workspace_id, run_id, idempotency_key))
         return self._receipt(row) if row else None
 
-    def _transition(self, organization_id: str, workspace_id: str, run_id: str,
-                    actor_id: str, status: str, *, interrupt_type: str = "",
-                    interrupt_payload_json: str = "{}", cancel_reason: str = "") -> WorkflowRun:
+    def _transition(
+        self,
+        organization_id: str,
+        workspace_id: str,
+        run_id: str,
+        actor_id: str,
+        status: str,
+        *,
+        interrupt_type: str = "",
+        interrupt_payload_json: str = "{}",
+        cancel_reason: str = "",
+    ) -> WorkflowRun:
         self._validate_scope(organization_id, workspace_id, actor_id)
         RunState(status, interrupt_type)
         allowed_sources = {
             "interrupted": ("running",),
             "running": ("interrupted",),
             "cancelled": ("running", "interrupted"),
+            "completed": ("running",),
+            "failed": ("running",),
         }.get(status, ())
         if not allowed_sources:
             raise CheckpointError(f"unsupported lifecycle transition to {status}")
@@ -325,9 +384,20 @@ class CheckpointRegistry:
                     "UPDATE professional_runs SET status=?,interrupt_type=?,"
                     "interrupt_payload_json=?,cancel_reason=?,updated_ts=? WHERE "
                     "organization_id=? AND workspace_id=? AND run_id=? AND status IN ("
-                    + placeholders + ")",
-                    (status, interrupt_type, interrupt_payload_json, cancel_reason, now,
-                     organization_id, workspace_id, run_id, *allowed_sources))
+                    + placeholders
+                    + ")",
+                    (
+                        status,
+                        interrupt_type,
+                        interrupt_payload_json,
+                        cancel_reason,
+                        now,
+                        organization_id,
+                        workspace_id,
+                        run_id,
+                        *allowed_sources,
+                    ),
+                )
                 if cur.rowcount != 1:
                     raise CheckpointError("invalid or concurrent lifecycle transition")
                 conn.commit()
