@@ -39,6 +39,21 @@ Alternatively, install from git:
 pip install "git+https://github.com/smfworks/smf-praxis.git@main"
 ```
 
+## Optional professional artifact renderers
+
+Canonical JSON and Markdown generation, validation, versioning, comparison, and
+release-bundle verification are part of the dependency-free core. Install the
+`artifacts` extra from a source checkout for DOCX, PDF, PPTX, and XLSX output:
+
+```bash
+pip install -e ".[artifacts]"
+# development + rich artifacts
+pip install -e ".[dev,artifacts]"
+```
+
+The extra installs `python-docx`, `reportlab`, `python-pptx`, `openpyxl`, Pillow,
+and `pypdf`. See [Artifact Studio](artifacts/README.md).
+
 ## After install — three jobs
 
 ```bash

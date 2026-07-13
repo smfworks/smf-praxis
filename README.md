@@ -37,6 +37,10 @@ See **[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability 
 - **Grows with you** — distills reusable skills *and* **evolves** them (PR-gated,
   fitness-scored from real usage), with a **plugin system + marketplace** for
   third-party extensions.
+- **Professional Artifact Studio** — validated canonical document IR; exact citations
+  to immutable evidence; append-only tenant-scoped versions with semantic comparison;
+  deterministic JSON/Markdown plus optional DOCX/PDF/PPTX/XLSX; exact professional
+  review/signature gates; and self-verifying, content-addressed release bundles.
 - **Dependency-free core**, model-agnostic (incl. **Azure AI Foundry**), and
   **verified on Linux, macOS, and Windows** in CI (full suite + both installers +
   Docker, 80% coverage gate) — **40/40** capability/safety evals.
@@ -58,6 +62,29 @@ perceive → plan → govern → act/draft → reflect → consolidate
 - **act/draft** — execute autonomous steps; queue consequential ones.
 - **reflect / consolidate** — distill outcomes into durable facts + reusable
   skills with provenance, then clear working memory (summarize-not-hoard).
+
+## Professional Artifact Studio
+
+Praxis can turn governed evidence and durable workflow state into defensible
+professional deliverables:
+
+- a strict, versioned, dependency-free document model with canonical JSON identity;
+- citations bound to exact organization/workspace source versions, evidence spans,
+  and material claims;
+- deterministic JSON and Markdown renderers in core, with DOCX, PDF, PPTX, and
+  XLSX through the optional `artifacts` extra;
+- append-only versions with expected-head compare-and-swap and semantic comparison;
+- exact professional-release reviews and signatures revalidated against active roles;
+- atomic, idempotent releases bound to the current version and durable run checkpoint;
+- deterministic ZIP evidence packages with a canonical manifest, SHA-256/size for
+  every member, fixed metadata, traversal/collision/size defenses, and full
+  post-build verification.
+
+Install rich renderers from a clone with `pip install -e ".[artifacts]"`. JSON and
+Markdown need no extra dependencies. See
+[`docs/artifacts/README.md`](docs/artifacts/README.md) for the public Python API and
+[`docs/artifacts/phase-5-architecture.md`](docs/artifacts/phase-5-architecture.md)
+for the design and threat model.
 
 ## Setup
 
@@ -90,9 +117,9 @@ irm https://raw.githubusercontent.com/smfworks/smf-praxis/main/install.ps1 | iex
 # or from a clone:  .\install.ps1
 ```
 
-Useful flags — bash uses `--with docs,multimodal,fast` / `--no-configure` /
+Useful flags — bash uses `--with docs,artifacts,multimodal,fast` / `--no-configure` /
 `--provider ollama --model llama3.1`; PowerShell uses the same names as
-parameters: `-With docs,multimodal,fast` / `-NoConfigure` /
+parameters: `-With docs,artifacts,multimodal,fast` / `-NoConfigure` /
 `-Provider ollama -Model llama3.1`. Then `source .venv/bin/activate`
 (`.venv\Scripts\Activate.ps1` on Windows) and run `praxis demo`.
 
