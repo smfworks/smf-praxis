@@ -4947,7 +4947,17 @@ class Daemon:
                     continue
                 approval_id = reference.get("approval_id")
                 tool_name = reference.get("tool")
-                if type(approval_id) is not str or type(tool_name) is not str:
+                if type(approval_id) is not str:
+                    continue
+                if type(tool_name) is not str:
+                    reason = (
+                        "manual reconciliation required: legacy held action is missing "
+                        "its exact tool context"
+                    )
+                    if self.store.fail_legacy_waiting_task_approval(
+                        str(task["task_id"]), approval_id, reason=reason
+                    ):
+                        self.agent.broker.pending.pop(approval_id, None)
                     continue
                 approval = self.store.get_approval(approval_id)
                 approval_status = str((approval or {}).get("status") or "missing")

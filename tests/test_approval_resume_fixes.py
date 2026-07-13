@@ -584,6 +584,52 @@ def test_legacy_waiting_task_with_drifted_risk_fails_closed(tmp_store, current_r
     assert calls["n"] == 0
 
 
+def test_legacy_waiting_task_missing_tool_fails_for_manual_reconciliation(tmp_store):
+    calls = {"n": 0}
+    registry = ToolRegistry()
+    registry.register(_send_tool(calls))
+    task_id = "task-legacy-missing-tool"
+    approval_id = "appr-legacy-missing-tool"
+    tmp_store.add_task(task_id, "legacy missing tool", status="waiting_approval")
+    tmp_store.upsert_approval(
+        approval_id,
+        "send",
+        {"message": "legacy"},
+        "legacy send",
+        "plan",
+        None,
+    )
+    tmp_store.update_task(
+        task_id,
+        result_json=json.dumps(
+            {
+                "pending_approvals": [
+                    {"approval_id": approval_id, "risk": RiskClass.SEND.value}
+                ]
+            }
+        ),
+    )
+    agent = PraxisAgent(
+        registry=registry,
+        llm=LLMClient(mode="mock"),
+        store=tmp_store,
+        planner=_SendPlanner(registry),
+    )
+    agent.broker.policy.allowed_tools = {"send"}
+
+    daemon = Daemon(store=tmp_store, agent=agent, heartbeat_interval=9999)
+    assert daemon.manager is not None
+    task = daemon.manager.get(task_id)
+    assert task is not None and task.status == "failed"
+    assert "manual reconciliation required" in task.error
+    assert "tool context" in task.error
+    approval = tmp_store.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "rejected"
+    assert approval_id not in agent.broker.pending
+    assert tmp_store.list_task_approval_actions(approval_id=approval_id) == []
+    assert calls["n"] == 0
+
+
 def test_legacy_resolved_task_approval_fails_for_manual_reconciliation(tmp_store):
     calls = {"n": 0}
     registry = ToolRegistry()
