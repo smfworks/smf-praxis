@@ -832,6 +832,75 @@ def test_sql_cannot_approve_below_threshold_or_mutate_resolution(tmp_store):
     one_signature = json.dumps(
         [{"approved_by": "alice", "role": "reviewer", "notes": "", "ts": time.time()}]
     )
+    with pytest.raises(ValueError, match="positive integer"):
+        tmp_store.upsert_approval(
+            "appr-bad-threshold", "send", {}, "bad", "chat", None,
+            required_approvals=0,
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="required approval"):
+        tmp_store._conn.execute(
+            "INSERT INTO approvals(approval_id,tool,ts,required_approvals) "
+            "VALUES (?,?,?,?)",
+            ("appr-sql-bad-threshold", "send", time.time(), 0),
+        )
+    tmp_store._conn.rollback()
+    infinite_timestamp = (
+        '[{"approved_by":"alice","role":"reviewer","notes":"","ts":1e999}]'
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="signature"):
+        tmp_store._conn.execute(
+            "INSERT INTO approvals(approval_id,tool,ts,required_approvals,"
+            "signatures_json,status) VALUES (?,?,?,?,?,?)",
+            (
+                "appr-infinite-signature",
+                "send",
+                time.time(),
+                1,
+                infinite_timestamp,
+                "approved",
+            ),
+        )
+    tmp_store._conn.rollback()
+    duplicate_signatures = json.dumps(
+        [
+            {"approved_by": "alice", "role": "reviewer", "notes": "one", "ts": time.time()},
+            {"approved_by": "alice", "role": "reviewer", "notes": "two", "ts": time.time()},
+        ]
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="signature"):
+        tmp_store._conn.execute(
+            "INSERT INTO approvals(approval_id,tool,ts,required_approvals,"
+            "signatures_json,status) VALUES (?,?,?,?,?,?)",
+            (
+                "appr-duplicate-signers",
+                "send",
+                time.time(),
+                2,
+                duplicate_signatures,
+                "approved",
+            ),
+        )
+    tmp_store._conn.rollback()
+    malformed_signatures = json.dumps(
+        [
+            {"approved_by": "alice", "role": "reviewer", "notes": "", "ts": time.time()},
+            {"approved_by": "bob", "role": "reviewer", "notes": ""},
+        ]
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="signature"):
+        tmp_store._conn.execute(
+            "INSERT INTO approvals(approval_id,tool,ts,required_approvals,"
+            "signatures_json,status) VALUES (?,?,?,?,?,?)",
+            (
+                "appr-malformed-signers",
+                "send",
+                time.time(),
+                2,
+                malformed_signatures,
+                "approved",
+            ),
+        )
+    tmp_store._conn.rollback()
     with pytest.raises(sqlite3.IntegrityError, match="threshold"):
         tmp_store._conn.execute(
             "INSERT INTO approvals(approval_id,tool,ts,required_approvals,"
