@@ -4913,6 +4913,8 @@ class Daemon:
                 or action_args_json != pending_args_json
                 or action["fingerprint"] != expected_fingerprint
                 or action["effect_type"] != current_effect_type
+                or action["risk"] != tool.risk.value
+                or tool.risk not in {RiskClass.SEND, RiskClass.DESTRUCTIVE}
                 or action["provider_idempotent"] != current_provider_idempotent
                 or action["idempotency_key"] != current_key
             ):
@@ -4962,20 +4964,59 @@ class Daemon:
                         self.agent.broker.pending.pop(approval_id, None)
                     continue
                 if approval.get("tool") != tool_name:
+                    reason = (
+                        "manual reconciliation required: legacy held action tool no longer "
+                        "matches its approval"
+                    )
+                    if self.store.fail_legacy_waiting_task_approval(
+                        str(task["task_id"]), approval_id, reason=reason
+                    ):
+                        self.agent.broker.pending.pop(approval_id, None)
                     continue
                 tool = self.agent.registry.get(tool_name)
-                effect_type = (tool.effect_type or tool.name) if tool else tool_name
-                key_arg = tool.idempotency_key_arg if tool else ""
+                held_risk = reference.get("risk")
+                if (
+                    tool is None
+                    or type(held_risk) is not str
+                    or held_risk not in {
+                        RiskClass.SEND.value, RiskClass.DESTRUCTIVE.value
+                    }
+                    or tool.risk.value != held_risk
+                ):
+                    reason = (
+                        "manual reconciliation required: legacy held action no longer "
+                        "has its exact consequential registered risk contract"
+                    )
+                    if self.store.fail_legacy_waiting_task_approval(
+                        str(task["task_id"]), approval_id, reason=reason
+                    ):
+                        self.agent.broker.pending.pop(approval_id, None)
+                    continue
+                effect_type = tool.effect_type or tool.name
+                key_arg = tool.idempotency_key_arg or ""
                 args = approval.get("args")
                 key_value = args.get(key_arg) if type(args) is dict and key_arg else ""
                 idempotency_key = key_value if type(key_value) is str else ""
-                self.store.backfill_legacy_task_approval_action(
+                backfilled = self.store.backfill_legacy_task_approval_action(
                     str(task["task_id"]),
                     approval_id,
                     effect_type=effect_type,
+                    risk=held_risk,
                     idempotency_key=idempotency_key,
                     provider_idempotent=bool(key_arg and idempotency_key),
                 )
+                if (
+                    not backfilled
+                    and not self.store.has_task_approval_action(approval_id)
+                ):
+                    reason = (
+                        "manual reconciliation required: legacy held action metadata "
+                        "does not exactly match its pending approval"
+                    )
+                    if self.store.fail_legacy_waiting_task_approval(
+                        str(task["task_id"]), approval_id, reason=reason
+                    ):
+                        self.agent.broker.pending.pop(approval_id, None)
 
     def _reconcile_task_approval_actions(self) -> None:
         """Recover durably claimed task effects after process interruption."""
@@ -5026,6 +5067,8 @@ class Daemon:
             safely_retryable = bool(
                 tool is not None
                 and action["effect_type"] == current_effect_type
+                and action["risk"] == tool.risk.value
+                and tool.risk in {RiskClass.SEND, RiskClass.DESTRUCTIVE}
                 and action["fingerprint"] == expected
                 and action["provider_idempotent"]
                 and idempotency_arg
@@ -5140,7 +5183,7 @@ class Daemon:
         if mode in ("chat", "always"):
             self.agent.broker.allow_tool_for_session(tool_name)
         elif mode == "once":
-            self.agent.broker.allow_tool_once(tool_name)
+            self.agent.broker.allow_tool_once(tool_name, approved.args)
         self.emit_event("resume", {
             "approval_id": approval_id,
             "tool": tool_name,

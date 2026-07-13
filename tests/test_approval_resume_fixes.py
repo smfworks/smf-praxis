@@ -221,6 +221,7 @@ def test_task_action_json_rejects_non_exact_json(value):
     ("field", "value", "message"),
     [
         ("effect_type", ["send"], "effect type must be a string"),
+        ("risk", "draft", "risk must be consequential"),
         ("idempotency_key", 7, "idempotency key must be a string"),
         ("provider_idempotent", 1, "provider idempotency must be boolean"),
     ],
@@ -272,6 +273,13 @@ def test_task_effect_receipt_is_immutable_and_transitions_are_enforced(
     with pytest.raises(sqlite3.IntegrityError, match="identity is immutable"):
         tmp_store._conn.execute(
             "UPDATE task_approval_actions SET args_json='{}' "
+            "WHERE task_id=? AND approval_id=?",
+            (task_id, approval_id),
+        )
+    tmp_store._conn.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="identity is immutable"):
+        tmp_store._conn.execute(
+            "UPDATE task_approval_actions SET risk='destructive' "
             "WHERE task_id=? AND approval_id=?",
             (task_id, approval_id),
         )
@@ -387,6 +395,43 @@ def test_daemon_preclaim_denial_keeps_task_and_approval_waiting(tmp_store, mock_
     assert approval_id in mock_agent.broker.pending
 
 
+def test_cross_worker_kill_switch_blocks_approved_provider_execution(tmp_path):
+    database = tmp_path / "cross-worker-kill.db"
+    calls = {"n": 0}
+
+    def make_agent(store):
+        registry = ToolRegistry()
+        registry.register(_send_tool(calls))
+        agent = PraxisAgent(
+            registry=registry,
+            llm=LLMClient(mode="mock"),
+            store=store,
+            planner=_SendPlanner(registry),
+        )
+        agent.broker.policy.allowed_tools = {"send"}
+        return agent
+
+    store1 = Store.open(database)
+    agent1 = make_agent(store1)
+    daemon1 = Daemon(store=store1, agent=agent1, heartbeat_interval=9999)
+    task_id = daemon1.submit("cross-worker-kill", max_attempts=1)
+    daemon1.tick()
+    approval_id = next(iter(agent1.broker.pending))
+
+    store2 = Store.open(database)
+    agent2 = make_agent(store2)
+    daemon2 = Daemon(store=store2, agent=agent2, heartbeat_interval=9999)
+    agent1.broker.kill.trip()
+
+    assert store2.get_killswitch() is True
+    assert daemon2.approve(approval_id, approved_by="reviewer") is False
+    assert calls["n"] == 0
+    task = daemon2.manager.get(task_id)
+    assert task is not None and task.status == "waiting_approval"
+    approval = store2.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "pending"
+
+
 def test_daemon_waits_for_every_held_task_action(tmp_store, mock_agent):
     mock_agent.planner = _TwoSendPlanner(mock_agent.registry)
     daemon = Daemon(
@@ -489,6 +534,54 @@ def test_legacy_waiting_task_approval_is_backfilled_and_executes_once(tmp_store)
     assert task is not None and task.status == "completed"
     assert agent.broker._session_one_shot_actions == {}
     assert agent.broker._session_one_shot_tools == set()
+
+
+@pytest.mark.parametrize("current_risk", [RiskClass.DRAFT, RiskClass.DESTRUCTIVE])
+def test_legacy_waiting_task_with_drifted_risk_fails_closed(tmp_store, current_risk):
+    calls = {"n": 0}
+    drifted = _send_tool(calls)
+    drifted.risk = current_risk
+    registry = ToolRegistry()
+    registry.register(drifted)
+    task_id = "task-legacy-risk-drift"
+    approval_id = "appr-legacy-risk-drift"
+    tmp_store.add_task(task_id, "legacy risk drift", status="waiting_approval")
+    tmp_store.upsert_approval(
+        approval_id,
+        "send",
+        {"message": "legacy"},
+        "legacy send",
+        "plan",
+        None,
+    )
+    tmp_store.update_task(
+        task_id,
+        result_json=json.dumps(
+            {
+                "pending_approvals": [
+                    {"approval_id": approval_id, "tool": "send", "risk": "send"}
+                ]
+            }
+        ),
+    )
+    agent = PraxisAgent(
+        registry=registry,
+        llm=LLMClient(mode="mock"),
+        store=tmp_store,
+        planner=_SendPlanner(registry),
+    )
+    agent.broker.policy.allowed_tools = {"send"}
+
+    daemon = Daemon(store=tmp_store, agent=agent, heartbeat_interval=9999)
+    assert daemon.manager is not None
+    task = daemon.manager.get(task_id)
+    assert task is not None and task.status == "failed"
+    assert "risk contract" in task.error
+    approval = tmp_store.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "rejected"
+    assert approval_id not in agent.broker.pending
+    assert tmp_store.list_task_approval_actions(approval_id=approval_id) == []
+    assert calls["n"] == 0
 
 
 def test_legacy_resolved_task_approval_fails_for_manual_reconciliation(tmp_store):
@@ -1147,6 +1240,26 @@ def test_daemon_approve_rejects_changed_provider_contract(tmp_store, mock_agent)
     assert action["status"] == "failed"
 
 
+def test_daemon_approve_rejects_changed_risk_contract(tmp_store, mock_agent):
+    daemon = Daemon(store=tmp_store, agent=mock_agent, heartbeat_interval=9999)
+    task_id = daemon.submit("risk-contract-drift", max_attempts=1)
+    daemon.tick()
+    approval_id = next(iter(mock_agent.broker.pending))
+    tool = mock_agent.registry.get("send")
+    assert tool is not None
+    action = tmp_store.list_task_approval_actions(approval_id=approval_id)[0]
+    assert action["risk"] == RiskClass.SEND.value
+
+    tool.risk = RiskClass.DRAFT
+    mock_agent.broker.kill.trip()
+    assert daemon.approve(approval_id, approved_by="reviewer") is False
+    assert mock_agent._send_counter["n"] == 0  # type: ignore[attr-defined]
+    assert daemon.manager is not None
+    task = daemon.manager.get(task_id)
+    assert task is not None and task.status == "failed"
+    assert "registered tool contract" in task.error
+
+
 def test_daemon_approve_chat_path_emits_resume_without_execute(tmp_store, mock_agent):
     """Chat holds resolve via resume SSE + one-shot allow, not immediate execute."""
     events: list[tuple[str, dict]] = []
@@ -1174,8 +1287,22 @@ def test_daemon_approve_chat_path_emits_resume_without_execute(tmp_store, mock_a
     assert aid not in mock_agent.broker.pending
     # Tool was NOT executed on chat path.
     assert mock_agent._send_counter["n"] == before  # type: ignore[attr-defined]
-    # One-shot granted for the upcoming resume authorize.
-    assert "send" in mock_agent.broker._session_one_shot_tools
+    # The one-shot grant is bound to the exact approved chat action.
+    exact_key = mock_agent.broker._one_shot_action_key("send", {"message": "hi"})
+    assert mock_agent.broker._session_one_shot_actions == {exact_key: 1}
+    assert "send" not in mock_agent.broker._session_one_shot_tools
+    changed = mock_agent.broker.authorize(
+        "praxis-chat", "send", RiskClass.SEND, {"message": "changed"},
+        provenance="chat",
+    )
+    assert changed.verdict is Verdict.NEEDS_APPROVAL
+    exact = mock_agent.broker.authorize(
+        "praxis-chat", "send", RiskClass.SEND, {"message": "hi"},
+        provenance="chat",
+    )
+    assert exact.verdict is Verdict.ALLOW
+    assert exact.policy_rule == "session_exact_oneshot_allow"
+    assert mock_agent.broker._session_one_shot_actions == {}
     assert any(e[0] == "resume" for e in events)
     resume = [e for e in events if e[0] == "resume"][0][1]
     assert resume.get("tool") == "send"
