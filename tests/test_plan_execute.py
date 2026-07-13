@@ -644,3 +644,198 @@ def test_durable_plan_executor_rejects_malformed_persisted_step(tmp_path):
     )
     with pytest.raises(ValueError, match="string fields"):
         executor.execute("malformed")
+
+
+def test_restored_held_step_recreates_missing_interrupt(tmp_path):
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"send_it"}), store=store)
+    executor = PlanExecutor(
+        _registry(SEND), broker, checkpoints=checkpoints,
+        organization_id=org_id, workspace_id=workspace_id,
+        run_id=run.run_id, actor_id=actor_id,
+    )
+    original_interrupt = checkpoints.interrupt
+
+    def crash_before_interrupt(*args, **kwargs):
+        raise SystemExit("crash before interrupt transition")
+
+    checkpoints.interrupt = crash_before_interrupt
+    with pytest.raises(SystemExit, match="before interrupt"):
+        executor.execute(
+            "send",
+            steps=[PlanStep(
+                id="s1", intent="send", tool="send_it",
+                args={
+                    "target": "public_web", "text": "hello",
+                    "classification": "public", "connector": "public_web",
+                },
+            )],
+        )
+    checkpoints.interrupt = original_interrupt
+    before = checkpoints.get_run(org_id, workspace_id, run.run_id)
+    assert before is not None and before.status == "running"
+
+    report = executor.execute("send")
+    after = checkpoints.get_run(org_id, workspace_id, run.run_id)
+    assert report.status == "needs_approval"
+    assert after is not None and after.status == "interrupted"
+    assert after.interrupt_payload["step_id"] == "s1"
+
+
+def test_restart_supplied_steps_cannot_overwrite_durable_progress(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    calls: list[str] = []
+    first = Tool("first", RiskClass.READ, "first", lambda **kwargs: calls.append("first") or "1")
+    second = Tool("second", RiskClass.READ, "second", lambda **kwargs: calls.append("second") or "2")
+    checkpoints.checkpoint(
+        org_id, workspace_id, run.run_id, actor_id=actor_id,
+        state={
+            "goal": "resume", "outbox": [], "effect_receipts": [], "replans": 0,
+            "steps": [
+                {"id": "s1", "intent": "first", "tool": "first", "args": {},
+                 "depends_on": [], "status": "done", "output": "1", "approval_id": ""},
+                {"id": "s2", "intent": "second", "tool": "second", "args": {},
+                 "depends_on": ["s1"], "status": "pending", "output": "", "approval_id": ""},
+            ],
+        },
+    )
+    report = PlanExecutor(
+        _registry(first, second), _broker("first", "second"), checkpoints=checkpoints,
+        organization_id=org_id, workspace_id=workspace_id,
+        run_id=run.run_id, actor_id=actor_id,
+    ).execute(
+        "resume",
+        steps=[
+            PlanStep(id="s1", intent="first", tool="first"),
+            PlanStep(id="s2", intent="second", tool="second", depends_on=["s1"]),
+        ],
+    )
+    assert report.status == "completed"
+    assert calls == ["second"]
+
+
+def test_restart_preserves_replan_budget_and_generation_ids(tmp_path):
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    replans: list[str] = []
+    failing = Tool(
+        "failing", RiskClass.READ, "fails",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("no")),
+    )
+
+    def replan(goal, failed, reason, remaining):
+        replans.append(failed.id)
+        return [Step("replacement", "get_data")]
+
+    checkpoints.checkpoint(
+        org_id, workspace_id, run.run_id, actor_id=actor_id,
+        state={
+            "goal": "resume", "outbox": [], "effect_receipts": [], "replans": 1,
+            "steps": [
+                {"id": "s1", "intent": "failed", "tool": "failing", "args": {},
+                 "depends_on": [], "status": "replanned", "output": "", "approval_id": ""},
+                {"id": "r1_1", "intent": "retry", "tool": "failing", "args": {},
+                 "depends_on": [], "status": "running", "output": "", "approval_id": ""},
+            ],
+        },
+    )
+    report = PlanExecutor(
+        _registry(failing, READ), _broker("failing", "get_data"),
+        replan=replan, max_replans=1, checkpoints=checkpoints,
+        organization_id=org_id, workspace_id=workspace_id,
+        run_id=run.run_id, actor_id=actor_id,
+    ).execute("resume")
+    assert report.replans == 1
+    assert replans == []
+    assert len({step.id for step in report.steps}) == len(report.steps)
+    assert report.status == "failed"
+
+
+def test_receipt_recovery_requires_exact_effect_fingerprint(tmp_path):
+    calls: list[str] = []
+    tool = Tool(
+        "send_exact", RiskClass.SEND, "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message", idempotency_key_arg="idempotency_key",
+    )
+    _, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    old_args = {
+        "target": "approved_business_system", "text": "OLD",
+        "classification": "internal", "connector": "approved_business_system",
+        "idempotency_key": "reused-key",
+    }
+    new_args = dict(old_args, text="NEW")
+    checkpoints.record_effect(
+        org_id, workspace_id, run.run_id, actor_id=actor_id,
+        idempotency_key="reused-key", effect_type="send_message",
+        request=old_args, result={"output": "OLD RESULT"},
+    )
+    checkpoints.checkpoint(
+        org_id, workspace_id, run.run_id, actor_id=actor_id,
+        state={
+            "goal": "send", "replans": 0, "effect_receipts": [],
+            "steps": [{"id": "s1", "intent": "send", "tool": "send_exact",
+                       "args": new_args, "depends_on": [], "status": "running",
+                       "output": "", "approval_id": ""}],
+            "outbox": [{"step_id": "s1", "intent": "send", "tool": "send_exact",
+                        "effect_type": "send_message", "args": new_args,
+                        "status": "pending_execution", "requires_provider_idempotency": True,
+                        "idempotency_key": "reused-key"}],
+        },
+    )
+    report = PlanExecutor(
+        _registry(tool), _broker("send_exact"), checkpoints=checkpoints,
+        organization_id=org_id, workspace_id=workspace_id,
+        run_id=run.run_id, actor_id=actor_id,
+    ).execute("send")
+    assert report.status == "failed"
+    assert "idempotency" in report.steps[0].output
+    assert calls == []
+
+
+def test_running_checkpoint_before_execution_intent_is_safely_resumed(tmp_path):
+    calls: list[str] = []
+    tool = Tool(
+        "send_gap", RiskClass.SEND, "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        parameters=_schema("target", "text", "classification", "connector", "idempotency_key"),
+        effect_type="send_message", idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(GovernancePolicy(allowed_tools={"send_gap"}), store=store)
+    executor = PlanExecutor(
+        _registry(tool), broker, checkpoints=checkpoints,
+        organization_id=org_id, workspace_id=workspace_id,
+        run_id=run.run_id, actor_id=actor_id,
+    )
+    args = {
+        "target": "approved_business_system", "text": "hello",
+        "classification": "internal", "connector": "approved_business_system",
+        "idempotency_key": "gap-key",
+    }
+    held = executor.execute(
+        "send", steps=[PlanStep(id="s1", intent="send", tool="send_gap", args=args)]
+    )
+    approval_id = held.held_approvals()[0]
+    broker.approve(approval_id, approved_by=actor_id, approved_role="owner")
+    checkpoints.resume(
+        org_id, workspace_id, run.run_id, actor_id=actor_id,
+        schema_manifest={"name": "plan-executor", "version": 1},
+    )
+    original_prepare = executor._prepare_consequential_allow
+
+    def crash_before_execution_intent(*args, **kwargs):
+        raise SystemExit("crash before execution intent")
+
+    executor._prepare_consequential_allow = crash_before_execution_intent
+    with pytest.raises(SystemExit, match="execution intent"):
+        executor.execute("send")
+    executor._prepare_consequential_allow = original_prepare
+    crashed = checkpoints.latest(org_id, workspace_id, run.run_id)
+    assert crashed is not None
+    assert crashed.state["steps"][0]["status"] == "pending"
+    assert crashed.state["outbox"][0]["status"] == "pending_approval"
+
+    report = executor.execute("send")
+    assert report.status == "completed"
+    assert calls == ["hello"]
