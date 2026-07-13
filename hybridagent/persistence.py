@@ -654,6 +654,78 @@ CREATE TABLE IF NOT EXISTS evolution_proposals (
 );
 CREATE INDEX IF NOT EXISTS ix_evo_status ON evolution_proposals(status);
 CREATE INDEX IF NOT EXISTS ix_evo_skill ON evolution_proposals(skill_name);
+
+-- Durable professional workflow runs and immutable checkpoints.
+CREATE TABLE IF NOT EXISTS professional_runs (
+    run_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    workspace_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    schema_manifest_json TEXT NOT NULL,
+    head_checkpoint_id TEXT NOT NULL DEFAULT '',
+    interrupt_type TEXT NOT NULL DEFAULT '',
+    interrupt_payload_json TEXT NOT NULL DEFAULT '{}',
+    cancel_reason TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL,
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_professional_runs_scope
+    ON professional_runs(organization_id, workspace_id, updated_ts);
+CREATE TABLE IF NOT EXISTS run_checkpoints (
+    checkpoint_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES professional_runs(run_id),
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    parent_checkpoint_id TEXT,
+    sequence INTEGER NOT NULL,
+    state_json TEXT NOT NULL,
+    schema_manifest_json TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    UNIQUE(run_id, sequence),
+    FOREIGN KEY (parent_checkpoint_id) REFERENCES run_checkpoints(checkpoint_id),
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_run_checkpoints_scope
+    ON run_checkpoints(organization_id, workspace_id, run_id, sequence);
+CREATE TABLE IF NOT EXISTS run_effect_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES professional_runs(run_id),
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    effect_type TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    UNIQUE(run_id, idempotency_key),
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+);
+CREATE INDEX IF NOT EXISTS ix_run_effect_receipts_scope
+    ON run_effect_receipts(organization_id, workspace_id, run_id, created_ts);
+CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_no_update
+BEFORE UPDATE ON run_effect_receipts BEGIN
+    SELECT RAISE(ABORT, 'effect receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_effect_receipts_no_delete
+BEFORE DELETE ON run_effect_receipts BEGIN
+    SELECT RAISE(ABORT, 'effect receipts are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_no_update
+BEFORE UPDATE ON run_checkpoints BEGIN
+    SELECT RAISE(ABORT, 'run checkpoints are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_run_checkpoints_no_delete
+BEFORE DELETE ON run_checkpoints BEGIN
+    SELECT RAISE(ABORT, 'run checkpoints are immutable');
+END;
 """
 
 
