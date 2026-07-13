@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,12 +67,15 @@ def test_installation_docs_do_not_recommend_unpublished_pypi_package():
         ROOT / "docs" / "QUICKSTART.md",
         ROOT / "docs" / "DEPLOYMENT.md",
     )
+    pypi_requirement = re.compile(
+        r"\bpipx?\s+install\s+[\"']?praxis-agent(?:\[|\b)", re.IGNORECASE
+    )
     for path in paths:
         text = path.read_text(encoding="utf-8")
         assert "## From PyPI" not in text
         assert "### From PyPI" not in text
-        assert "\npip install praxis-agent" not in text
-        assert "\npipx install praxis-agent" not in text
+        assert "latest PyPI release" not in text
+        assert pypi_requirement.search(text) is None
         assert (
             "github.com/smfworks/smf-praxis/releases/download/" in text
             or "raw.githubusercontent.com/smfworks/smf-praxis/main/install" in text
