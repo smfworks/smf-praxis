@@ -54,6 +54,13 @@ praxis pack deactivate            # back to defaults
 praxis eval        # expect "40/40 passed  OK"
 ```
 
+## Optional: professional document output
+
+The dependency-free install includes Artifact Studio validation, canonical
+JSON/Markdown, versioning, comparison, and release-bundle verification. From a
+clone, install `.[artifacts]` to add DOCX, PDF, PPTX, and XLSX renderers. The public
+Python workflow is documented in [`artifacts/README.md`](artifacts/README.md).
+
 ## What to poke at (and report back)
 
 - Approvals: does holding send/destructive feel right? ⏸️

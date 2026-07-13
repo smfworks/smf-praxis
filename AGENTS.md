@@ -108,6 +108,7 @@ dependency-free; missing-library/missing-backend falls back to deterministic-onl
 | Grounding & verification | `grounding.py` · `verifier.py` · `verifier_llm.py` · `contradiction.py` |
 | Skills & self-improvement | `skills.py` · `skill_evaluator.py` · `evolution.py` |
 | Persistence | `persistence.py` · `task_manager.py` |
+| Professional artifacts | `artifacts/models.py` · `artifacts/validation.py` · `artifacts/renderers.py` · `artifacts/service.py` · `artifacts/bundles.py` |
 | Daemon + dashboard | `daemon.py` · `agent_service.py` · `web/` |
 | MCP | `mcp_client.py` · `mcp_adapter.py` · `mcp_presets.py` |
 | Sandbox | `sandbox.py` |

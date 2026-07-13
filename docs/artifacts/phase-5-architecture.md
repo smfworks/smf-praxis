@@ -1,12 +1,25 @@
 # Phase 5 Artifact Studio — Research and Architecture Decision
 
-**Status:** accepted implementation direction  
-**Baseline:** `v0.26.16`, checkpoint `b806fea57e6ec11d71786a74e5d0db29f82a2231`  
+**Status:** implemented release candidate; final exact-head review and promotion pending
+
+**Implementation:** Praxis `0.27.3` on `feat/professional-platform-phase-5`
+
+**Baseline:** `v0.26.16`, checkpoint `b806fea57e6ec11d71786a74e5d0db29f82a2231`
+
 **Phase:** PP50 — Artifact Studio and professional documents
 
 ## Problem
 
 Praxis can ingest professional documents and preserve evidence, claims, reviews, approvals, custody, and durable workflow state, but it cannot yet produce a governed professional deliverable. Phase 5 adds a validated document intermediate representation (IR), deterministic renderers, immutable versioning, semantic comparison, and a release bundle that preserves the artifact together with the evidence needed to defend it.
+
+## Implemented surface
+
+- `hybridagent/artifacts/models.py` and `validation.py`: strict canonical IR and validation.
+- `render_json.py`, `render_markdown.py`, `render_docx.py`, `render_pdf.py`, `render_pptx.py`, and `render_xlsx.py`: deterministic core and optional output formats.
+- `versions.py` and `service.py`: append-only tenant-scoped versions, semantic comparison, exact review/signature binding, and atomic idempotent release.
+- `bundles.py`: deterministic content-addressed package assembly and standalone verification.
+- `hybridagent/persistence.py`: durable tables, ownership/parent/run foreign keys, idempotency index, and update/delete/replace immutability triggers.
+- `docs/artifacts/README.md`: public API, lifecycle, bundle layout, guarantees, and interface boundary.
 
 ## Research sources
 
@@ -79,7 +92,7 @@ The IR requires figure alternative text, heading levels, table headers, document
 
 Artifact identities and versions are organization/workspace-owned. Versions are append-only, sequential, parent-linked, and content-addressed. SQLite enforces immutable version identity/content and rejects updates, deletes, replacement writes, cross-tenant references, stale-parent writes, and duplicate revision numbers.
 
-`compare_versions()` is semantic: metadata changes, added/removed/changed/moved blocks, citation changes, source-manifest changes, and review/signature changes. It does not present a raw JSON diff as a professional comparison.
+`ArtifactStudio.compare()` is semantic: metadata changes, added/removed/changed blocks, citation changes, source-manifest changes, and review/signature changes. It does not present a raw JSON diff as a professional comparison.
 
 ### 8. Release bundles are self-describing evidence packages
 

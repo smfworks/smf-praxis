@@ -20,7 +20,8 @@ def test_pyproject_discovers_all_hybridagent_subpackages():
         if init.parent != ROOT / "hybridagent"
     }
     assert "hybridagent/verticals/legal" in nested_packages
-    assert len(nested_packages) >= 7
+    assert "hybridagent/artifacts" in nested_packages
+    assert len(nested_packages) >= 8
 
 
 def test_release_verifier_uses_installed_package_outside_checkout():
@@ -37,6 +38,9 @@ def test_release_verifier_uses_installed_package_outside_checkout():
         "medical",
     ):
         assert f"hybridagent.verticals.{vertical}.authority" in script
+    assert "from hybridagent.artifacts import (" in script
+    assert "ArtifactStudio," in script
+    assert "render_artifact," in script
 
 
 def test_release_workflow_attaches_wheel_and_sdist():

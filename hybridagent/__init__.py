@@ -110,4 +110,4 @@ __all__ = [
     "UnsafeSourceError", "fetch_url", "validate_uri",
 ]
 
-__version__ = "0.27.2"
+__version__ = "0.27.3"

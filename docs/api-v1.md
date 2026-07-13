@@ -106,6 +106,24 @@ Rules:
 
 Resource versions are SHA-256 hashes of canonical JSON. In Phase 0 they support cache validation and pagination snapshot binding. Later mutating professional resources will additionally use them for optimistic concurrency (`If-Match`).
 
+## Artifact Studio transport status
+
+Phase 5 ships the governed Artifact Studio as a public Python service and durable
+persistence boundary (`hybridagent.artifacts.ArtifactStudio`); it does not add a
+legacy or unauthenticated HTTP route. See [Artifact Studio](artifacts/README.md).
+
+A future `/api/v1/artifacts` transport must preserve the service invariants:
+
+- derive organization, workspace, and actor from the authenticated session rather
+  than trusting request-body scope fields;
+- require expected-head identity for version creation and an `Idempotency-Key` for
+  release creation;
+- conceal cross-scope resources with the standard not-found envelope;
+- keep rendered bytes and release bundles bounded and streamed as explicit media
+  responses rather than embedding them in JSON;
+- return stable conflict codes for stale heads and idempotency conflicts without
+  exposing another tenant's identifiers.
+
 ## Legacy migration
 
 `GET /api/board` remains unwrapped to avoid breaking the existing Command Deck. It now returns:
