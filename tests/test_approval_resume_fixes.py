@@ -536,6 +536,215 @@ def test_legacy_waiting_task_approval_is_backfilled_and_executes_once(tmp_store)
     assert agent.broker._session_one_shot_tools == set()
 
 
+def test_shared_legacy_waiting_approval_fails_all_tasks_closed(tmp_store):
+    calls = {"n": 0}
+    registry = ToolRegistry()
+    registry.register(_send_tool(calls))
+    approval_id = "appr-shared-legacy-tasks"
+    args = {"message": "shared legacy"}
+    tmp_store.upsert_approval(
+        approval_id,
+        "send",
+        args,
+        "legacy send",
+        "plan",
+        None,
+        cycle_id="cycle-shared-legacy",
+    )
+    for task_id in ("task-shared-a", "task-shared-b"):
+        tmp_store.add_task(
+            task_id, "shared legacy", status="waiting_approval", max_attempts=1
+        )
+        tmp_store.update_task(
+            task_id,
+            cycle_id="cycle-shared-legacy",
+            result_json=json.dumps(
+                {
+                    "cycle_id": "cycle-shared-legacy",
+                    "pending_approvals": [
+                        {
+                            "approval_id": approval_id,
+                            "tool": "send",
+                            "risk": "send",
+                            "preview": "legacy send",
+                        }
+                    ],
+                }
+            ),
+        )
+    agent = PraxisAgent(
+        registry=registry,
+        llm=LLMClient(mode="mock"),
+        store=tmp_store,
+        planner=_SendPlanner(registry),
+    )
+    agent.broker.policy.allowed_tools = {"send"}
+
+    daemon = Daemon(store=tmp_store, agent=agent, heartbeat_interval=9999)
+
+    assert calls["n"] == 0
+    assert daemon.manager is not None
+    for task_id in ("task-shared-a", "task-shared-b"):
+        task = daemon.manager.get(task_id)
+        assert task is not None and task.status == "failed"
+        assert "shared by multiple waiting tasks" in task.error
+    approval = tmp_store.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "rejected"
+    assert approval_id not in agent.broker.pending
+    assert daemon.approve(approval_id, approved_by="reviewer") is False
+    assert tmp_store.list_task_approval_actions(approval_id=approval_id) == []
+
+
+@pytest.mark.parametrize(
+    ("initial_status", "expected_status"),
+    [
+        ("pending_approval", "rejected"),
+        ("pending_execution", "manual_reconciliation"),
+    ],
+)
+def test_shared_legacy_waiting_approval_recovers_existing_duplicate_actions(
+    tmp_store, initial_status, expected_status
+):
+    calls = {"n": 0}
+    registry = ToolRegistry()
+    registry.register(_send_tool(calls))
+    approval_id = "appr-shared-existing-actions"
+    args = {"message": "shared existing"}
+    tmp_store.upsert_approval(
+        approval_id, "send", args, "legacy send", "plan", None
+    )
+    args_json = tmp_store._task_action_json(args, "test args")
+    fingerprint = tmp_store._task_action_fingerprint("send", args_json)
+    now = time.time()
+    for task_id in ("task-existing-a", "task-existing-b"):
+        tmp_store.add_task(task_id, "shared existing", status="waiting_approval")
+        tmp_store.update_task(
+            task_id,
+            result_json=json.dumps(
+                {
+                    "pending_approvals": [
+                        {"approval_id": approval_id, "tool": "send", "risk": "send"}
+                    ]
+                }
+            ),
+        )
+        tmp_store._conn.execute(
+            "INSERT INTO task_approval_actions("
+            "task_id,approval_id,tool,args_json,fingerprint,effect_type,risk,"
+            "status,created_ts,updated_ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                task_id,
+                approval_id,
+                "send",
+                args_json,
+                fingerprint,
+                "send",
+                "send",
+                initial_status,
+                now,
+                now,
+            ),
+        )
+    tmp_store._conn.commit()
+    agent = PraxisAgent(
+        registry=registry,
+        llm=LLMClient(mode="mock"),
+        store=tmp_store,
+        planner=_SendPlanner(registry),
+    )
+    agent.broker.policy.allowed_tools = {"send"}
+
+    daemon = Daemon(store=tmp_store, agent=agent, heartbeat_interval=9999)
+
+    assert calls["n"] == 0
+    assert daemon.approve(approval_id, approved_by="reviewer") is False
+    assert approval_id not in agent.broker.pending
+    assert tmp_store.get_approval(approval_id)["status"] == "rejected"
+    assert {
+        tmp_store.get_task(task_id)["status"]
+        for task_id in ("task-existing-a", "task-existing-b")
+    } == {"failed"}
+    actions = tmp_store.list_task_approval_actions(approval_id=approval_id)
+    assert len(actions) == 2
+    assert {action["status"] for action in actions} == {expected_status}
+    assert all("shared by multiple waiting tasks" in action["error"] for action in actions)
+
+
+def test_shared_legacy_waiting_approval_is_cross_store_safe(tmp_path):
+    path = tmp_path / "shared-legacy.db"
+    seed = Store.open(path)
+    approval_id = "appr-shared-cross-store"
+    args = {"message": "cross store"}
+    seed.upsert_approval(approval_id, "send", args, "legacy send", "plan", None)
+    for task_id in ("task-cross-a", "task-cross-b"):
+        seed.add_task(task_id, "cross store", status="waiting_approval")
+        seed.update_task(
+            task_id,
+            result_json=json.dumps(
+                {
+                    "pending_approvals": [
+                        {"approval_id": approval_id, "tool": "send", "risk": "send"}
+                    ]
+                }
+            ),
+        )
+    seed.close()
+
+    calls = {"n": 0}
+    barrier = threading.Barrier(3)
+    errors: list[BaseException] = []
+    daemons: list[Daemon] = []
+
+    def initialize() -> None:
+        store = None
+        try:
+            store = Store.open(path)
+            registry = ToolRegistry()
+            registry.register(_send_tool(calls))
+            agent = PraxisAgent(
+                registry=registry,
+                llm=LLMClient(mode="mock"),
+                store=store,
+                planner=_SendPlanner(registry),
+            )
+            agent.broker.policy.allowed_tools = {"send"}
+            barrier.wait(timeout=10)
+            daemons.append(Daemon(store=store, agent=agent, heartbeat_interval=9999))
+        except BaseException as exc:
+            errors.append(exc)
+            if store is not None and all(daemon.store is not store for daemon in daemons):
+                store.close()
+
+    workers = [threading.Thread(target=initialize) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    try:
+        barrier.wait(timeout=10)
+    except threading.BrokenBarrierError:
+        pass
+    for worker in workers:
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+
+    assert errors == []
+    assert len(daemons) == 2
+    assert calls["n"] == 0
+    check = Store.open(path)
+    approval = check.get_approval(approval_id)
+    assert approval is not None and approval["status"] == "rejected"
+    checked_tasks = [
+        check.get_task(task_id) for task_id in ("task-cross-a", "task-cross-b")
+    ]
+    assert all(task is not None for task in checked_tasks)
+    assert {task["status"] for task in checked_tasks if task is not None} == {"failed"}
+    assert check.list_task_approval_actions(approval_id=approval_id) == []
+    check.close()
+    for daemon in daemons:
+        assert daemon.approve(approval_id, approved_by="reviewer") is False
+        assert daemon.store is not None
+        daemon.store.close()
+
+
 @pytest.mark.parametrize("current_risk", [RiskClass.DRAFT, RiskClass.DESTRUCTIVE])
 def test_legacy_waiting_task_with_drifted_risk_fails_closed(tmp_store, current_risk):
     calls = {"n": 0}

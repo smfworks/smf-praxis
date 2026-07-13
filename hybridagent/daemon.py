@@ -5015,6 +5015,10 @@ class Daemon:
                     idempotency_key=idempotency_key,
                     provider_idempotent=bool(key_arg and idempotency_key),
                 )
+                if not backfilled:
+                    current = self.store.get_approval(approval_id)
+                    if current is None or current.get("status") != "pending":
+                        self.agent.broker.pending.pop(approval_id, None)
                 if (
                     not backfilled
                     and not self.store.has_task_approval_action(approval_id)
