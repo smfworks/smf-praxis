@@ -78,8 +78,14 @@ keyring = ["keyring>=24"]
 praxis = "hybridagent.cli:main"
 
 [tool.setuptools]
-packages = ["hybridagent"]
 include-package-data = true
+
+# Include every importable hybridagent subpackage. An explicit
+# `packages = ["hybridagent"]` omits nested policy modules from wheels while
+# source-tree and editable installs continue to resolve them.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hybridagent*"]
 
 # The Command Deck dashboard loads its JS/CSS from hybridagent/web/ at runtime
 # (daemon._serve_static reads Path(__file__).parent / "web"). These are data

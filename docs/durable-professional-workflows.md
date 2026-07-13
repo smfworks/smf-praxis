@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.12`)
+Status: Phase 4 release candidate (`0.26.13`)
 
 ## Scope
 
@@ -144,4 +144,4 @@ python3 -m hybridagent.cli demo
 python3 scripts/check_architecture.py
 ```
 
-The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. The `0.26.12` candidate passes 1,217 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 132 PP40 contracts, 1,228 total tests with 17 expected skips at 81.80% coverage, 40/40 capability evals, static and architecture checks, semantic demo, populated `v0.25.20`, real isolated `v0.26.6`, fail-closed rejected-`v0.26.9`, fail-closed shared-plan `v0.26.10`, and fail-closed missing-tool `v0.26.11` migrations, artifact/install verification, rebuilt-container dashboard smoke, security scanning, and 25 repeated eight-outcome lifecycle/recovery stress runs. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
+The wheel and source distribution must also build, install in a clean virtual environment, and report the expected package version. `0.26.13` uses recursive `hybridagent*` package discovery and verifies the installed wheel from a neutral directory: `hybridagent.__file__` resolves under the clean install venv, never the checkout, and every shipped `hybridagent.verticals.*.authority` module imports and executes. The candidate passes 1,219 non-fuzz tests with 17 expected skips, 11 parser fuzz tests, 134 PP40 contracts, 1,230 total tests with 17 expected skips at 81.78% coverage, 40/40 capability evals, static and architecture checks, semantic demo, five historical migration/recovery classes, artifact/install verification, rebuilt-container dashboard smoke, security scanning, and 25 repeated eight-outcome lifecycle/recovery stress runs. Independent exact-head maker-checker approval remains mandatory before Phase 4 is marked passing or released.
