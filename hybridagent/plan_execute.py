@@ -491,7 +491,7 @@ class PlanExecutor:
             elif step.status == HELD and approval and approval.get("status") == "approved":
                 step.status = FAILED
                 step.output = "approved action no longer matches persisted step"
-            if step.status == PENDING and entry.get("status") == "pending_approval":
+            elif step.status == PENDING and entry.get("status") == "pending_approval":
                 pending_tool = self.registry.get(step.tool)
                 pending_effect_type = (
                     step.tool

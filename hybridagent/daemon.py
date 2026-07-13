@@ -3397,6 +3397,7 @@ class Daemon:
         # provides the cross-process transaction boundary.
         self._api_idempotency_lock = threading.Lock()
         self._approval_lock = threading.Lock()
+        self._task_approvals_initialized = False
         self.api_cursor_secret = uuid.uuid4().bytes
         # Open SSE subscriber queues, one per /events connection. Guarded by
         # _sse_lock because request handlers run on independent threads.
@@ -3406,7 +3407,7 @@ class Daemon:
         self.state.running = False
         self._setup_signal_handlers()
         if self.store is not None and self.agent is not None and self.manager is not None:
-            self._reconcile_task_approval_actions()
+            self._initialize_task_approval_state()
 
     def api_idempotent_board_create(
         self, key: str, fingerprint: str, title: str, goal: str,
@@ -3514,6 +3515,7 @@ class Daemon:
     def _ensure_agent(self) -> None:
         if self.agent is not None:
             self._bind_durable_surfaces()
+            self._initialize_task_approval_state()
             return
         if self.store is not None:
             self.agent = PraxisAgent(llm=self.llm, store=self.store)
@@ -3543,6 +3545,7 @@ class Daemon:
                 allowlist=self.agent.broker.policy.allowed_tools)
         except Exception:
             self._mcp_clients = []
+        self._initialize_task_approval_state()
 
     def _start_status_server(self) -> None:
         daemon = self
@@ -4919,6 +4922,61 @@ class Daemon:
                 )
         return None
 
+    def _initialize_task_approval_state(self) -> None:
+        if self._task_approvals_initialized:
+            return
+        if self.store is None or self.agent is None or self.manager is None:
+            return
+        self._backfill_legacy_task_approval_actions()
+        self._reconcile_task_approval_actions()
+        self._task_approvals_initialized = True
+
+    def _backfill_legacy_task_approval_actions(self) -> None:
+        """Upgrade waiting tasks created before durable approval actions existed."""
+        assert self.store is not None
+        assert self.agent is not None
+        for task in self.store.list_tasks(status="waiting_approval", limit=1_000_000):
+            result = task.get("result")
+            pending = result.get("pending_approvals") if type(result) is dict else None
+            if type(pending) is not list:
+                continue
+            for reference in pending:
+                if type(reference) is not dict:
+                    continue
+                approval_id = reference.get("approval_id")
+                tool_name = reference.get("tool")
+                if type(approval_id) is not str or type(tool_name) is not str:
+                    continue
+                approval = self.store.get_approval(approval_id)
+                approval_status = str((approval or {}).get("status") or "missing")
+                if approval is None or approval_status != "pending":
+                    reason = (
+                        "manual reconciliation required: legacy task approval was "
+                        "approved before durable execution receipts; provider outcome unknown"
+                        if approval_status == "approved"
+                        else f"legacy task approval is no longer pending ({approval_status})"
+                    )
+                    if self.store.fail_legacy_waiting_task_approval(
+                        str(task["task_id"]), approval_id, reason=reason
+                    ):
+                        self.agent.broker.pending.pop(approval_id, None)
+                    continue
+                if approval.get("tool") != tool_name:
+                    continue
+                tool = self.agent.registry.get(tool_name)
+                effect_type = (tool.effect_type or tool.name) if tool else tool_name
+                key_arg = tool.idempotency_key_arg if tool else ""
+                args = approval.get("args")
+                key_value = args.get(key_arg) if type(args) is dict and key_arg else ""
+                idempotency_key = key_value if type(key_value) is str else ""
+                self.store.backfill_legacy_task_approval_action(
+                    str(task["task_id"]),
+                    approval_id,
+                    effect_type=effect_type,
+                    idempotency_key=idempotency_key,
+                    provider_idempotent=bool(key_arg and idempotency_key),
+                )
+
     def _reconcile_task_approval_actions(self) -> None:
         """Recover durably claimed task effects after process interruption."""
         assert self.store is not None
@@ -4992,7 +5050,8 @@ class Daemon:
             self._finish_task_approval(approval_id, execution)
 
     def approve(self, approval_id: str, mode: str = "once",
-                approved_by: str = "", approved_role: str = "") -> bool:
+                approved_by: str = "", approved_role: str = "",
+                approval_notes: str = "") -> bool:
         """Approve a pending consequential action and resume waiting work.
 
         Two paths share this endpoint:
@@ -5029,7 +5088,10 @@ class Daemon:
                     return False
             with self._approval_lock:
                 claimed = self.agent.broker.approve(
-                    approval_id, approved_by=signer, approved_role=approved_role
+                    approval_id,
+                    approved_by=signer,
+                    approval_notes=approval_notes,
+                    approved_role=approved_role,
                 )
                 if claimed is None:
                     row = self.store.get_approval(approval_id)
@@ -5068,7 +5130,11 @@ class Daemon:
         # (not a partial dual-approval signature) grant one-shot/session allow
         # so the dashboard can re-submit and the model re-requests the tool.
         approved = self.agent.broker.approve(
-            approval_id, approved_by=signer, approved_role=approved_role)
+            approval_id,
+            approved_by=signer,
+            approval_notes=approval_notes,
+            approved_role=approved_role,
+        )
         if approved is None:
             return False
         if mode in ("chat", "always"):

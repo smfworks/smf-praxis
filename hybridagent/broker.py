@@ -472,11 +472,14 @@ class GovernanceBroker:
                 f"auto-allowed (compliance {mode.value})",
                 decision_id=decision_id, cycle_id=cycle_id,
                 policy_rule="compliance_off_allow", args_hash=args_hash)
-        # Idempotency: an identical action (same tool + args) already pending and
-        # unexpired reuses that approval instead of queuing a duplicate, so a
-        # re-proposed action (e.g. a verifier-revised turn) can't mint a second
-        # approval a human could approve twice -> double execution.
-        existing = self._find_pending(tool, args_hash, organization_id)
+        # Idempotency applies to conversational re-proposals only. Every queued task
+        # action owns its approval: sharing one approval across tasks can strand one
+        # task or authorize one provider effect on behalf of two independent intents.
+        existing = (
+            None
+            if str(provenance).startswith("task:")
+            else self._find_pending(tool, args_hash, organization_id)
+        )
         if existing is not None:
             return self._log_decision(
                 actor, tool, risk, Verdict.NEEDS_APPROVAL,
@@ -518,24 +521,50 @@ class GovernanceBroker:
 
     def approve(self, approval_id: str, approved_by: str = "",
                 approval_notes: str = "", approved_role: str = "") -> PendingApproval | None:
+        """Persist one signature; return only after the authoritative threshold."""
         pending = self.pending.get(approval_id)
         if pending is None:
             return None
+        signer = (approved_by or "").strip()
         if pending.expires_at and pending.expires_at < time.time():
             self.pending.pop(approval_id, None)
             if self.store is not None:
                 self.store.resolve_approval(approval_id, "expired")
             self.log.info("approval %s expired", approval_id)
             return None
-        signer = (approved_by or "").strip()
-        # Four-eyes: dual-approval requires a non-empty distinct identity so two
-        # blank signatures cannot satisfy required_approvals > 1.
+
+        if self.store is not None:
+            result = self.store.approve_with_signature(
+                approval_id, signer, approval_notes, approved_role
+            )
+            pending.approvals = [dict(item) for item in result.get("signatures", [])]
+            pending.required_approvals = int(
+                result.get("required_approvals", pending.required_approvals)
+            )
+            status = str(result.get("status") or "")
+            if not result.get("accepted"):
+                if status != "pending":
+                    self.pending.pop(approval_id, None)
+                self.log.info(
+                    "approval %s signature refused in state %s", approval_id, status
+                )
+                return None
+            if not result.get("fully_approved"):
+                self.log.info("approval %s: %d/%d signatures collected",
+                              approval_id, len(pending.approvals),
+                              pending.required_approvals)
+                return None
+            self.pending.pop(approval_id, None)
+            return pending
+
+        if pending.expires_at and pending.expires_at < time.time():
+            self.pending.pop(approval_id, None)
+            self.log.info("approval %s expired", approval_id)
+            return None
         if pending.required_approvals > 1 and not signer:
             self.log.info("approval %s: dual-approval requires non-empty approved_by",
                           approval_id)
             return None
-        # Four-eyes principle: an approver who already signed THIS approval
-        # cannot sign it a second time to satisfy the dual-approval requirement.
         if signer and any(a.get("approved_by") == signer
                           for a in pending.approvals):
             self.log.info("approval %s: %s already signed; second approver required",
@@ -546,39 +575,10 @@ class GovernanceBroker:
             "notes": approval_notes, "ts": time.time(),
         })
         if not pending.fully_approved:
-            if self.store is not None:
-                self.store.add_approval_signature(
-                    approval_id, signer, approval_notes, approved_role)
             self.log.info("approval %s: %d/%d signatures collected",
                           approval_id, len(pending.approvals),
                           pending.required_approvals)
             return None
-        # Task approvals atomically resolve the human approval and persist the
-        # pre-execution action intent. No provider call can precede that commit.
-        if self.store is not None and self.store.has_task_approval_action(approval_id):
-            if not self.store.claim_task_approval_action(
-                approval_id,
-                signatures=pending.approvals,
-                approved_by=signer,
-                approval_notes=approval_notes,
-            ):
-                pending.approvals.pop()
-                row = self.store.get_approval(approval_id)
-                if row is None or row.get("status") != "pending":
-                    self.pending.pop(approval_id, None)
-                self.log.info("approval %s could not claim task execution", approval_id)
-                return None
-        else:
-            if self.store is not None:
-                self.store.add_approval_signature(
-                    approval_id, signer, approval_notes, approved_role)
-                if not self.store.resolve_approval(
-                    approval_id, "approved", approved_by=signer,
-                    approval_notes=approval_notes,
-                ):
-                    self.pending.pop(approval_id, None)
-                    self.log.info("approval %s already resolved; refusing", approval_id)
-                    return None
         self.pending.pop(approval_id, None)
         return pending
 
