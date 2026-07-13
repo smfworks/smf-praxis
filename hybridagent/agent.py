@@ -22,6 +22,7 @@ from .broker import (
     CONSEQUENTIAL,
     GovernanceBroker,
     GovernancePolicy,
+    PendingApproval,
     RiskClass,
     Verdict,
 )
@@ -49,6 +50,18 @@ class CycleReport:
             f"| pending_approvals={len(self.pending_approvals)} "
             f"| injection_flags={len(self.injection_flags)}"
         )
+
+
+@dataclass(frozen=True)
+class ApprovalExecution:
+    status: str
+    output: str = ""
+    error: str = ""
+    provider_attempted: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "completed"
 
 
 class PraxisAgent:
@@ -127,7 +140,7 @@ class PraxisAgent:
         self.memory.add_durable(fact, kind=kind, provenance=provenance)
 
     # --------------------------------------------------------- the main loop
-    def handle(self, goal: str) -> CycleReport:
+    def handle(self, goal: str, *, task_id: str = "") -> CycleReport:
         report = CycleReport(goal=goal)
         self._event(report.cycle_id, "cycle_start", {"goal": goal})
 
@@ -182,7 +195,8 @@ class PraxisAgent:
             preview = f"{step.intent}: {step.tool}({step.args})"
             decision = self.broker.authorize(
                 actor="praxis", tool=tool.name, risk=tool.risk,
-                args=step.args, preview=preview, provenance="plan",
+                args=step.args, preview=preview,
+                provenance=f"task:{task_id}" if task_id else "plan",
                 cycle_id=report.cycle_id, evidence=evidence,
                 rationale=f"Plan step '{step.intent}' requested {tool.risk.value} tool '{tool.name}'.",
             )
@@ -231,6 +245,16 @@ class PraxisAgent:
                     "cycle_id": report.cycle_id,
                     "tool": tool.name,
                     "risk": tool.risk.value,
+                    "args": dict(step.args),
+                    "effect_type": tool.effect_type or tool.name,
+                    "idempotency_key": (
+                        str(step.args.get(tool.idempotency_key_arg) or "")
+                        if tool.idempotency_key_arg else ""
+                    ),
+                    "provider_idempotent": bool(
+                        tool.idempotency_key_arg
+                        and step.args.get(tool.idempotency_key_arg)
+                    ),
                     "preview": preview,
                     "rationale": f"{tool.risk.value} tool '{tool.name}' requires human approval.",
                     "evidence": evidence,
@@ -255,6 +279,11 @@ class PraxisAgent:
     # ------------------------------------------------- approval completion
     def approve(self, approval_id: str, approved_by: str = "user",
                 approval_notes: str = "", approved_role: str = "") -> str:
+        # Task-bound approvals require the daemon's atomic intent/receipt protocol.
+        # Direct CLI/TUI execution would otherwise consume the approval without
+        # reconciling the durable task action.
+        if self.store is not None and self.store.has_task_approval_action(approval_id):
+            return "task-bound approval requires daemon execution"
         # Peek for kill/egress before claiming so dual-approval partials stay
         # pending; after a full claim we still re-check before execution.
         peek = self.broker.pending.get(approval_id)
@@ -272,45 +301,60 @@ class PraxisAgent:
             approved_role=approved_role)
         if not pending:
             return f"no pending approval {approval_id}"
+        execution = self.execute_approved_action(
+            pending, approved_by=approved_by
+        )
+        if execution.status == "completed":
+            return execution.output
+        if execution.status == "denied":
+            return f"approved action denied: {execution.error}"
+        if execution.error.startswith("tool "):
+            return execution.error
+        return f"approved action failed: {execution.error}"
+
+    def execute_approved_action(
+        self, pending: PendingApproval, *, approved_by: str = ""
+    ) -> ApprovalExecution:
+        """Execute an already-claimed approval; the caller owns durable intent/receipt."""
         tool = self.registry.get(pending.tool)
         if not tool:
-            return f"tool {pending.tool} missing"
-        # Re-check after claim: kill-switch may trip between peek and run.
+            return ApprovalExecution("failed", error=f"tool {pending.tool} missing")
+        # Re-check after claim: kill-switch may trip between intent commit and run.
         if tool.risk in CONSEQUENTIAL:
             if self.broker.kill.tripped:
                 self._event(pending.cycle_id, "approval_execution_denied", {
-                    "approval_id": approval_id, "tool": pending.tool,
+                    "approval_id": pending.approval_id, "tool": pending.tool,
                     "reason": "kill-switch engaged",
-                }, ref_id=approval_id)
-                return "approved action denied: kill-switch engaged"
+                }, ref_id=pending.approval_id)
+                return ApprovalExecution("denied", error="kill-switch engaged")
             blocked = self.broker.egress_blocked_for(pending.args)
             if blocked:
                 self._event(pending.cycle_id, "approval_execution_denied", {
-                    "approval_id": approval_id, "tool": pending.tool,
+                    "approval_id": pending.approval_id, "tool": pending.tool,
                     "reason": blocked,
-                }, ref_id=approval_id)
-                return f"approved action denied: {blocked}"
+                }, ref_id=pending.approval_id)
+                return ApprovalExecution("denied", error=blocked)
         try:
             result = tool.run(**pending.args)
         except Exception as exc:
             self._event(pending.cycle_id, "approval_execution_error", {
-                "approval_id": approval_id,
+                "approval_id": pending.approval_id,
                 "decision_id": pending.decision_id,
                 "tool": pending.tool,
                 "error": str(exc),
-            }, ref_id=approval_id)
-            return f"approved action failed: {exc}"
+            }, ref_id=pending.approval_id)
+            return ApprovalExecution("failed", error=str(exc), provider_attempted=True)
         self.memory.add_episodic(f"approved+executed {pending.tool}: {result}",
                                  provenance="user-approval")
         self._event(pending.cycle_id, "approval_executed", {
-            "approval_id": approval_id,
+            "approval_id": pending.approval_id,
             "decision_id": pending.decision_id,
             "tool": pending.tool,
             "approved_by": approved_by,
             "result_hash": self._hash_text(result),
             "result_preview": self.broker.redact(result)[:240],
-        }, ref_id=approval_id)
-        return result
+        }, ref_id=pending.approval_id)
+        return ApprovalExecution("completed", output=result)
 
     # ------------------------------------------------------ compliance helpers
     def _event(self, cycle_id: str, event_type: str, payload: dict,

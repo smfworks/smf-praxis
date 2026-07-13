@@ -467,6 +467,98 @@ def test_durable_plan_executor_resumes_approved_held_step(tmp_path):
         is not None
     )
 
+
+def test_restored_approved_actions_for_same_tool_keep_exact_counted_grants(tmp_path):
+    calls: list[str] = []
+    send = Tool(
+        "approved_send",
+        RiskClass.SEND,
+        "send",
+        lambda **kwargs: calls.append(kwargs["text"]) or "SENT",
+        effect_type="send_message",
+        idempotency_key_arg="idempotency_key",
+    )
+    store, checkpoints, run, org_id, workspace_id, actor_id = _durable_scope(tmp_path)
+    broker = GovernanceBroker(
+        GovernancePolicy(allowed_tools={"approved_send"}), store=store
+    )
+    args = [
+        {
+            "target": "approved_business_system",
+            "text": text,
+            "classification": "internal",
+            "connector": "approved_business_system",
+            "idempotency_key": f"provider-{text}",
+        }
+        for text in ("first", "second")
+    ]
+    approvals = []
+    for item in args:
+        decision = broker.authorize(
+            actor_id,
+            "approved_send",
+            RiskClass.SEND,
+            item,
+            organization_id=org_id,
+        )
+        assert decision.approval_id is not None
+        approvals.append(decision.approval_id)
+        assert broker.approve(
+            decision.approval_id, approved_by=actor_id, approved_role="owner"
+        ) is not None
+    checkpoints.checkpoint(
+        org_id,
+        workspace_id,
+        run.run_id,
+        actor_id=actor_id,
+        state={
+            "goal": "two sends",
+            "steps": [
+                {
+                    "id": f"s{index + 1}",
+                    "intent": f"send {index + 1}",
+                    "tool": "approved_send",
+                    "args": item,
+                    "depends_on": [],
+                    "status": "held",
+                    "output": "",
+                    "approval_id": approvals[index],
+                }
+                for index, item in enumerate(args)
+            ],
+            "outbox": [
+                {
+                    "step_id": f"s{index + 1}",
+                    "intent": f"send {index + 1}",
+                    "tool": "approved_send",
+                    "effect_type": "send_message",
+                    "args": item,
+                    "status": "pending_approval",
+                    "approval_id": approvals[index],
+                    "idempotency_key": item["idempotency_key"],
+                    "requires_provider_idempotency": True,
+                }
+                for index, item in enumerate(args)
+            ],
+            "effect_receipts": [],
+            "replans": 0,
+        },
+    )
+
+    report = PlanExecutor(
+        _registry(send),
+        GovernanceBroker(GovernancePolicy(allowed_tools={"approved_send"}), store=store),
+        checkpoints=checkpoints,
+        organization_id=org_id,
+        workspace_id=workspace_id,
+        run_id=run.run_id,
+        actor_id=actor_id,
+    ).execute("two sends")
+    assert report.status == "completed"
+    assert [step.status for step in report.steps] == ["done", "done"]
+    assert calls == ["first", "second"]
+
+
 def test_durable_plan_executor_retries_provider_idempotent_intent_after_crash(tmp_path):
     calls: list[dict] = []
 

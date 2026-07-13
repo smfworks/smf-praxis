@@ -32,7 +32,7 @@ from urllib.parse import parse_qs as parse_query
 from urllib.parse import urlsplit as split_url
 
 from . import config as cfg
-from .agent import PraxisAgent
+from .agent import ApprovalExecution, PraxisAgent
 from .api_contract import (
     API_VERSION,
     MAX_IDEMPOTENCY_KEY_LENGTH,
@@ -45,7 +45,7 @@ from .api_contract import (
     resource_version,
     success_envelope,
 )
-from .broker import RiskClass
+from .broker import PendingApproval, RiskClass
 from .llm import LLMClient
 from .logging_util import get_logger
 from .persistence import Store
@@ -3396,6 +3396,7 @@ class Daemon:
         # Serializes handlers sharing this daemon; SQLite BEGIN IMMEDIATE below
         # provides the cross-process transaction boundary.
         self._api_idempotency_lock = threading.Lock()
+        self._approval_lock = threading.Lock()
         self.api_cursor_secret = uuid.uuid4().bytes
         # Open SSE subscriber queues, one per /events connection. Guarded by
         # _sse_lock because request handlers run on independent threads.
@@ -3404,6 +3405,8 @@ class Daemon:
         self.state = _read_state()
         self.state.running = False
         self._setup_signal_handlers()
+        if self.store is not None and self.agent is not None and self.manager is not None:
+            self._reconcile_task_approval_actions()
 
     def api_idempotent_board_create(
         self, key: str, fingerprint: str, title: str, goal: str,
@@ -4048,6 +4051,13 @@ class Daemon:
         """
         self._ensure_agent()
         assert self.agent is not None
+        if self.store is not None and self.store.has_task_approval_action(approval_id):
+            if approval_id not in self.agent.broker.pending:
+                return False
+            outcome = self.store.reject_task_approval_action(approval_id)
+            self.agent.broker.pending.pop(approval_id, None)
+            self._apply_task_action_reconciliation(outcome)
+            return bool(outcome.get("transitions"))
         return bool(self.agent.broker.reject(approval_id))
 
     def killswitch_status(self) -> dict:
@@ -4802,15 +4812,194 @@ class Daemon:
         self._log("info", f"default model switched to {summary['model']}")
         return {"model": summary["model"], "provider": provider_id}
 
+    def _task_pending_from_action(self, action: dict) -> PendingApproval:
+        assert self.store is not None
+        approval = self.store.get_approval(action["approval_id"]) or {}
+        return PendingApproval(
+            approval_id=action["approval_id"],
+            tool=action["tool"],
+            args=dict(action["args"]),
+            preview=str(approval.get("preview") or ""),
+            provenance=str(approval.get("provenance") or "task"),
+            cycle_id=str(approval.get("cycle_id") or ""),
+            decision_id=str(approval.get("decision_id") or ""),
+            rationale=str(approval.get("rationale") or ""),
+            evidence=list(approval.get("evidence") or []),
+            organization_id=str(approval.get("organization_id") or ""),
+        )
+
+    def _apply_task_action_reconciliation(self, outcome: dict) -> None:
+        assert self.agent is not None
+        assert self.manager is not None
+        for approval_id in outcome.get("cancelled_approvals", []):
+            self.agent.broker.pending.pop(str(approval_id), None)
+        for transition in outcome.get("transitions", []):
+            old_status = str(transition.get("old_status") or "")
+            new_status = str(transition.get("new_status") or "")
+            task_id = str(transition.get("task_id") or "")
+            if old_status == new_status:
+                continue
+            if old_status == "waiting_approval" and new_status != "waiting_approval":
+                self.state.tasks_waiting_approval = max(
+                    0, self.state.tasks_waiting_approval - 1
+                )
+            if new_status == "completed":
+                self.state.tasks_completed += 1
+            elif new_status == "failed":
+                self.state.tasks_failed += 1
+            task = self.manager.get(task_id)
+            self.emit_event("task", {
+                "task_id": task_id,
+                "status": new_status,
+                "goal": task.goal if task is not None else "",
+                "output": (task.output if task is not None else "")[:500],
+                "error": (task.error if task is not None else "")[:500],
+            })
+
+    def _finish_task_approval(self, approval_id: str, execution: Any) -> bool:
+        assert self.store is not None
+        if execution.status == "completed":
+            outcome = self.store.finish_task_approval_action(
+                approval_id, status="completed", output=execution.output
+            )
+            success = True
+        else:
+            reason = execution.error or "approved action did not complete"
+            action_rows = self.store.list_task_approval_actions(
+                approval_id=approval_id, status="pending_execution"
+            )
+            uncertain = bool(
+                execution.provider_attempted
+                and any(not row["provider_idempotent"] for row in action_rows)
+            )
+            terminal_status = "manual_reconciliation" if uncertain else "failed"
+            if uncertain:
+                reason = f"manual reconciliation required: provider outcome uncertain: {reason}"
+            outcome = self.store.finish_task_approval_action(
+                approval_id, status=terminal_status, error=reason
+            )
+            success = False
+        self._apply_task_action_reconciliation(outcome)
+        return success
+
+    def _validate_claimed_task_action(
+        self, pending: PendingApproval, actions: list[dict]
+    ) -> ApprovalExecution | None:
+        """Bind a claimed durable intent to the current exact provider contract."""
+        assert self.store is not None
+        assert self.agent is not None
+        tool = self.agent.registry.get(pending.tool)
+        if tool is None:
+            return None  # execute_approved_action emits the established missing-tool failure.
+        pending_args_json = self.store._task_action_json(
+            pending.args, "approved task action args"
+        )
+        current_effect_type = tool.effect_type or tool.name
+        key_arg = tool.idempotency_key_arg or ""
+        current_key = str(pending.args.get(key_arg) or "") if key_arg else ""
+        current_provider_idempotent = bool(key_arg and current_key)
+        for action in actions:
+            action_args_json = self.store._task_action_json(
+                action["args"], "task action args"
+            )
+            expected_fingerprint = self.store._task_action_fingerprint(
+                action["effect_type"], action_args_json
+            )
+            if (
+                action["tool"] != pending.tool
+                or action_args_json != pending_args_json
+                or action["fingerprint"] != expected_fingerprint
+                or action["effect_type"] != current_effect_type
+                or action["provider_idempotent"] != current_provider_idempotent
+                or action["idempotency_key"] != current_key
+            ):
+                return ApprovalExecution(
+                    "failed",
+                    error="claimed task action no longer matches its registered tool contract",
+                )
+        return None
+
+    def _reconcile_task_approval_actions(self) -> None:
+        """Recover durably claimed task effects after process interruption."""
+        assert self.store is not None
+        assert self.agent is not None
+        pending_actions = self.store.list_task_approval_actions(status="pending_approval")
+        checked_pending: set[str] = set()
+        now = time.time()
+        for action in pending_actions:
+            pending_id = str(action["approval_id"])
+            if pending_id in checked_pending:
+                continue
+            checked_pending.add(pending_id)
+            approval = self.store.get_approval(pending_id)
+            approval_state = str((approval or {}).get("status") or "missing")
+            expires_at = (approval or {}).get("expires_at")
+            expired = bool(
+                approval_state == "pending"
+                and expires_at is not None
+                and float(expires_at) < now
+            )
+            if approval_state == "pending" and not expired:
+                continue
+            terminal = "expired" if expired or approval_state == "expired" else "rejected"
+            reason = (
+                "approval expired before execution"
+                if terminal == "expired"
+                else f"approval is no longer pending ({approval_state})"
+            )
+            outcome = self.store.reject_task_approval_action(
+                pending_id, reason=reason, approval_status=terminal
+            )
+            self.agent.broker.pending.pop(pending_id, None)
+            self._apply_task_action_reconciliation(outcome)
+
+        actions = self.store.list_task_approval_actions(status="pending_execution")
+        seen: set[str] = set()
+        for action in actions:
+            approval_id = str(action["approval_id"])
+            if approval_id in seen:
+                continue
+            seen.add(approval_id)
+            tool = self.agent.registry.get(action["tool"])
+            args_json = self.store._task_action_json(action["args"], "task action args")
+            expected = self.store._task_action_fingerprint(action["effect_type"], args_json)
+            idempotency_arg = getattr(tool, "idempotency_key_arg", "") if tool else ""
+            current_effect_type = (tool.effect_type or tool.name) if tool else ""
+            safely_retryable = bool(
+                tool is not None
+                and action["effect_type"] == current_effect_type
+                and action["fingerprint"] == expected
+                and action["provider_idempotent"]
+                and idempotency_arg
+                and action["idempotency_key"]
+                and action["args"].get(idempotency_arg) == action["idempotency_key"]
+            )
+            if not safely_retryable:
+                outcome = self.store.finish_task_approval_action(
+                    approval_id,
+                    status="manual_reconciliation",
+                    error=(
+                        "manual reconciliation required: process stopped after durable "
+                        "approval claim without a verifiable provider idempotency key"
+                    ),
+                )
+                self._apply_task_action_reconciliation(outcome)
+                continue
+            pending = self._task_pending_from_action(action)
+            execution = self.agent.execute_approved_action(
+                pending, approved_by="restart-recovery"
+            )
+            self._finish_task_approval(approval_id, execution)
+
     def approve(self, approval_id: str, mode: str = "once",
                 approved_by: str = "", approved_role: str = "") -> bool:
         """Approve a pending consequential action and resume waiting work.
 
         Two paths share this endpoint:
 
-        * **Task queue** — a held plan step. Execute the approved tool with its
-          stored args (via ``agent.approve``) and complete the waiting task.
-          No one-shot/session allow is granted (execution does not re-authorize).
+        * **Task queue** — atomically claim the exact held action, execute its
+          stored args, persist an immutable receipt, and reconcile every linked
+          task action. No one-shot/session allow is granted.
         * **Chat** — a held tool call mid-conversation. Do *not* execute here;
           only after a *full* approval claim, grant a one-shot or session allow
           and emit a ``resume`` SSE so the dashboard re-submits the conversation.
@@ -4828,97 +5017,52 @@ class Daemon:
         mode = (mode or "once").strip().lower()
         signer = (approved_by or "").strip() or "web-ui"
 
-        assert self.manager is not None
-        waiting: list[Any] = []
-        for task in self.manager.list(status="waiting_approval", limit=100):
-            row = self.manager.store.get_task(task.task_id) or {}
-            result = row.get("result") or {}
-            pending_approvals = result.get("pending_approvals", [])
-            if any(pa.get("approval_id") == approval_id for pa in pending_approvals):
-                waiting.append(task)
-
-        if waiting:
-            # Task path: execute the held action, then mark waiters completed.
-            # Never grant one-shot/session allow — agent.approve runs the tool
-            # with stored args and does not consume a subsequent authorize().
-            exec_result = self.agent.approve(
-                approval_id, approved_by=signer, approved_role=approved_role)
-            if isinstance(exec_result, str) and exec_result.startswith("no pending"):
-                return False
-            failed_prefixes = ("tool ", "approved action failed")
-            execution_failed = isinstance(exec_result, str) and exec_result.startswith(
-                failed_prefixes
-            )
-            if isinstance(exec_result, str) and exec_result.startswith(
-                "approved action denied"
-            ):
-                if approval_id in self.agent.broker.pending:
+        assert self.store is not None
+        task_actions = self.store.list_task_approval_actions(approval_id=approval_id)
+        if task_actions:
+            # Pre-claim safety checks leave the approval and task action pending.
+            tool = self.agent.registry.get(pending.tool)
+            if tool is not None and tool.risk in {RiskClass.SEND, RiskClass.DESTRUCTIVE}:
+                if self.agent.broker.kill.tripped:
                     return False
-                execution_failed = True
-            if execution_failed:
-                assert isinstance(exec_result, str)
-                self._log("error", f"approved action did not execute {tool_name}: {exec_result}")
-                for task in waiting:
-                    try:
-                        assert self.store is not None
-                        self.store.update_task(
-                            task.task_id,
-                            status="failed",
-                            error=exec_result[:4000],
-                            result_json=json.dumps(
-                                {
-                                    "cycle_id": getattr(task, "cycle_id", ""),
-                                    "actions": [
-                                        f"[approved] {tool_name} -> FAILED ({exec_result})"
-                                    ],
-                                    "pending_approvals": [],
-                                }
+                if self.agent.broker.egress_blocked_for(pending.args):
+                    return False
+            with self._approval_lock:
+                claimed = self.agent.broker.approve(
+                    approval_id, approved_by=signer, approved_role=approved_role
+                )
+                if claimed is None:
+                    row = self.store.get_approval(approval_id)
+                    state = str((row or {}).get("status") or "")
+                    if state in {"expired", "rejected"}:
+                        outcome = self.store.reject_task_approval_action(
+                            approval_id,
+                            reason=(
+                                "approval expired before execution"
+                                if state == "expired"
+                                else "approval rejected before execution"
                             ),
-                            output=exec_result[:4000],
+                            approval_status=state,
                         )
-                        self.state.tasks_failed += 1
-                        if self.state.tasks_waiting_approval > 0:
-                            self.state.tasks_waiting_approval -= 1
-                        self.emit_event(
-                            "task",
-                            {
-                                "task_id": task.task_id,
-                                "status": "failed",
-                                "goal": task.goal,
-                                "output": exec_result[:500],
-                                "error": exec_result[:500],
-                            },
-                        )
-                    except Exception as exc:
-                        self._log("error", f"failed to fail task {task.task_id}: {exc}")
-                return False
-            self._log("info", f"approved+executed {tool_name}: {str(exec_result)[:200]}")
-            for task in waiting:
-                self._log("info", f"completing task {task.task_id} after approval")
-                try:
-                    assert self.store is not None
-                    self.store.update_task(
-                        task.task_id, status="completed", error="",
-                        result_json=json.dumps({
-                            "cycle_id": getattr(task, "cycle_id", ""),
-                            "actions": [f"[approved] {tool_name} -> {exec_result}"],
-                            "pending_approvals": [],
-                        }),
-                        output=str(exec_result)[:4000],
+                        self._apply_task_action_reconciliation(outcome)
+                    return False
+                execution = self._validate_claimed_task_action(claimed, task_actions)
+                if execution is None:
+                    execution = self.agent.execute_approved_action(
+                        claimed, approved_by=signer
                     )
-                    self.state.tasks_completed += 1
-                    if self.state.tasks_waiting_approval > 0:
-                        self.state.tasks_waiting_approval -= 1
-                    self.emit_event("task", {
-                        "task_id": task.task_id,
-                        "status": "completed",
-                        "goal": task.goal,
-                        "output": str(exec_result)[:500],
-                        "error": "",
-                    })
-                except Exception as exc:
-                    self._log("error", f"failed to complete task {task.task_id}: {exc}")
-            return True
+                success = self._finish_task_approval(approval_id, execution)
+            self._log(
+                "info" if success else "error",
+                f"approved task action {tool_name}: "
+                f"{(execution.output or execution.error)[:200]}",
+            )
+            return success
+
+        if str(pending.provenance).startswith("task:"):
+            # A task approval without its durable action row is an interrupted
+            # setup, never a chat approval. Fail closed rather than execute it.
+            return False
 
         # Chat path: claim the approval first. Only after a *full* release
         # (not a partial dual-approval signature) grant one-shot/session allow
