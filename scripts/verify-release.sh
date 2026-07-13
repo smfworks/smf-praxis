@@ -104,4 +104,4 @@ PY
 )
 
 echo "==> PASS: release dry-run + install verification"
-echo "    (PyPI publish still needs Trusted Publisher — see RELEASING.md)"
+echo "    (PyPI publication is disabled — see RELEASING.md)"

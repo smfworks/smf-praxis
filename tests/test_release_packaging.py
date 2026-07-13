@@ -36,3 +36,43 @@ def test_release_verifier_uses_installed_package_outside_checkout():
         "medical",
     ):
         assert f"hybridagent.verticals.{vertical}.authority" in script
+
+
+def test_release_workflow_attaches_wheel_and_sdist():
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    release_step = workflow.split("- name: Attach wheel + sdist", 1)[1].split(
+        "# NOTE:", 1
+    )[0]
+    assert "dist/*.whl" in release_step
+    assert "dist/*.tar.gz" in release_step
+    assert "publish the package to PyPI" not in workflow
+    assert "PyPI publishing is intentionally not in this workflow" in workflow
+
+
+def test_release_documentation_matches_github_only_distribution():
+    documentation = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
+    assert "publishes release artifacts to GitHub Releases" in documentation
+    assert "does not publish to PyPI" in documentation
+    assert "releases/download/vX.Y.Z/praxis_agent-X.Y.Z-py3-none-any.whl" in documentation
+    assert "then publishes to\n   PyPI" not in documentation
+
+
+def test_installation_docs_do_not_recommend_unpublished_pypi_package():
+    paths = (
+        ROOT / "README.md",
+        ROOT / "docs" / "INSTALL.md",
+        ROOT / "docs" / "QUICKSTART.md",
+        ROOT / "docs" / "DEPLOYMENT.md",
+    )
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert "## From PyPI" not in text
+        assert "### From PyPI" not in text
+        assert "\npip install praxis-agent" not in text
+        assert "\npipx install praxis-agent" not in text
+        assert (
+            "github.com/smfworks/smf-praxis/releases/download/" in text
+            or "raw.githubusercontent.com/smfworks/smf-praxis/main/install" in text
+        )

@@ -1072,14 +1072,23 @@ class Store:
             # "database is locked" under cross-process contention.
             try:
                 self._conn.execute("PRAGMA foreign_keys=ON")
-                self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA busy_timeout=5000")
+                self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA synchronous=NORMAL")
             except sqlite3.Error:  # pragma: no cover - exotic filesystems only
                 pass
-            self._conn.executescript(_SCHEMA)
-            self._migrate_locked()
-            self._conn.commit()
+            try:
+                # `executescript` commits an already-open transaction before it
+                # runs. Put BEGIN inside the script, then keep every additive
+                # migration and trigger replacement on `execute` so concurrent
+                # processes serialize the entire schema transition.
+                self._conn.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA)
+                self._migrate_locked()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                self._conn.close()
+                raise
 
     def _migrate_locked(self) -> None:
         """Best-effort additive migrations for existing ~/.praxis/praxis.db files."""
@@ -1130,8 +1139,10 @@ class Store:
             # closed during approval/restart reconciliation.
             "risk": "TEXT NOT NULL DEFAULT ''",
         })
-        self._conn.executescript("""
-DROP TRIGGER IF EXISTS trg_task_approval_actions_identity_immutable;
+        self._conn.execute(
+            "DROP TRIGGER IF EXISTS trg_task_approval_actions_identity_immutable"
+        )
+        self._conn.execute("""
 CREATE TRIGGER trg_task_approval_actions_identity_immutable
 BEFORE UPDATE OF task_id,approval_id,tool,args_json,fingerprint,effect_type,
                  risk,idempotency_key,provider_idempotent,created_ts
@@ -1149,14 +1160,18 @@ WHEN NEW.task_id IS NOT OLD.task_id
   OR NEW.created_ts IS NOT OLD.created_ts
 BEGIN
     SELECT RAISE(ABORT, 'task approval action identity is immutable');
-END;
-DROP TRIGGER IF EXISTS trg_task_approval_actions_risk_valid_insert;
+END
+""")
+        self._conn.execute(
+            "DROP TRIGGER IF EXISTS trg_task_approval_actions_risk_valid_insert"
+        )
+        self._conn.execute("""
 CREATE TRIGGER trg_task_approval_actions_risk_valid_insert
 BEFORE INSERT ON task_approval_actions
 FOR EACH ROW WHEN NEW.risk NOT IN ('send','destructive')
 BEGIN
     SELECT RAISE(ABORT, 'invalid task approval action risk');
-END;
+END
 """)
         self._ensure_columns_locked("run_routing", {
             "escalations": "INTEGER NOT NULL DEFAULT 0",
