@@ -122,6 +122,63 @@ def test_daemon_approve_executes_waiting_task(tmp_store, mock_agent):
     assert d.verdict is Verdict.NEEDS_APPROVAL
 
 
+def test_daemon_failed_approved_action_marks_task_failed(tmp_store, mock_agent):
+    """A provider/tool exception must never turn an approved task into completed work."""
+    tool = mock_agent.registry.get("send")
+    assert tool is not None
+
+    def fail_send(message: str, **kwargs) -> str:
+        raise RuntimeError("provider unavailable")
+
+    tool.run = fail_send
+    daemon = Daemon(
+        store=tmp_store,
+        agent=mock_agent,
+        tick_interval=0.1,
+        idle_interval=0.1,
+        heartbeat_interval=9999,
+    )
+    task_id = daemon.submit("will-fail", max_attempts=1)
+    assert daemon.manager is not None
+    daemon.tick()
+    waiting = daemon.manager.get(task_id)
+    assert waiting is not None and waiting.status == "waiting_approval"
+    approval_id = next(iter(mock_agent.broker.pending))
+    completed_before = daemon.state.tasks_completed
+    failed_before = daemon.state.tasks_failed
+    waiting_before = daemon.state.tasks_waiting_approval
+
+    assert daemon.approve(approval_id, mode="once") is False
+    failed = daemon.manager.get(task_id)
+    assert failed is not None
+    assert failed.status == "failed"
+    assert "provider unavailable" in failed.error
+    assert "provider unavailable" in failed.output
+    assert daemon.state.tasks_completed == completed_before
+    assert daemon.state.tasks_failed == failed_before + 1
+    assert daemon.state.tasks_waiting_approval == max(0, waiting_before - 1)
+
+
+def test_daemon_preclaim_denial_keeps_task_and_approval_waiting(tmp_store, mock_agent):
+    daemon = Daemon(
+        store=tmp_store,
+        agent=mock_agent,
+        tick_interval=0.1,
+        idle_interval=0.1,
+        heartbeat_interval=9999,
+    )
+    task_id = daemon.submit("blocked-by-kill-switch", max_attempts=1)
+    assert daemon.manager is not None
+    daemon.tick()
+    approval_id = next(iter(mock_agent.broker.pending))
+    mock_agent.broker.kill.trip()
+
+    assert daemon.approve(approval_id, mode="once") is False
+    waiting = daemon.manager.get(task_id)
+    assert waiting is not None and waiting.status == "waiting_approval"
+    assert approval_id in mock_agent.broker.pending
+
+
 def test_daemon_approve_chat_path_emits_resume_without_execute(tmp_store, mock_agent):
     """Chat holds resolve via resume SSE + one-shot allow, not immediate execute."""
     events: list[tuple[str, dict]] = []

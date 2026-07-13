@@ -1,6 +1,6 @@
 # Durable Professional Workflows
 
-Status: Phase 4 release candidate (`0.26.5`)
+Status: Phase 4 release candidate (`0.26.6`)
 
 ## Scope
 
@@ -64,7 +64,7 @@ It checkpoints the plan and every durable step transition. Persisted progress al
 - `running` consequential intent: may be retried only with a provider idempotency key and the exact durable approved action;
 - consequential intent without safe reconciliation evidence: fails closed for manual reconciliation.
 
-Approval resumption is a separate executor invocation. `SEND` and `DESTRUCTIVE` actions remain held in enforced mode and are never executed in the same invocation that created their approval.
+Approval resumption is a separate executor invocation. `SEND` and `DESTRUCTIVE` actions remain held in enforced mode and are never executed in the same invocation that created their approval. In the daemon task path, a consumed approval whose tool execution fails marks the task `failed` with the error preserved; it is never reported as completed. A pre-claim kill-switch or egress denial leaves the task and approval waiting.
 
 ## Effect delivery semantics
 

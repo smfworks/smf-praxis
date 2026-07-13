@@ -4843,9 +4843,54 @@ class Daemon:
             # with stored args and does not consume a subsequent authorize().
             exec_result = self.agent.approve(
                 approval_id, approved_by=signer, approved_role=approved_role)
-            if isinstance(exec_result, str) and (
-                    exec_result.startswith("no pending")
-                    or exec_result.startswith("approved action denied")):
+            if isinstance(exec_result, str) and exec_result.startswith("no pending"):
+                return False
+            failed_prefixes = ("tool ", "approved action failed")
+            execution_failed = isinstance(exec_result, str) and exec_result.startswith(
+                failed_prefixes
+            )
+            if isinstance(exec_result, str) and exec_result.startswith(
+                "approved action denied"
+            ):
+                if approval_id in self.agent.broker.pending:
+                    return False
+                execution_failed = True
+            if execution_failed:
+                assert isinstance(exec_result, str)
+                self._log("error", f"approved action did not execute {tool_name}: {exec_result}")
+                for task in waiting:
+                    try:
+                        assert self.store is not None
+                        self.store.update_task(
+                            task.task_id,
+                            status="failed",
+                            error=exec_result[:4000],
+                            result_json=json.dumps(
+                                {
+                                    "cycle_id": getattr(task, "cycle_id", ""),
+                                    "actions": [
+                                        f"[approved] {tool_name} -> FAILED ({exec_result})"
+                                    ],
+                                    "pending_approvals": [],
+                                }
+                            ),
+                            output=exec_result[:4000],
+                        )
+                        self.state.tasks_failed += 1
+                        if self.state.tasks_waiting_approval > 0:
+                            self.state.tasks_waiting_approval -= 1
+                        self.emit_event(
+                            "task",
+                            {
+                                "task_id": task.task_id,
+                                "status": "failed",
+                                "goal": task.goal,
+                                "output": exec_result[:500],
+                                "error": exec_result[:500],
+                            },
+                        )
+                    except Exception as exc:
+                        self._log("error", f"failed to fail task {task.task_id}: {exc}")
                 return False
             self._log("info", f"approved+executed {tool_name}: {str(exec_result)[:200]}")
             for task in waiting:
