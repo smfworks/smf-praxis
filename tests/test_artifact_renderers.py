@@ -17,6 +17,7 @@ from hybridagent.artifacts import (
     render_artifact,
     supported_formats,
 )
+from hybridagent.artifacts.render_common import normalize_zip_package
 from hybridagent.artifacts.render_docx import render_docx
 from hybridagent.artifacts.render_json import render_json
 from hybridagent.artifacts.render_markdown import render_markdown
@@ -100,6 +101,20 @@ def test_missing_optional_backend_has_actionable_error(monkeypatch: pytest.Monke
         match=r'from a Praxis source checkout.*pip install -e "\.\[artifacts\]"',
     ):
         render_docx(document(), {"asset-1": b"not-used"})
+
+
+def test_office_zip_normalization_rejects_nonportable_and_case_colliding_paths() -> None:
+    for members in (
+        (("C:/absolute.xml", b"x"),),
+        (("word/CON.xml", b"x"),),
+        (("word/A.xml", b"x"), ("word/a.xml", b"y")),
+    ):
+        source = io.BytesIO()
+        with zipfile.ZipFile(source, "w") as archive:
+            for name, payload in members:
+                archive.writestr(name, payload)
+        with pytest.raises(ArtifactRenderError, match="portable|collide"):
+            normalize_zip_package(source.getvalue())
 
 
 def test_optional_renderers_reject_missing_or_malformed_assets() -> None:

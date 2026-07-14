@@ -6,6 +6,7 @@ import io
 import json
 import multiprocessing
 import sqlite3
+import struct
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,6 +27,24 @@ from hybridagent.persistence import Store
 from hybridagent.reviews import ReviewRegistry
 from hybridagent.workspaces import WorkspaceDirectory
 from tests.artifact_helpers import PNG, ArtifactScope, artifact_document, scope
+
+
+def _canonical_zip(members: list[tuple[str, bytes]]) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for name, payload in members:
+            info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 0
+            info.external_attr = 0o600 << 16
+            archive.writestr(info, payload, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    return output.getvalue()
+
+
+def _rewrite_bundle(bundle: bytes, mutate) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(bundle), "r") as archive:
+        members = [(info.filename, archive.read(info.filename)) for info in archive.infolist()]
+    return _canonical_zip(mutate(members))
 
 
 def _race_artifact_release(
@@ -345,13 +364,13 @@ def test_bundle_verifier_rejects_tamper_duplicate_and_traversal(tmp_path: Path) 
     with zipfile.ZipFile(out, "w") as archive:
         for name, payload in members.items():
             archive.writestr(name, payload)
-    with pytest.raises(ArtifactBundleError, match="unsafe member|integrity"):
+    with pytest.raises(ArtifactBundleError, match="unsafe|noncanonical|integrity"):
         verify_release_bundle(out.getvalue())
 
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as archive:
         archive.writestr("../manifest.json", b"{}")
-    with pytest.raises(ArtifactBundleError, match="unsafe member"):
+    with pytest.raises(ArtifactBundleError, match="unsafe"):
         verify_release_bundle(out.getvalue())
 
     collision = io.BytesIO()
@@ -438,6 +457,102 @@ def test_release_bundle_rebuild_is_byte_deterministic_and_duplicates_fail(tmp_pa
         ArtifactBundleError, match="artifact document is not canonical JSON"
     ):
         verify_release_bundle(_bundle_with_noncanonical_document(release.bundle))
+
+
+def test_bundle_binds_document_identity_assets_and_exact_media_types(tmp_path: Path) -> None:
+    value = scope(tmp_path)
+    studio, version, _, _ = _reviewed_version(value)
+    release = _release(studio, value, version.version_id, key="bundle-binding")
+    with zipfile.ZipFile(io.BytesIO(release.bundle), "r") as archive:
+        governance = {
+            name: json.loads(archive.read(f"governance/{name}.json"))
+            for name in ("claims", "evidence", "reviews", "signatures", "run")
+        }
+        renders = {
+            "json": archive.read("renders/document.json"),
+            "markdown": archive.read("renders/document.md"),
+        }
+        report = json.loads(archive.read("validation/report.json"))
+
+    for field, wrong in (
+        ("artifact_id", "wrong-artifact"),
+        ("organization_id", "wrong-organization"),
+        ("workspace_id", "wrong-workspace"),
+    ):
+        context = dict(release.manifest["release"])
+        context[field] = wrong
+        with pytest.raises(ArtifactBundleError, match="identity"):
+            build_release_bundle(
+                release_context=context,
+                document=version.document,
+                renders=renders,
+                assets={"figure-asset-1": PNG},
+                asset_media={"figure-asset-1": "image/png"},
+                governance=governance,
+                validation_report=report,
+            )
+
+    with pytest.raises(ArtifactBundleError, match="portable"):
+        build_release_bundle(
+            release_context=release.manifest["release"],
+            document=version.document,
+            renders=renders,
+            assets={"CON": PNG},
+            asset_media={"CON": "image/png"},
+            governance=governance,
+            validation_report=report,
+        )
+    with pytest.raises(ArtifactBundleError, match="figure assets"):
+        build_release_bundle(
+            release_context=release.manifest["release"],
+            document=version.document,
+            renders=renders,
+            assets={},
+            asset_media={},
+            governance=governance,
+            validation_report=report,
+        )
+    with pytest.raises(ArtifactBundleError, match="media type"):
+        build_release_bundle(
+            release_context=release.manifest["release"],
+            document=version.document,
+            renders=renders,
+            assets={"figure-asset-1": PNG},
+            asset_media={"figure-asset-1": "image/jpeg"},
+            governance=governance,
+            validation_report=report,
+        )
+
+    def wrong_media(members: list[tuple[str, bytes]]) -> list[tuple[str, bytes]]:
+        values = dict(members)
+        manifest = json.loads(values["manifest.json"])
+        entry = next(
+            item for item in manifest["files"] if item["path"] == "artifact/document.json"
+        )
+        entry["media_type"] = "application/x-wrong"
+        values["manifest.json"] = canonical_json_bytes(manifest)
+        return [(name, values[name]) for name, _ in members]
+
+    with pytest.raises(ArtifactBundleError, match="media type"):
+        verify_release_bundle(_rewrite_bundle(release.bundle, wrong_media))
+
+
+def test_bundle_verifier_requires_canonical_zip_and_normalizes_crc_errors(tmp_path: Path) -> None:
+    value = scope(tmp_path)
+    studio, version, _, _ = _reviewed_version(value)
+    release = _release(studio, value, version.version_id, key="zip-canonical")
+
+    with pytest.raises(ArtifactBundleError, match="canonical ZIP"):
+        verify_release_bundle(_rewrite_bundle(release.bundle, lambda members: list(reversed(members))))
+
+    corrupted = bytearray(release.bundle)
+    with zipfile.ZipFile(io.BytesIO(release.bundle), "r") as archive:
+        info = archive.getinfo("artifact/document.json")
+    name_size, extra_size = struct.unpack_from("<HH", corrupted, info.header_offset + 26)
+    data_start = info.header_offset + 30 + name_size + extra_size
+    corrupted[data_start + max(info.compress_size // 2, 1)] ^= 0x01
+    with pytest.raises(ArtifactBundleError, match="cannot be read"):
+        verify_release_bundle(bytes(corrupted))
 
 
 def test_existing_phase5_database_migrates_release_idempotency_columns(tmp_path: Path) -> None:

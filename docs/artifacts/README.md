@@ -5,7 +5,7 @@ into validated, versioned deliverables and self-verifying release packages.
 
 ## Status
 
-Implemented in Praxis `0.27.4` as the PP50 / Phase 5 capability. JSON and Markdown
+Implemented in Praxis `0.27.5` as the PP50 / Phase 5 capability. JSON and Markdown
 remain dependency-free. DOCX, PDF, PPTX, and XLSX use the optional `artifacts`
 extra.
 

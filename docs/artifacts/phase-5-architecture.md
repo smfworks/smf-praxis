@@ -2,7 +2,7 @@
 
 **Status:** implemented release candidate; final exact-head review and promotion pending
 
-**Implementation:** Praxis `0.27.4` on `feat/professional-platform-phase-5`
+**Implementation:** Praxis `0.27.5` on `feat/professional-platform-phase-5`
 
 **Baseline:** `v0.26.16`, checkpoint `b806fea57e6ec11d71786a74e5d0db29f82a2231`
 
@@ -65,7 +65,7 @@ Pure model validation checks structure and referential integrity. `ArtifactServi
 ### 4. Determinism is format-specific
 
 - Canonical JSON and Markdown: byte-for-byte deterministic.
-- Release bundle ZIP: byte-for-byte deterministic through fixed timestamps, sorted names, fixed compression settings, normalized paths, and canonical manifests.
+- Release bundle ZIP: byte-for-byte deterministic through fixed timestamps, sorted names, fixed compression settings, normalized portable paths, and canonical manifests. Standalone verification rejects noncanonical member order or metadata rather than accepting semantically equivalent but byte-distinct archives.
 - DOCX/PPTX/XLSX: semantic determinism. Normalize ZIP member order/timestamps and volatile core properties where the library permits, then compare normalized OpenXML and extracted structure rather than raw producer bytes alone.
 - PDF: deterministic ReportLab invariant mode where available, plus semantic extraction/metadata checks. Font and platform layout remain explicitly versioned renderer inputs.
 
@@ -92,7 +92,7 @@ The IR requires figure alternative text, heading levels, table headers, document
 
 Artifact identities and versions are organization/workspace-owned. Versions are append-only, sequential, parent-linked, and content-addressed. SQLite enforces immutable version identity/content and rejects updates, deletes, replacement writes, cross-tenant references, stale-parent writes, and duplicate revision numbers.
 
-`ArtifactStudio.compare()` is semantic: metadata changes, added/removed/changed blocks, citation changes, source-manifest changes, and review/signature changes. It does not present a raw JSON diff as a professional comparison.
+`ArtifactStudio.compare()` is semantic: metadata changes, added/removed/changed blocks, citation changes, source-manifest changes, and review/signature changes. Positional occurrence lists prevent duplicate identifiers in malformed caller-supplied documents from shadowing earlier changes before validation. It does not present a raw JSON diff as a professional comparison.
 
 ### 8. Release bundles are self-describing evidence packages
 
@@ -106,7 +106,7 @@ A release bundle follows BagIt/RO-Crate principles without claiming conformance.
 - durable run/checkpoint manifest;
 - canonical release manifest with SHA-256 and byte length for every payload.
 
-No archive entry may be absolute, traverse directories, contain backslashes, collide under case-folding, or exceed configured count/size limits. Symlinks and externally fetched payloads are forbidden.
+No archive entry may be absolute or drive-qualified, traverse directories, contain backslashes, use Windows-reserved device names, collide under case-folding, or exceed configured count/size limits. Symlinks and externally fetched payloads are forbidden. The release context must match the embedded artifact, organization, workspace, and document digest; the exact figure-asset set and media types must match the canonical document.
 
 ### 9. Release is a fail-closed state machine
 
