@@ -10,11 +10,20 @@ import zlib
 from typing import Any, cast
 
 from hybridagent.artifacts.models import ArtifactDocument, ArtifactModelError, FigureBlock
-from hybridagent.artifacts.render_common import portable_member_path
+from hybridagent.artifacts.render_common import (
+    ArtifactRenderError,
+    checked_assets,
+    portable_member_path,
+)
+from hybridagent.artifacts.render_markdown import render_markdown
 from hybridagent.artifacts.renderers import extension_for, supported_formats
-from hybridagent.artifacts.validation import ArtifactValidationError, validate_or_raise
+from hybridagent.artifacts.validation import (
+    ArtifactValidationError,
+    validate_document,
+    validate_or_raise,
+)
 
-BUNDLE_SCHEMA_VERSION = 1
+BUNDLE_SCHEMA_VERSION = 2
 _FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 _MAX_MEMBERS = 1_000
 _MAX_MEMBER_BYTES = 128 * 1024 * 1024
@@ -31,6 +40,8 @@ _RELEASE_CONTEXT_FIELDS = frozenset(
         "workspace_id",
         "document_sha256",
         "formats",
+        "review_ids",
+        "signature_ids",
         "run_id",
         "checkpoint_id",
         "idempotency_key",
@@ -86,7 +97,9 @@ def _strict_canonical_json(payload: bytes, label: str) -> Any:
 def _validate_release_context(value: Any) -> list[str]:
     if type(value) is not dict or set(value) != _RELEASE_CONTEXT_FIELDS:
         raise ArtifactBundleError("release context has invalid fields")
-    text_fields = _RELEASE_CONTEXT_FIELDS - {"formats", "created_ts"}
+    text_fields = _RELEASE_CONTEXT_FIELDS - {
+        "formats", "review_ids", "signature_ids", "created_ts"
+    }
     if any(
         type(value.get(name)) is not str or not value[name]
         for name in text_fields
@@ -107,10 +120,19 @@ def _validate_release_context(value: Any) -> list[str]:
         type(formats) is not list
         or not formats
         or any(type(item) is not str for item in formats)
-        or len(formats) != len(set(formats))
+        or formats != sorted(set(formats))
         or not set(formats) <= set(supported_formats())
     ):
         raise ArtifactBundleError("release format manifest is invalid")
+    for name in ("review_ids", "signature_ids"):
+        identifiers = value.get(name)
+        if (
+            type(identifiers) is not list
+            or not identifiers
+            or any(type(item) is not str or not item for item in identifiers)
+            or identifiers != sorted(set(identifiers))
+        ):
+            raise ArtifactBundleError(f"release {name} manifest is invalid")
     return formats
 
 
@@ -140,6 +162,192 @@ def _validate_document_identity(
         or release_context["document_sha256"] != document.content_hash()
     ):
         raise ArtifactBundleError("release identity is not bound to the artifact document")
+
+
+def _exact_object(value: Any, fields: set[str], label: str) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != fields:
+        raise ArtifactBundleError(f"release {label} payload has invalid fields")
+    return cast(dict[str, Any], value)
+
+
+def _scope_matches(value: dict[str, Any], context: dict[str, Any]) -> bool:
+    return (
+        value.get("organization_id") == context["organization_id"]
+        and value.get("workspace_id") == context["workspace_id"]
+    )
+
+
+def _valid_timestamp(value: Any) -> bool:
+    return type(value) in {int, float} and math.isfinite(cast(float, value))
+
+
+def _validate_governance(
+    governance: dict[str, Any],
+    release_context: dict[str, Any],
+    document: ArtifactDocument,
+) -> None:
+    if type(governance) is not dict or set(governance) != _REQUIRED_GOVERNANCE:
+        raise ArtifactBundleError("release governance payload is incomplete")
+
+    review_fields = {
+        "review_id", "organization_id", "workspace_id", "run_id", "review_type",
+        "required_role", "subject", "status", "decision", "decision_payload",
+        "created_by", "created_ts", "reviewer_user_id", "reviewed_ts",
+    }
+    reviews_value = governance["reviews"]
+    if type(reviews_value) is not list or not reviews_value:
+        raise ArtifactBundleError("release reviews payload is invalid")
+    reviews: dict[str, dict[str, Any]] = {}
+    expected_subject = {
+        "artifact_id": release_context["artifact_id"],
+        "version_id": release_context["version_id"],
+        "document_sha256": release_context["document_sha256"],
+    }
+    for value in reviews_value:
+        review = _exact_object(value, review_fields, "reviews")
+        review_id = review.get("review_id")
+        if (
+            type(review_id) is not str
+            or not review_id
+            or review_id in reviews
+            or not _scope_matches(review, release_context)
+            or review.get("run_id") != release_context["run_id"]
+            or review.get("review_type") != "professional_release"
+            or review.get("status") != "decided"
+            or review.get("decision") != "approved"
+            or review.get("subject") != expected_subject
+            or type(review.get("required_role")) is not str
+            or not review["required_role"]
+            or type(review.get("reviewer_user_id")) is not str
+            or not review["reviewer_user_id"]
+            or not _valid_timestamp(review.get("created_ts"))
+            or not _valid_timestamp(review.get("reviewed_ts"))
+            or type(review.get("decision_payload")) is not dict
+        ):
+            raise ArtifactBundleError("release reviews are not bound to the exact release")
+        reviews[review_id] = review
+    if sorted(reviews) != release_context["review_ids"]:
+        raise ArtifactBundleError("release review IDs do not match the release context")
+
+    signature_fields = {
+        "signature_id", "artifact_id", "version_id", "organization_id",
+        "workspace_id", "document_hash", "review_id", "signer_user_id", "role",
+        "meaning", "signed_ts",
+    }
+    signatures_value = governance["signatures"]
+    if type(signatures_value) is not list or not signatures_value:
+        raise ArtifactBundleError("release signatures payload is invalid")
+    signature_ids: set[str] = set()
+    for value in signatures_value:
+        signature = _exact_object(value, signature_fields, "signatures")
+        signature_id = signature.get("signature_id")
+        review_id = signature.get("review_id")
+        approved_review = reviews.get(review_id) if type(review_id) is str else None
+        if (
+            type(signature_id) is not str
+            or not signature_id
+            or signature_id in signature_ids
+            or approved_review is None
+            or not _scope_matches(signature, release_context)
+            or signature.get("artifact_id") != release_context["artifact_id"]
+            or signature.get("version_id") != release_context["version_id"]
+            or signature.get("document_hash") != release_context["document_sha256"]
+            or signature.get("signer_user_id") != approved_review["reviewer_user_id"]
+            or signature.get("role") != approved_review["required_role"]
+            or type(signature.get("meaning")) is not str
+            or not signature["meaning"]
+            or not _valid_timestamp(signature.get("signed_ts"))
+        ):
+            raise ArtifactBundleError("release signatures are not bound to approved reviews")
+        signature_ids.add(signature_id)
+    if sorted(signature_ids) != release_context["signature_ids"]:
+        raise ArtifactBundleError("release signature IDs do not match the release context")
+
+    run_value = _exact_object(governance["run"], {"run", "checkpoint"}, "run provenance")
+    run = run_value.get("run")
+    checkpoint = run_value.get("checkpoint")
+    if (
+        type(run) is not dict
+        or type(checkpoint) is not dict
+        or not _scope_matches(run, release_context)
+        or not _scope_matches(checkpoint, release_context)
+        or run.get("run_id") != release_context["run_id"]
+        or run.get("status") in {"cancelled", "failed"}
+        or checkpoint.get("run_id") != release_context["run_id"]
+        or checkpoint.get("checkpoint_id") != release_context["checkpoint_id"]
+    ):
+        raise ArtifactBundleError("release run provenance is not bound to the release context")
+
+    evidence = _exact_object(
+        governance["evidence"], {"source_manifest", "versions", "spans"}, "evidence"
+    )
+    expected_sources = document.to_dict()["sources"]
+    versions = evidence.get("versions")
+    spans = evidence.get("spans")
+    if evidence.get("source_manifest") != expected_sources or type(versions) is not list or type(spans) is not list:
+        raise ArtifactBundleError("release evidence is not bound to the artifact document")
+    version_map: dict[str, dict[str, Any]] = {}
+    for value in versions:
+        if type(value) is not dict or not _scope_matches(value, release_context):
+            raise ArtifactBundleError("release evidence version scope is invalid")
+        version_id = value.get("version_id")
+        if type(version_id) is not str or not version_id or version_id in version_map:
+            raise ArtifactBundleError("release evidence version identity is invalid")
+        version_map[version_id] = value
+    if set(version_map) != {source.source_version_id for source in document.sources}:
+        raise ArtifactBundleError("release evidence versions do not match the source manifest")
+    for source in document.sources:
+        value = version_map[source.source_version_id]
+        if value.get("source_id") != source.source_id or value.get("content_hash") != source.content_hash:
+            raise ArtifactBundleError("release evidence version is not bound to its source")
+    span_map: dict[str, dict[str, Any]] = {}
+    for value in spans:
+        if type(value) is not dict or not _scope_matches(value, release_context):
+            raise ArtifactBundleError("release evidence span scope is invalid")
+        span_id = value.get("span_id")
+        if type(span_id) is not str or not span_id or span_id in span_map:
+            raise ArtifactBundleError("release evidence span identity is invalid")
+        span_map[span_id] = value
+    expected_span_ids = {span_id for citation in document.citations for span_id in citation.span_ids}
+    if set(span_map) != expected_span_ids:
+        raise ArtifactBundleError("release evidence spans do not match artifact citations")
+    source_versions = {source.source_id: source.source_version_id for source in document.sources}
+    for citation in document.citations:
+        if any(span_map[span_id].get("version_id") != source_versions[citation.source_id] for span_id in citation.span_ids):
+            raise ArtifactBundleError("release evidence span is not bound to its cited source")
+
+    claims = _exact_object(
+        governance["claims"], {"claims", "evidence_links"}, "claims"
+    )
+    claim_values = claims.get("claims")
+    link_values = claims.get("evidence_links")
+    if type(claim_values) is not list or type(link_values) is not list:
+        raise ArtifactBundleError("release claims payload is invalid")
+    claim_map: dict[str, dict[str, Any]] = {}
+    for value in claim_values:
+        if type(value) is not dict or not _scope_matches(value, release_context):
+            raise ArtifactBundleError("release claims scope is invalid")
+        claim_id = value.get("claim_id")
+        if type(claim_id) is not str or not claim_id or claim_id in claim_map:
+            raise ArtifactBundleError("release claims identity is invalid")
+        if value.get("material") == 1 and value.get("status") != "supported":
+            raise ArtifactBundleError("release contains an unsupported material claim")
+        claim_map[claim_id] = value
+    expected_claim_ids = {claim_id for citation in document.citations for claim_id in citation.claim_ids}
+    if not expected_claim_ids <= set(claim_map):
+        raise ArtifactBundleError("release claims do not cover artifact citations")
+    links: list[dict[str, Any]] = []
+    for value in link_values:
+        if type(value) is not dict or not _scope_matches(value, release_context):
+            raise ArtifactBundleError("release claim evidence link scope is invalid")
+        links.append(value)
+    for citation in document.citations:
+        for claim_id in citation.claim_ids:
+            if not any(
+                link.get("claim_id") == claim_id and link.get("span_id") in citation.span_ids
+                for link in links
+            ):
+                raise ArtifactBundleError("release claims are not linked to cited evidence")
 
 
 def _canonical_zip(files: dict[str, bytes]) -> bytes:
@@ -227,8 +435,10 @@ def build_release_bundle(
         raise ArtifactBundleError("asset media manifest is invalid")
     if type(governance) is not dict or set(governance) != _REQUIRED_GOVERNANCE:
         raise ArtifactBundleError("release governance payload is incomplete")
-    if type(validation_report) is not dict or validation_report.get("valid") is not True:
-        raise ArtifactBundleError("release validation report is not passing")
+    _validate_governance(governance, release_context, document)
+    expected_report = validate_document(document).to_dict()
+    if validation_report != expected_report or validation_report.get("valid") is not True:
+        raise ArtifactBundleError("release validation report is not passing or exact")
     if set(formats) != set(renders):
         raise ArtifactBundleError("release formats do not match rendered outputs")
     if set(assets) != set(asset_media):
@@ -241,6 +451,10 @@ def build_release_bundle(
         raise ArtifactBundleError("figure assets must exactly match the artifact document")
     if asset_media != expected_asset_media:
         raise ArtifactBundleError("asset media type does not match the artifact document")
+    try:
+        checked_assets(document, assets)
+    except ArtifactRenderError as exc:
+        raise ArtifactBundleError("asset media payload does not match its declared type") from exc
 
     files: dict[str, bytes] = {"artifact/document.json": document.canonical_bytes()}
     for format_name in formats:
@@ -414,6 +628,24 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
             and _read_member(archive, "renders/document.json") != document.canonical_bytes()
         ):
             raise ArtifactBundleError("canonical JSON render differs from the released document")
+        if (
+            "markdown" in formats
+            and _read_member(archive, "renders/document.md") != render_markdown(document)
+        ):
+            raise ArtifactBundleError("deterministic Markdown render differs from the released document")
+        try:
+            checked_assets(
+                document,
+                {
+                    asset_id: _read_member(archive, f"assets/{asset_id}")
+                    for asset_id in asset_media
+                },
+            )
+        except ArtifactRenderError as exc:
+            raise ArtifactBundleError(
+                "asset media payload does not match its declared type"
+            ) from exc
+        governance: dict[str, Any] = {}
         for name in _REQUIRED_GOVERNANCE:
             value = _strict_canonical_json(
                 _read_member(archive, f"governance/{name}.json"),
@@ -421,9 +653,11 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
             )
             if type(value) not in {dict, list}:
                 raise ArtifactBundleError(f"{name} governance payload is invalid")
+            governance[name] = value
+        _validate_governance(governance, release_context, document)
         report = _strict_canonical_json(
             _read_member(archive, "validation/report.json"), "validation report"
         )
-        if type(report) is not dict or report.get("valid") is not True:
-            raise ArtifactBundleError("released validation report is not passing")
+        if report != validate_document(document).to_dict():
+            raise ArtifactBundleError("released validation report is not exact")
         return manifest

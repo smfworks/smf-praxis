@@ -2,7 +2,7 @@
 
 **Status:** implemented release candidate; final exact-head review and promotion pending
 
-**Implementation:** Praxis `0.27.5` on `feat/professional-platform-phase-5`
+**Implementation:** Praxis `0.27.6` on `feat/professional-platform-phase-5`
 
 **Baseline:** `v0.26.16`, checkpoint `b806fea57e6ec11d71786a74e5d0db29f82a2231`
 
@@ -16,9 +16,9 @@ Praxis can ingest professional documents and preserve evidence, claims, reviews,
 
 - `hybridagent/artifacts/models.py` and `validation.py`: strict canonical IR and validation.
 - `render_json.py`, `render_markdown.py`, `render_docx.py`, `render_pdf.py`, `render_pptx.py`, and `render_xlsx.py`: deterministic core and optional output formats.
-- `versions.py` and `service.py`: append-only tenant-scoped versions, semantic comparison, exact review/signature binding, and atomic idempotent release.
-- `bundles.py`: deterministic content-addressed package assembly and standalone verification.
-- `hybridagent/persistence.py`: durable tables, ownership/parent/run foreign keys, idempotency index, and update/delete/replace immutability triggers.
+- `versions.py` and `service.py`: append-only tenant-scoped versions, immutable revision prefixes, forward-only heads, occurrence-preserving semantic comparison, exact review/signature binding, and atomic idempotent release.
+- `bundles.py`: deterministic bundle-schema-v2 package assembly plus standalone recomputation of renders, validation, media signatures, and governance linkage.
+- `hybridagent/persistence.py`: composite organization/workspace/artifact keys, atomic early-schema migration, ownership/parent/run foreign keys, idempotency index, and update/delete/replace/history-rewind immutability triggers.
 - `docs/artifacts/README.md`: public API, lifecycle, bundle layout, guarantees, and interface boundary.
 
 ## Research sources
@@ -82,7 +82,7 @@ The `artifacts` optional extra provides:
 
 Imports occur only inside the relevant renderer call. Missing backends raise one actionable `MissingArtifactBackendError` directing source-checkout users to `pip install -e ".[artifacts]"`; Praxis is currently distributed through GitHub rather than PyPI. Importing `hybridagent.artifacts` remains dependency-free.
 
-Renderers accept validated IR and return bytes. They do not fetch URLs, execute macros, invoke shell commands, or write arbitrary paths. Figures require caller-supplied bytes keyed by declared asset ID; unresolved assets fail closed.
+Renderers accept validated IR and return bytes. They do not fetch URLs, execute macros, invoke shell commands, or write arbitrary paths. Figures require caller-supplied bytes keyed by declared asset ID; unresolved assets or bytes that do not decode as the declared PNG, JPEG, or SVG media type fail closed.
 
 ### 6. Accessibility is a release requirement
 
@@ -90,7 +90,7 @@ The IR requires figure alternative text, heading levels, table headers, document
 
 ### 7. Versioning is append-only and tenant-scoped
 
-Artifact identities and versions are organization/workspace-owned. Versions are append-only, sequential, parent-linked, and content-addressed. SQLite enforces immutable version identity/content and rejects updates, deletes, replacement writes, cross-tenant references, stale-parent writes, and duplicate revision numbers.
+Artifact identities are composite organization/workspace/artifact keys, so separate tenants may reuse the same logical artifact ID. Versions are append-only, sequential, parent-linked, and content-addressed. `ArtifactService` requires the complete prior revision prefix to match the stored parent, while SQLite permits a head to advance only to the next sequence whose parent is the prior head. It rejects updates, deletes, replacement writes, cross-tenant references, stale-parent writes, history rewrites, head rewinds, and duplicate scoped revision numbers. Existing early Phase 5 databases are rebuilt transactionally into the composite-key layout with child rows preserved and a final foreign-key check.
 
 `ArtifactStudio.compare()` is semantic: metadata changes, added/removed/changed blocks, citation changes, source-manifest changes, and review/signature changes. Positional occurrence lists prevent duplicate identifiers in malformed caller-supplied documents from shadowing earlier changes before validation. It does not present a raw JSON diff as a professional comparison.
 

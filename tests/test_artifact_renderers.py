@@ -121,7 +121,7 @@ def test_optional_renderers_reject_missing_or_malformed_assets() -> None:
     pytest.importorskip("docx")
     with pytest.raises(ArtifactRenderError, match="missing"):
         render_docx(document(), {})
-    with pytest.raises(ArtifactRenderError, match="recognized"):
+    with pytest.raises(ArtifactRenderError, match="recognized|declared media type"):
         render_docx(document(), {"asset-1": b"not-an-image"})
 
 
