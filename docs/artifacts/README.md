@@ -157,11 +157,12 @@ names and timestamps are fixed and sorted for byte-for-byte reproduction.
   linked claim IDs.
 - Release-time authorization rechecks that each signer and creator remains active
   in the owning scope and that the signer still holds the recorded role.
-- Bundle verification rejects malformed/noncanonical JSON, duplicate names,
-  case-insensitive collisions, absolute or traversing paths, backslashes,
-  directories, symlinks, unsupported formats, unexpected render members, member
-  and aggregate size violations, hash/size mismatches, and document/release
-  identity mismatch.
+- Bundle verification rejects malformed/noncanonical JSON and ZIP order/metadata,
+  duplicate names, case-insensitive collisions, absolute, traversing, drive-qualified,
+  Windows-reserved, or backslash paths, directories, symlinks, unsupported formats,
+  unexpected members, member and aggregate size violations, unreadable payloads,
+  hash/size or declared media-type mismatches, and document/release scope, artifact,
+  asset, or digest identity mismatch.
 - Renderers never retrieve external resources. Figure bytes must be supplied by the
   caller and match declared asset IDs exactly.
 

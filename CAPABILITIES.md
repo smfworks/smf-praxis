@@ -148,9 +148,9 @@ The capability layer on top of the spine.
   bytes and never fetch external resources (`artifacts/render_*.py`).
 - **Tenant-scoped append-only versioning** — organization/workspace ownership,
   expected-head CAS, sequential parent-linked revisions, immutable assets,
-  restart durability, one-winner concurrent writes, and semantic comparison of
-  metadata, sections, blocks, citations, sources, reviews, and signatures
-  (`artifacts/service.py`, `artifacts/versions.py`, `persistence.py`).
+  restart durability, one-winner concurrent writes, and occurrence-preserving
+  semantic comparison of metadata, sections, blocks, citations, sources, reviews,
+  and signatures (`artifacts/service.py`, `artifacts/versions.py`, `persistence.py`).
 - **Governed professional release** — current-head validation, supported material
   claims, exact approved `professional_release` review, signature binding, active
   signer/role revalidation, successful requested renderers, and exact durable
@@ -160,9 +160,11 @@ The capability layer on top of the spine.
 - **Self-verifying release packages** — deterministic content-addressed ZIP bundles
   contain canonical IR, selected renders, assets, claims/evidence, reviews,
   signatures, run/checkpoint provenance, and validation. Verification rejects hash
-  or size mismatches, duplicate/case-colliding/absolute/traversing paths, symlinks,
-  unbounded members, malformed canonical manifests, unexpected renders, and
-  tampering (`artifacts/bundles.py`).
+  or size mismatches; noncanonical ZIP order, metadata, manifests, or payloads;
+  duplicate/case-colliding/absolute/traversing/drive-qualified/Windows-reserved paths;
+  symlinks; unbounded or unreadable members; unexpected files; media mismatches;
+  and release/document scope, artifact, asset, or digest tampering
+  (`artifacts/bundles.py`).
 
 ## 5. Procedural skill memory (self‑improvement)
 
