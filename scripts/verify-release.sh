@@ -86,6 +86,42 @@ from hybridagent.jobs import list_jobs
 assert {j["id"] for j in list_jobs()} == {"research", "draft", "schedule"}
 print("jobs catalog ok")
 
+from hybridagent.artifacts import (
+    ArtifactDocument,
+    ArtifactStudio,
+    DocumentMetadata,
+    ParagraphBlock,
+    RevisionRecord,
+    Section,
+    render_artifact,
+)
+artifact = ArtifactDocument(
+    artifact_id="release-verifier-artifact",
+    metadata=DocumentMetadata(
+        title="Installed Artifact Studio",
+        language="en-US",
+        document_type="verification_report",
+        confidentiality="internal",
+        organization_id="org-release-verifier",
+        workspace_id="workspace-release-verifier",
+        created_by="release-verifier",
+        created_at="2026-07-13T00:00:00Z",
+    ),
+    sections=(Section(
+        section_id="verification",
+        title="Verification",
+        level=1,
+        blocks=(ParagraphBlock("result", "Installed core renderers pass."),),
+    ),),
+    revisions=(RevisionRecord(
+        "revision-1", 1, "release-verifier", "2026-07-13T00:00:00Z", "Initial"
+    ),),
+)
+assert ArtifactStudio.__module__ == "hybridagent.artifacts.service"
+assert render_artifact(artifact, "json") == artifact.canonical_bytes()
+assert b"Installed core renderers pass." in render_artifact(artifact, "markdown")
+print("Artifact Studio service + core renderers ok")
+
 from hybridagent.verticals.architecture.authority import policy as architecture_policy
 from hybridagent.verticals.dental.authority import policy as dental_policy
 from hybridagent.verticals.education.authority import policy as education_policy

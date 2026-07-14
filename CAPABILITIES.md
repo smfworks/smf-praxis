@@ -134,6 +134,42 @@ The capability layer on top of the spine.
 - **Auto‑grounded chat** — Agent‑mode turns are automatically grounded in
   recalled **memory** and **skills**.
 
+## 4.5. Professional Artifact Studio
+
+- **Canonical professional-document IR** — strict frozen models for metadata,
+  confidentiality, sections, paragraphs, lists, tables, figures, page breaks,
+  citations, immutable sources, revisions, reviews, and signatures. Canonical
+  UTF-8 JSON is the content-identity surface; unknown fields, coercions, floats,
+  malformed unions, dangling references, and invalid accessibility semantics fail
+  closed (`artifacts/models.py`, `artifacts/validation.py`).
+- **Deterministic multi-format rendering** — exact JSON and Markdown in the
+  dependency-free core; lazy optional DOCX/PDF/PPTX/XLSX renderers with fixed
+  metadata and normalized OpenXML packages. Renderers accept caller-bound asset
+  bytes and never fetch external resources (`artifacts/render_*.py`).
+- **Tenant-scoped append-only versioning** — composite organization/workspace/artifact
+  identity, expected-head CAS, immutable revision prefixes, sequential parent-linked
+  revisions, forward-only heads, immutable byte-validated assets, atomic migration
+  from early global keys, restart durability, one-winner concurrent writes, and
+  occurrence-preserving semantic comparison of metadata, sections, blocks, citations,
+  sources, reviews, and signatures (`artifacts/service.py`, `artifacts/versions.py`,
+  `persistence.py`).
+- **Governed professional release** — current-head validation, supported material
+  claims, exact approved `professional_release` review, signature binding, active
+  signer/role revalidation, successful requested renderers, and exact durable
+  run/checkpoint provenance are required in one atomic release transaction.
+  Scoped idempotency returns the original immutable result for retries and rejects
+  conflicting requests.
+- **Self-verifying release packages** — deterministic bundle-schema-v2
+  content-addressed ZIPs contain canonical IR, selected renders, byte-validated assets,
+  claims/evidence, exact review/signature ID sets, run/checkpoint provenance, and
+  validation. Verification recomputes canonical JSON, deterministic Markdown,
+  validation, media signatures, source/span/claim linkage, approved reviews,
+  signatures, and run/checkpoint scope. It also rejects hash or size mismatches;
+  noncanonical ZIP order, metadata, manifests, or payloads;
+  duplicate/case-colliding/absolute/traversing/drive-qualified/Windows-reserved paths;
+  symlinks; unbounded or unreadable members; unexpected files; and release/document/
+  governance tampering (`artifacts/bundles.py`).
+
 ## 5. Procedural skill memory (self‑improvement)
 
 - **Skill distillation** — distill a reusable, triggerable procedure from a goal

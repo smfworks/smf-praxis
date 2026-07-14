@@ -61,7 +61,7 @@ LOCAL_MODULES = {
 # Third-party imports allowed behind optional extras (must match pyproject.toml
 # [project.optional-dependencies]).
 ALLOWED_EXTRAS = {
-    "pypdf", "docx", "pptx", "openpyxl", "extract_msg", "markitdown",  # docs
+    "pypdf", "docx", "pptx", "openpyxl", "reportlab", "extract_msg", "markitdown",  # docs/artifacts
     "PIL", "whisper", "cv2", "numpy",                                  # multimodal/fast
     "playwright", "mcp", "keyring", "cryptography",                    # browser/mcp/keyring
 }

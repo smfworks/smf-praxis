@@ -101,3 +101,20 @@ def test_browser_click_is_held_by_broker():
     assert "approval" in types
     assert "tool_result" not in types
     assert len(broker.pending) == 1
+
+
+def test_missing_browser_install_message_directs_to_source_checkout():
+    """Runtime optional-dependency messages must not point at unpublished PyPI.
+
+    RELEASING.md documents that PyPI publication is disabled and
+    ``pip install praxis-agent`` does not install the current GitHub-only
+    release. The click/type fallback messages must therefore guide users to a
+    source-checkout install, not a stale distribution name.
+    """
+    session = BrowserSession(allow_playwright=False)
+    click_msg = session.click("#any")
+    type_msg = session.type_text("#any", "text")
+    for msg in (click_msg, type_msg):
+        assert "praxis-agent[browser]" not in msg
+        assert 'pip install ".[browser]"' in msg
+        assert "source checkout" in msg
