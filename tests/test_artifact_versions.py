@@ -132,6 +132,41 @@ def _second_workspace_scope(value: ArtifactScope) -> ArtifactScope:
     )
 
 
+def test_create_version_rejects_malformed_media_before_persistence(tmp_path: Path) -> None:
+    value = scope(tmp_path)
+    studio = ArtifactStudio(value.store)
+    document = artifact_document(value)
+    section = document.sections[0]
+    figure = replace(section.blocks[-1], media_type="image/svg+xml")
+    document = replace(
+        document,
+        sections=(replace(section, blocks=(*section.blocks[:-1], figure)),),
+    )
+
+    with pytest.raises(ArtifactRenderError, match="declared media type"):
+        studio.create_version(
+            value.organization_id,
+            value.workspace_id,
+            document,
+            created_by=value.owner_id,
+            assets={"figure-asset-1": b"<svg"},
+        )
+
+    assert studio.list_versions(
+        value.organization_id, value.workspace_id, document.artifact_id
+    ) == []
+    with value.store._lock:
+        document_count = value.store._conn.execute(
+            "SELECT COUNT(*) FROM artifact_documents WHERE artifact_id=?",
+            (document.artifact_id,),
+        ).fetchone()[0]
+        asset_count = value.store._conn.execute(
+            "SELECT COUNT(*) FROM artifact_version_assets"
+        ).fetchone()[0]
+    assert document_count == 0
+    assert asset_count == 0
+
+
 def test_create_get_render_and_reopen_canonical_artifact_version(tmp_path: Path) -> None:
     value = scope(tmp_path)
     studio = ArtifactStudio(value.store)
@@ -504,3 +539,53 @@ def test_artifact_versions_are_tenant_scoped_and_storage_is_immutable(tmp_path: 
             "UPDATE artifact_documents SET title='rewritten' WHERE artifact_id=?",
             (version.artifact_id,),
         )
+
+
+def test_append_only_versions_survive_alternate_key_replacement(tmp_path: Path) -> None:
+    """INSERT OR REPLACE must not delete an immutable version via the scoped-sequence key.
+
+    The durable append-only contract holds when a replacement row uses a new
+    primary ``version_id`` but the same tenant-scoped ``sequence`` value. The
+    ``no_replace`` trigger must guard the alternate unique key, not only the
+    primary key, or SQLite's ``INSERT OR REPLACE`` deletes the immutable
+    original and silently rewrites history.
+    """
+    value = scope(tmp_path)
+    studio = ArtifactStudio(value.store)
+    first = studio.create_version(
+        value.organization_id, value.workspace_id, artifact_document(value),
+        created_by=value.owner_id, assets={"figure-asset-1": PNG},
+    )
+    original_hash = first.document_hash
+    with value.store._lock:
+        row = value.store._conn.execute(
+            "SELECT document_hash, document_json FROM artifact_versions WHERE version_id=?",
+            (first.version_id,),
+        ).fetchone()
+        original_json = row["document_json"]
+    forged_hash = "a" * 64
+    forged_json = original_json.replace(original_hash, forged_hash)
+    with pytest.raises(sqlite3.IntegrityError, match="immutable|unique|constraint"):
+        value.store._directory_execute(
+            "INSERT OR REPLACE INTO artifact_versions("
+            "version_id,artifact_id,organization_id,workspace_id,sequence,"
+            "parent_version_id,document_hash,document_json,created_by,created_ts"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                "forged-version-id", first.artifact_id, value.organization_id,
+                value.workspace_id, first.sequence, first.parent_version_id,
+                forged_hash, forged_json, value.owner_id, time.time(),
+            ),
+        )
+    with value.store._lock:
+        survivor = value.store._conn.execute(
+            "SELECT document_hash FROM artifact_versions WHERE version_id=?",
+            (first.version_id,),
+        ).fetchone()
+    assert survivor is not None
+    assert survivor["document_hash"] == original_hash
+    head = value.store._directory_all(
+        "SELECT head_version_id FROM artifact_documents WHERE artifact_id=?",
+        (first.artifact_id,),
+    )[0]["head_version_id"]
+    assert head == first.version_id

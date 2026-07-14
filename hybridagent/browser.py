@@ -79,6 +79,11 @@ class BrowserSession:
     """A stateful browsing session. Uses Playwright when available, else a
     dependency-free read-only fetch for navigation/reading."""
 
+    _MISSING_BROWSER_MESSAGE: str = (
+        "[browser] interaction requires the optional [browser] extra. "
+        "From a Praxis source checkout run: pip install \".[browser]\""
+    )
+
     def __init__(self, allow_playwright: bool = True) -> None:
         self._page: Any = None
         self._pw: Any = None
@@ -184,8 +189,7 @@ class BrowserSession:
     def click(self, target: str) -> str:
         with self._lock:
             if not self._have_browser():
-                return ("[browser] interaction requires the optional [browser] "
-                        "extra (pip install praxis-agent[browser])")
+                return (self._MISSING_BROWSER_MESSAGE)
 
             def _click() -> tuple[str, str]:
                 self._page.click(target, timeout=10000)
@@ -196,8 +200,7 @@ class BrowserSession:
     def type_text(self, target: str, text: str) -> str:
         with self._lock:
             if not self._have_browser():
-                return ("[browser] interaction requires the optional [browser] "
-                        "extra (pip install praxis-agent[browser])")
+                return (self._MISSING_BROWSER_MESSAGE)
             self._on_worker(lambda: self._page.fill(target, text))
         return f"[browser] typed {len(text)} chars into {target!r}"
 

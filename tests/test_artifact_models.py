@@ -1,6 +1,7 @@
 """Phase 5 contracts for the canonical professional document IR."""
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -80,6 +81,35 @@ def test_canonical_model_normalizes_unicode_to_nfc() -> None:
     second = replace(document(), metadata=normalized)
     assert first.metadata.title == "Caf\u00e9"
     assert first.canonical_bytes() == second.canonical_bytes()
+
+
+def test_canonical_decoder_rejects_duplicate_members_and_lone_surrogates() -> None:
+    encoded = document().canonical_json()
+    duplicate = encoded.replace(
+        '"artifact_id":"artifact-1"',
+        '"artifact_id":"forged","artifact_id":"artifact-1"',
+        1,
+    )
+    with pytest.raises(ArtifactModelError, match="duplicate"):
+        ArtifactDocument.from_json(duplicate)
+
+    payload = document().to_dict()
+    payload["metadata"]["title"] = "\ud800"
+    with pytest.raises(ArtifactModelError, match="Unicode|surrogate"):
+        ArtifactDocument.from_json(json.dumps(payload, ensure_ascii=True))
+    with pytest.raises(ArtifactModelError, match="Unicode|surrogate"):
+        replace(document().metadata, title="\ud800")
+
+
+def test_decoder_returns_exact_document_and_subclasses_cannot_hash() -> None:
+    class ForgedDocument(ArtifactDocument):
+        pass
+
+    decoded = ForgedDocument.from_json(document().canonical_json())
+    assert type(decoded) is ArtifactDocument
+    forged = ForgedDocument(**document().__dict__)
+    with pytest.raises(ArtifactModelError, match="exact ArtifactDocument"):
+        forged.content_hash()
 
 
 def test_decoder_fails_closed_on_unknown_fields_and_schema_versions() -> None:
