@@ -2,7 +2,7 @@
 
 **Status:** implemented release candidate; final exact-head review and promotion pending
 
-**Implementation:** Praxis `0.27.6` on `feat/professional-platform-phase-5`
+**Implementation:** Praxis `0.27.8` on `feat/professional-platform-phase-5`
 
 **Baseline:** `v0.26.16`, checkpoint `b806fea57e6ec11d71786a74e5d0db29f82a2231`
 
@@ -52,7 +52,7 @@ The first schema supports:
 
 ### 2. Canonical JSON is the source of identity
 
-The IR serializes to strict canonical JSON with sorted object keys, compact separators, UTF-8, finite/exact built-in JSON types, and no implicit coercion. To avoid Python-versus-ECMAScript number differences, the governed IR does not permit floating-point values; decimal quantities are strings with an explicit format. Strings are normalized to Unicode NFC before hashing.
+The IR serializes to strict canonical JSON with sorted object keys, compact separators, UTF-8, finite/exact built-in JSON types, unique object member names, and no implicit coercion. To avoid Python-versus-ECMAScript number differences, the governed IR does not permit floating-point values; decimal quantities are strings with an explicit format. Strings are normalized to Unicode NFC before hashing, and lone UTF-16 surrogate code points are rejected at construction and decoding boundaries.
 
 `sha256(canonical_ir_bytes)` is the immutable version content hash. Rendered Office/PDF bytes are outputs, never the source of document identity.
 
@@ -82,7 +82,7 @@ The `artifacts` optional extra provides:
 
 Imports occur only inside the relevant renderer call. Missing backends raise one actionable `MissingArtifactBackendError` directing source-checkout users to `pip install -e ".[artifacts]"`; Praxis is currently distributed through GitHub rather than PyPI. Importing `hybridagent.artifacts` remains dependency-free.
 
-Renderers accept validated IR and return bytes. They do not fetch URLs, execute macros, invoke shell commands, or write arbitrary paths. Figures require caller-supplied bytes keyed by declared asset ID; unresolved assets or bytes that do not decode as the declared PNG, JPEG, or SVG media type fail closed.
+Renderers accept validated IR and return bytes. They do not fetch URLs, execute macros, invoke shell commands, or write arbitrary paths. Figures require caller-supplied bytes keyed by declared asset ID; unresolved assets or bytes that do not pass bounded, dependency-free validation for the declared media type fail closed. PNG validation checks chunk structure and CRCs, bounded dimensions and decoded scanline size, zlib completion, and row filters; JPEG validation parses bounded frame, segment, scan, and end-marker structure; SVG validation parses XML, requires an SVG root, and rejects document types and entity declarations.
 
 ### 6. Accessibility is a release requirement
 

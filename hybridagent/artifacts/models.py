@@ -18,9 +18,24 @@ def _nfc(value: str, label: str, *, empty: bool = True) -> str:
     if type(value) is not str:
         raise ArtifactModelError(f"{label} must be exact text")
     result = unicodedata.normalize("NFC", value)
+    if any(0xD800 <= ord(char) <= 0xDFFF for char in result):
+        raise ArtifactModelError(f"{label} contains an invalid Unicode surrogate")
     if not empty and not result.strip():
         raise ArtifactModelError(f"{label} is required")
     return result
+
+
+def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in result:
+            raise ArtifactModelError(f"artifact JSON contains duplicate member: {key}")
+        result[key] = item
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ArtifactModelError(f"artifact JSON contains non-finite number: {value}")
 
 
 def _text_tuple(value: tuple[str, ...], label: str) -> tuple[str, ...]:
@@ -277,8 +292,10 @@ class ArtifactDocument:
         return _document_dict(self)
 
     def canonical_json(self) -> str:
+        if type(self) is not ArtifactDocument:
+            raise ArtifactModelError("canonical identity requires an exact ArtifactDocument")
         return json.dumps(
-            self.to_dict(), ensure_ascii=False, allow_nan=False, sort_keys=True,
+            _document_dict(self), ensure_ascii=False, allow_nan=False, sort_keys=True,
             separators=(",", ":"),
         )
 
@@ -298,7 +315,7 @@ class ArtifactDocument:
         version = _exact_int(obj["schema_version"], "schema_version")
         if version != SCHEMA_VERSION:
             raise ArtifactModelError(f"unsupported artifact schema version: {version}")
-        return cls(
+        return ArtifactDocument(
             artifact_id=_nfc(obj["artifact_id"], "artifact_id"),
             metadata=_decode_metadata(obj["metadata"]),
             sections=tuple(_decode_section(item, "section") for item in _expect_list(obj["sections"], "sections")),
@@ -316,10 +333,14 @@ class ArtifactDocument:
         if type(value) not in {str, bytes}:
             raise ArtifactModelError("artifact JSON must be exact text or bytes")
         try:
-            parsed = json.loads(value)
+            parsed = json.loads(
+                value,
+                object_pairs_hook=_strict_json_object,
+                parse_constant=_reject_json_constant,
+            )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ArtifactModelError("artifact JSON is invalid") from exc
-        return cls.from_dict(parsed)
+        return ArtifactDocument.from_dict(parsed)
 
 
 def _block_dict(block: Block) -> dict[str, Any]:

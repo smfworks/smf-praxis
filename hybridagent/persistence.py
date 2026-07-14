@@ -1102,7 +1102,15 @@ CREATE INDEX IF NOT EXISTS ix_artifact_versions_scope
     ON artifact_versions(organization_id, workspace_id, artifact_id, sequence);
 CREATE TRIGGER IF NOT EXISTS trg_artifact_versions_no_replace
 BEFORE INSERT ON artifact_versions
-WHEN EXISTS (SELECT 1 FROM artifact_versions WHERE version_id=NEW.version_id)
+WHEN EXISTS (
+    SELECT 1 FROM artifact_versions WHERE version_id=NEW.version_id
+    UNION ALL
+    SELECT 1 FROM artifact_versions
+    WHERE artifact_id=NEW.artifact_id
+      AND organization_id=NEW.organization_id
+      AND workspace_id=NEW.workspace_id
+      AND sequence=NEW.sequence
+)
 BEGIN
     SELECT RAISE(ABORT, 'artifact versions are immutable');
 END;
@@ -1274,7 +1282,15 @@ CREATE INDEX IF NOT EXISTS ix_artifact_releases_scope
     ON artifact_releases(organization_id, workspace_id, artifact_id, created_ts);
 CREATE TRIGGER IF NOT EXISTS trg_artifact_releases_no_replace
 BEFORE INSERT ON artifact_releases
-WHEN EXISTS (SELECT 1 FROM artifact_releases WHERE release_id=NEW.release_id)
+WHEN EXISTS (
+    SELECT 1 FROM artifact_releases WHERE release_id=NEW.release_id
+    UNION ALL
+    SELECT 1 FROM artifact_releases
+    WHERE organization_id=NEW.organization_id
+      AND workspace_id=NEW.workspace_id
+      AND idempotency_key=NEW.idempotency_key
+      AND NEW.idempotency_key<>''
+)
 BEGIN
     SELECT RAISE(ABORT, 'artifact releases are immutable');
 END;

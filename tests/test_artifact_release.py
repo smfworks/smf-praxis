@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import sqlite3
 import struct
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -763,3 +764,57 @@ def test_existing_phase5_database_migrates_release_idempotency_columns(tmp_path:
     indexes = store._directory_all("PRAGMA index_list(artifact_releases)")
     assert "ux_artifact_releases_idempotency" in {row["name"] for row in indexes}
     store.close()
+
+
+def test_append_only_releases_survive_alternate_key_replacement(tmp_path: Path) -> None:
+    """INSERT OR REPLACE must not delete an immutable release via the idempotency key.
+
+    Durable cross-process idempotency requires that the release ``no_replace``
+    trigger guard the scoped idempotency unique key, not only the primary
+    ``release_id``. Otherwise a replacement row with a new ``release_id`` but the
+    same ``(organization_id,workspace_id,idempotency_key)`` deletes the original
+    durable receipt via SQLite's ``INSERT OR REPLACE`` semantics.
+    """
+    value = scope(tmp_path)
+    studio, version, review, signature = _reviewed_version(value)
+    release = _release(studio, value, version.version_id, key="idempotent-release")
+    original_bundle_hash = release.bundle_hash
+
+    original = value.store._directory_one(
+        "SELECT formats_json,manifest_json,validation_report_json,"
+        "review_ids_json,signature_ids_json,bundle,bundle_hash,run_id,checkpoint_id "
+        "FROM artifact_releases WHERE release_id=?",
+        (release.release_id,),
+    )
+    assert original is not None
+
+    with pytest.raises(sqlite3.IntegrityError, match="immutable|unique|constraint"):
+        value.store._directory_execute(
+            "INSERT OR REPLACE INTO artifact_releases("
+            "release_id,artifact_id,version_id,organization_id,workspace_id,"
+            "document_hash,formats_json,manifest_json,validation_report_json,"
+            "review_ids_json,signature_ids_json,idempotency_key,request_hash,"
+            "run_id,checkpoint_id,bundle_hash,bundle,created_by,created_ts"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "forged-release-id", release.artifact_id, version.version_id,
+                value.organization_id, value.workspace_id, release.document_hash,
+                original["formats_json"], original["manifest_json"],
+                original["validation_report_json"], original["review_ids_json"],
+                original["signature_ids_json"], "idempotent-release",
+                "0" * 64, original["run_id"], original["checkpoint_id"],
+                original["bundle_hash"], original["bundle"], value.owner_id, time.time(),
+            ),
+        )
+
+    survivor = value.store._directory_one(
+        "SELECT bundle_hash FROM artifact_releases WHERE release_id=?",
+        (release.release_id,),
+    )
+    assert survivor is not None
+    assert survivor["bundle_hash"] == original_bundle_hash
+    duplicate = value.store._directory_one(
+        "SELECT release_id FROM artifact_releases WHERE release_id=?",
+        ("forged-release-id",),
+    )
+    assert duplicate is None

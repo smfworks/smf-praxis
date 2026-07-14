@@ -5,7 +5,7 @@ into validated, versioned deliverables and self-verifying release packages.
 
 ## Status
 
-Implemented in Praxis `0.27.6` as the PP50 / Phase 5 capability. JSON and Markdown
+Implemented in Praxis `0.27.8` as the PP50 / Phase 5 capability. JSON and Markdown
 remain dependency-free. DOCX, PDF, PPTX, and XLSX use the optional `artifacts`
 extra.
 
@@ -162,7 +162,8 @@ sorted for byte-for-byte reproduction.
 - Release-time authorization rechecks that each signer and creator remains active
   in the owning scope and that the signer still holds the recorded role.
 - Bundle verification recomputes deterministic JSON/Markdown, document validation,
-  image byte signatures, source/version/span/claim linkage, exact approved review and
+  strict canonical JSON identity, bounded declared-media validation,
+  source/version/span/claim linkage, exact approved review and
   signature ID sets, and run/checkpoint scope. It rejects malformed/noncanonical JSON
   and ZIP order/metadata, duplicate names, case-insensitive collisions, absolute,
   traversing, drive-qualified, Windows-reserved, or backslash paths, directories,
@@ -170,8 +171,8 @@ sorted for byte-for-byte reproduction.
   violations, unreadable payloads, hash/size or declared media-type mismatches, and
   document/release/governance identity mismatch.
 - Renderers never retrieve external resources. Figure bytes must be supplied by the
-  caller, match declared asset IDs exactly, and decode as the declared PNG, JPEG, or
-  SVG media type.
+  caller, match declared asset IDs exactly, and pass bounded dependency-free validation
+  for the declared PNG, JPEG, or SVG media type before any version is persisted.
 
 ## Accessibility boundary
 

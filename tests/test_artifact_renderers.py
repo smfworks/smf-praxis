@@ -1,6 +1,7 @@
 """Deterministic core and optional professional renderer contracts."""
 from __future__ import annotations
 
+import base64
 import builtins
 import io
 import zipfile
@@ -17,17 +18,39 @@ from hybridagent.artifacts import (
     render_artifact,
     supported_formats,
 )
-from hybridagent.artifacts.render_common import normalize_zip_package
+from hybridagent.artifacts.render_common import (
+    checked_assets,
+    image_kind,
+    normalize_zip_package,
+)
 from hybridagent.artifacts.render_docx import render_docx
 from hybridagent.artifacts.render_json import render_json
 from hybridagent.artifacts.render_markdown import render_markdown
 from hybridagent.artifacts.render_pdf import render_pdf
 from hybridagent.artifacts.render_pptx import render_pptx
 from hybridagent.artifacts.render_xlsx import render_xlsx
+from tests.artifact_helpers import PNG
 from tests.test_artifact_models import document
 
 GOLDEN = Path(__file__).parent / "golden"
 OPTIONAL_MODULES = {"docx", "reportlab", "pptx", "openpyxl", "PIL", "pypdf"}
+JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+    "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+    "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIA"
+    "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAA"
+    "F9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6"
+    "Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqr"
+    "KztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEB"
+    "AQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcR"
+    "MiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpj"
+    "ZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyM"
+    "nK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q=="
+)
+VALID_SVG = (
+    b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="1" '
+    b'height="1"><rect width="1" height="1"/></svg>'
+)
 
 
 def _png() -> bytes:
@@ -123,6 +146,45 @@ def test_optional_renderers_reject_missing_or_malformed_assets() -> None:
         render_docx(document(), {})
     with pytest.raises(ArtifactRenderError, match="recognized|declared media type"):
         render_docx(document(), {"asset-1": b"not-an-image"})
+
+
+@pytest.mark.parametrize(
+    ("media_type", "payload"),
+    (
+        ("image/png", b"\x89PNG\r\n\x1a\n"),
+        ("image/jpeg", b"\xff\xd8\xff"),
+        (
+            "image/jpeg",
+            b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00"
+            b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\xff\xd9",
+        ),
+        (
+            "image/jpeg",
+            b"\xff\xd8\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\x00"
+            b"\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xd9",
+        ),
+        ("image/svg+xml", b"<svg"),
+        ("image/svg+xml", b"prefix <svg xmlns='http://www.w3.org/2000/svg'/>")
+    ),
+)
+def test_asset_admission_rejects_signature_only_or_malformed_images(
+    media_type: str, payload: bytes
+) -> None:
+    artifact = document()
+    section = artifact.sections[0]
+    figure = replace(section.blocks[3], media_type=media_type)
+    artifact = replace(
+        artifact,
+        sections=(replace(section, blocks=(*section.blocks[:3], figure)),),
+    )
+    with pytest.raises(ArtifactRenderError, match="declared media type"):
+        checked_assets(artifact, {"asset-1": payload})
+
+
+def test_asset_admission_accepts_complete_png_jpeg_and_svg() -> None:
+    assert image_kind(PNG) == "png"
+    assert image_kind(JPEG) == "jpeg"
+    assert image_kind(VALID_SVG) == "svg"
 
 
 def test_all_optional_renderers_are_deterministic_and_semantically_valid() -> None:
