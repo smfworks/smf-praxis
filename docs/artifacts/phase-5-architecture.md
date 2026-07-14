@@ -2,7 +2,7 @@
 
 **Status:** implemented release candidate; final exact-head review and promotion pending
 
-**Implementation:** Praxis `0.27.3` on `feat/professional-platform-phase-5`
+**Implementation:** Praxis `0.27.4` on `feat/professional-platform-phase-5`
 
 **Baseline:** `v0.26.16`, checkpoint `b806fea57e6ec11d71786a74e5d0db29f82a2231`
 
@@ -80,7 +80,7 @@ The `artifacts` optional extra provides:
 - PPTX: `python-pptx`;
 - XLSX: `openpyxl`.
 
-Imports occur only inside the relevant renderer call. Missing backends raise one actionable `MissingArtifactBackendError` naming `pip install "praxis-agent[artifacts]"`. Importing `hybridagent.artifacts` remains dependency-free.
+Imports occur only inside the relevant renderer call. Missing backends raise one actionable `MissingArtifactBackendError` directing source-checkout users to `pip install -e ".[artifacts]"`; Praxis is currently distributed through GitHub rather than PyPI. Importing `hybridagent.artifacts` remains dependency-free.
 
 Renderers accept validated IR and return bytes. They do not fetch URLs, execute macros, invoke shell commands, or write arbitrary paths. Figures require caller-supplied bytes keyed by declared asset ID; unresolved assets fail closed.
 

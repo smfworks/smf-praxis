@@ -141,6 +141,26 @@ def _bundle_with_invalid_document(bundle: bytes) -> bytes:
     return output.getvalue()
 
 
+def _bundle_with_noncanonical_document(bundle: bytes) -> bytes:
+    source = zipfile.ZipFile(io.BytesIO(bundle), "r")
+    infos = source.infolist()
+    members = {info.filename: source.read(info.filename) for info in infos}
+    source.close()
+    document = b"\n" + members["artifact/document.json"] + b" \n"
+    manifest = json.loads(members["manifest.json"])
+    for entry in manifest["files"]:
+        if entry["path"] == "artifact/document.json":
+            entry["sha256"] = hashlib.sha256(document).hexdigest()
+            entry["size"] = len(document)
+    members["artifact/document.json"] = document
+    members["manifest.json"] = canonical_json_bytes(manifest)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for info in infos:
+            archive.writestr(info, members[info.filename])
+    return output.getvalue()
+
+
 def test_governed_release_is_self_verifying_durable_and_tenant_concealed(tmp_path: Path) -> None:
     value = scope(tmp_path)
     studio, version, review, signature = _reviewed_version(value)
@@ -413,6 +433,11 @@ def test_release_bundle_rebuild_is_byte_deterministic_and_duplicates_fail(tmp_pa
 
     with pytest.raises(ArtifactBundleError, match="artifact document is invalid"):
         verify_release_bundle(_bundle_with_invalid_document(release.bundle))
+
+    with pytest.raises(
+        ArtifactBundleError, match="artifact document is not canonical JSON"
+    ):
+        verify_release_bundle(_bundle_with_noncanonical_document(release.bundle))
 
 
 def test_existing_phase5_database_migrates_release_idempotency_columns(tmp_path: Path) -> None:

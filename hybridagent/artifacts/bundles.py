@@ -302,10 +302,11 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
         }
         if not required_paths <= set(declared):
             raise ArtifactBundleError("release governance payloads are incomplete")
+        document_payload = _strict_canonical_json(
+            archive.read("artifact/document.json"), "artifact document"
+        )
         try:
-            document = ArtifactDocument.from_json(
-                archive.read("artifact/document.json")
-            )
+            document = ArtifactDocument.from_dict(document_payload)
             validate_or_raise(document)
         except (
             ArtifactModelError,
