@@ -73,13 +73,16 @@ professional deliverables:
   and material claims;
 - deterministic JSON and Markdown renderers in core, with DOCX, PDF, PPTX, and
   XLSX through the optional `artifacts` extra;
-- append-only versions with expected-head compare-and-swap and occurrence-preserving
-  semantic comparison;
-- exact professional-release reviews and signatures revalidated against active roles;
+- append-only organization/workspace-keyed versions with expected-head compare-and-swap,
+  immutable revision prefixes, forward-only heads, and occurrence-preserving semantic
+  comparison;
+- exact professional-release review/signature ID sets revalidated against active roles;
 - atomic, idempotent releases bound to the current version and durable run checkpoint;
-- deterministic ZIP evidence packages with a canonical manifest, SHA-256/size for
-  every member, fixed order/metadata, portable-path and collision/size defenses,
-  exact document-scope/asset/media binding, and normalized fail-closed verification.
+- deterministic bundle-schema-v2 ZIP evidence packages with a canonical manifest,
+  SHA-256/size for every member, fixed order/metadata, portable-path and
+  collision/size defenses, exact document-scope/asset/media binding, deterministic
+  Markdown and validation recomputation, and fail-closed claims/evidence/review/
+  signature/run linkage.
 
 Install rich renderers from a clone with `pip install -e ".[artifacts]"`. JSON and
 Markdown need no extra dependencies. See

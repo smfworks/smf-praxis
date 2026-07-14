@@ -1056,7 +1056,7 @@ END;
 -- Phase 5 Artifact Studio: mutable heads over append-only canonical versions,
 -- assets, signatures, and governed releases.
 CREATE TABLE IF NOT EXISTS artifact_documents (
-    artifact_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
     organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
     workspace_id TEXT NOT NULL,
     document_type TEXT NOT NULL,
@@ -1065,7 +1065,7 @@ CREATE TABLE IF NOT EXISTS artifact_documents (
     created_by TEXT NOT NULL REFERENCES organization_users(user_id),
     created_ts REAL NOT NULL,
     updated_ts REAL NOT NULL,
-    UNIQUE (artifact_id, organization_id, workspace_id),
+    PRIMARY KEY (artifact_id, organization_id, workspace_id),
     FOREIGN KEY (workspace_id, organization_id)
         REFERENCES professional_workspaces(workspace_id, organization_id)
 );
@@ -1073,7 +1073,12 @@ CREATE INDEX IF NOT EXISTS ix_artifact_documents_scope
     ON artifact_documents(organization_id, workspace_id, updated_ts);
 CREATE TRIGGER IF NOT EXISTS trg_artifact_documents_no_replace
 BEFORE INSERT ON artifact_documents
-WHEN EXISTS (SELECT 1 FROM artifact_documents WHERE artifact_id=NEW.artifact_id)
+WHEN EXISTS (
+    SELECT 1 FROM artifact_documents
+    WHERE artifact_id=NEW.artifact_id
+      AND organization_id=NEW.organization_id
+      AND workspace_id=NEW.workspace_id
+)
 BEGIN
     SELECT RAISE(ABORT, 'artifact documents are durable');
 END;
@@ -1088,7 +1093,7 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
     document_json TEXT NOT NULL CHECK(json_valid(document_json)),
     created_by TEXT NOT NULL REFERENCES organization_users(user_id),
     created_ts REAL NOT NULL,
-    UNIQUE (artifact_id, sequence),
+    UNIQUE (artifact_id, organization_id, workspace_id, sequence),
     UNIQUE (version_id, artifact_id, organization_id, workspace_id),
     FOREIGN KEY (artifact_id, organization_id, workspace_id)
         REFERENCES artifact_documents(artifact_id, organization_id, workspace_id)
@@ -1132,15 +1137,28 @@ WHEN NEW.artifact_id IS NOT OLD.artifact_id
   OR NEW.title IS NOT OLD.title
   OR NEW.created_by IS NOT OLD.created_by
   OR NEW.created_ts IS NOT OLD.created_ts
+  OR NEW.head_version_id IS OLD.head_version_id
   OR NOT EXISTS (
       SELECT 1 FROM artifact_versions v
       WHERE v.version_id=NEW.head_version_id
         AND v.artifact_id=OLD.artifact_id
         AND v.organization_id=OLD.organization_id
         AND v.workspace_id=OLD.workspace_id
+        AND (
+            (OLD.head_version_id='' AND v.sequence=1 AND v.parent_version_id='')
+            OR EXISTS (
+                SELECT 1 FROM artifact_versions p
+                WHERE p.version_id=OLD.head_version_id
+                  AND p.artifact_id=OLD.artifact_id
+                  AND p.organization_id=OLD.organization_id
+                  AND p.workspace_id=OLD.workspace_id
+                  AND v.parent_version_id=p.version_id
+                  AND v.sequence=p.sequence+1
+            )
+        )
   )
 BEGIN
-    SELECT RAISE(ABORT, 'invalid artifact document update');
+    SELECT RAISE(ABORT, 'artifact document head must move forward exactly once');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_artifact_documents_no_delete
 BEFORE DELETE ON artifact_documents BEGIN
@@ -1332,6 +1350,20 @@ class Store:
 
     def _migrate_locked(self) -> None:
         """Best-effort additive migrations for existing ~/.praxis/praxis.db files."""
+        self._ensure_columns_locked("artifact_releases", {
+            "idempotency_key": "TEXT NOT NULL DEFAULT ''",
+            "request_hash": "TEXT NOT NULL DEFAULT ''",
+        })
+        self._migrate_artifact_scope_keys_locked()
+        # Replace the head trigger even when the table layout was already migrated;
+        # early Phase 5 candidates allowed rewinds to any historical version.
+        self._conn.execute("DROP TRIGGER IF EXISTS trg_artifact_documents_update")
+        self._install_artifact_schema_locked()
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_artifact_releases_idempotency "
+            "ON artifact_releases(organization_id,workspace_id,idempotency_key) "
+            "WHERE idempotency_key<>''"
+        )
         self._ensure_columns_locked("audit_entries", {
             "decision_id": "TEXT NOT NULL DEFAULT ''",
             "cycle_id": "TEXT NOT NULL DEFAULT ''",
@@ -1369,15 +1401,6 @@ class Store:
             "parent_run_id": "TEXT NOT NULL DEFAULT ''",
             "forked_from_checkpoint_id": "TEXT NOT NULL DEFAULT ''",
         })
-        self._ensure_columns_locked("artifact_releases", {
-            "idempotency_key": "TEXT NOT NULL DEFAULT ''",
-            "request_hash": "TEXT NOT NULL DEFAULT ''",
-        })
-        self._conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_artifact_releases_idempotency "
-            "ON artifact_releases(organization_id,workspace_id,idempotency_key) "
-            "WHERE idempotency_key<>''"
-        )
         self._ensure_columns_locked("tasks", {
             "output": "TEXT NOT NULL DEFAULT ''",
             "plan": "TEXT NOT NULL DEFAULT ''",
@@ -1427,6 +1450,182 @@ END
             "escalation_reason": "TEXT NOT NULL DEFAULT ''",
         })
         self._ensure_columns_locked("compliance", {"expires_ts": "REAL"})
+
+    def _install_artifact_schema_locked(self) -> None:
+        """Install the canonical Phase 5 indexes/triggers without an implicit commit."""
+        start = _SCHEMA.index("CREATE TABLE IF NOT EXISTS artifact_documents")
+        statement = ""
+        for line in _SCHEMA[start:].splitlines():
+            statement += line + "\n"
+            if sqlite3.complete_statement(statement):
+                self._conn.execute(statement)
+                statement = ""
+        if statement.strip():  # pragma: no cover - guarded by schema syntax tests
+            raise RuntimeError("incomplete Artifact Studio schema fragment")
+
+    def _migrate_artifact_scope_keys_locked(self) -> None:
+        """Replace early global artifact keys with organization/workspace keys atomically."""
+        info = self._conn.execute("PRAGMA table_info(artifact_documents)").fetchall()
+        primary_key = tuple(
+            row["name"] for row in sorted(info, key=lambda row: row["pk"]) if row["pk"]
+        )
+        expected_key = ("artifact_id", "organization_id", "workspace_id")
+        if primary_key == expected_key:
+            return
+        if primary_key != ("artifact_id",):
+            raise RuntimeError(f"unsupported artifact document primary key: {primary_key}")
+
+        create_statements = (
+            """
+CREATE TABLE artifact_documents__scope (
+    artifact_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL REFERENCES organizations(organization_id),
+    workspace_id TEXT NOT NULL,
+    document_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    head_version_id TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    updated_ts REAL NOT NULL,
+    PRIMARY KEY (artifact_id, organization_id, workspace_id),
+    FOREIGN KEY (workspace_id, organization_id)
+        REFERENCES professional_workspaces(workspace_id, organization_id)
+)
+""",
+            """
+CREATE TABLE artifact_versions__scope (
+    version_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK(sequence > 0),
+    parent_version_id TEXT NOT NULL DEFAULT '',
+    document_hash TEXT NOT NULL CHECK(length(document_hash) = 64),
+    document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    UNIQUE (artifact_id, organization_id, workspace_id, sequence),
+    UNIQUE (version_id, artifact_id, organization_id, workspace_id),
+    FOREIGN KEY (artifact_id, organization_id, workspace_id)
+        REFERENCES artifact_documents__scope(artifact_id, organization_id, workspace_id)
+)
+""",
+            """
+CREATE TABLE artifact_version_assets__scope (
+    version_id TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    content_hash TEXT NOT NULL CHECK(length(content_hash) = 64),
+    payload BLOB NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+    PRIMARY KEY (version_id, asset_id),
+    FOREIGN KEY (version_id, artifact_id, organization_id, workspace_id)
+        REFERENCES artifact_versions__scope(version_id, artifact_id, organization_id, workspace_id)
+)
+""",
+            """
+CREATE TABLE artifact_signatures__scope (
+    signature_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    document_hash TEXT NOT NULL CHECK(length(document_hash) = 64),
+    review_id TEXT NOT NULL REFERENCES professional_reviews(review_id),
+    signer_user_id TEXT NOT NULL REFERENCES organization_users(user_id),
+    role TEXT NOT NULL,
+    meaning TEXT NOT NULL,
+    signed_ts REAL NOT NULL,
+    FOREIGN KEY (version_id, artifact_id, organization_id, workspace_id)
+        REFERENCES artifact_versions__scope(version_id, artifact_id, organization_id, workspace_id)
+)
+""",
+            """
+CREATE TABLE artifact_releases__scope (
+    release_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    document_hash TEXT NOT NULL CHECK(length(document_hash) = 64),
+    formats_json TEXT NOT NULL CHECK(json_valid(formats_json)),
+    manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),
+    validation_report_json TEXT NOT NULL CHECK(json_valid(validation_report_json)),
+    review_ids_json TEXT NOT NULL CHECK(json_valid(review_ids_json)),
+    signature_ids_json TEXT NOT NULL CHECK(json_valid(signature_ids_json)),
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL CHECK(length(request_hash) = 64),
+    run_id TEXT NOT NULL REFERENCES professional_runs(run_id),
+    checkpoint_id TEXT NOT NULL REFERENCES run_checkpoints(checkpoint_id),
+    bundle_hash TEXT NOT NULL CHECK(length(bundle_hash) = 64),
+    bundle BLOB NOT NULL,
+    created_by TEXT NOT NULL REFERENCES organization_users(user_id),
+    created_ts REAL NOT NULL,
+    FOREIGN KEY (version_id, artifact_id, organization_id, workspace_id)
+        REFERENCES artifact_versions__scope(version_id, artifact_id, organization_id, workspace_id)
+)
+""",
+        )
+        for statement in create_statements:
+            self._conn.execute(statement)
+
+        self._conn.execute(
+            "INSERT INTO artifact_documents__scope SELECT * FROM artifact_documents"
+        )
+        self._conn.execute(
+            "INSERT INTO artifact_versions__scope SELECT * FROM artifact_versions"
+        )
+        self._conn.execute(
+            "INSERT INTO artifact_version_assets__scope SELECT * FROM artifact_version_assets"
+        )
+        self._conn.execute(
+            "INSERT INTO artifact_signatures__scope SELECT * FROM artifact_signatures"
+        )
+        self._conn.execute("""
+INSERT INTO artifact_releases__scope(
+    release_id,artifact_id,version_id,organization_id,workspace_id,document_hash,
+    formats_json,manifest_json,validation_report_json,review_ids_json,
+    signature_ids_json,idempotency_key,request_hash,run_id,checkpoint_id,
+    bundle_hash,bundle,created_by,created_ts
+)
+SELECT release_id,artifact_id,version_id,organization_id,workspace_id,document_hash,
+       formats_json,manifest_json,validation_report_json,review_ids_json,
+       signature_ids_json,idempotency_key,
+       CASE WHEN length(request_hash)=64 THEN request_hash ELSE bundle_hash END,
+       run_id,checkpoint_id,bundle_hash,bundle,created_by,created_ts
+FROM artifact_releases
+""")
+
+        for table in (
+            "artifact_releases",
+            "artifact_signatures",
+            "artifact_version_assets",
+            "artifact_versions",
+            "artifact_documents",
+        ):
+            self._conn.execute(f"DROP TABLE {table}")
+        for source, target in (
+            ("artifact_documents__scope", "artifact_documents"),
+            ("artifact_versions__scope", "artifact_versions"),
+            ("artifact_version_assets__scope", "artifact_version_assets"),
+            ("artifact_signatures__scope", "artifact_signatures"),
+            ("artifact_releases__scope", "artifact_releases"),
+        ):
+            self._conn.execute(f"ALTER TABLE {source} RENAME TO {target}")
+
+        self._install_artifact_schema_locked()
+        for table in (
+            "artifact_documents",
+            "artifact_versions",
+            "artifact_version_assets",
+            "artifact_signatures",
+            "artifact_releases",
+        ):
+            if self._conn.execute(f"PRAGMA foreign_key_check({table})").fetchone():
+                raise RuntimeError(f"Artifact Studio migration broke foreign keys: {table}")
 
     def _ensure_columns_locked(self, table: str, columns: dict[str, str]) -> None:
         existing = {

@@ -80,9 +80,11 @@ class ArtifactStudio:
                 self._actor_locked(conn, organization_id, workspace_id, created_by)
                 self._external_references_locked(conn, organization_id, workspace_id, document)
                 head = conn.execute(
-                    "SELECT * FROM artifact_documents WHERE artifact_id=?",
-                    (document.artifact_id,),
+                    "SELECT * FROM artifact_documents WHERE artifact_id=? "
+                    "AND organization_id=? AND workspace_id=?",
+                    (document.artifact_id, organization_id, workspace_id),
                 ).fetchone()
+                prior: sqlite3.Row | None = None
                 if head is None:
                     if expected_parent_version_id:
                         raise ArtifactServiceError("initial artifact version cannot have a parent")
@@ -96,13 +98,12 @@ class ArtifactStudio:
                          created_by, now, now),
                     )
                 else:
-                    if head["organization_id"] != organization_id or head["workspace_id"] != workspace_id:
-                        raise ArtifactServiceError("artifact ID belongs to another tenant scope")
                     if not expected_parent_version_id or head["head_version_id"] != expected_parent_version_id:
                         raise ArtifactServiceError("stale or missing expected artifact head")
                     prior = conn.execute(
-                        "SELECT sequence,document_hash FROM artifact_versions WHERE version_id=? "
-                        "AND artifact_id=? AND organization_id=? AND workspace_id=?",
+                        "SELECT sequence,document_hash,document_json FROM artifact_versions "
+                        "WHERE version_id=? AND artifact_id=? AND organization_id=? "
+                        "AND workspace_id=?",
                         (expected_parent_version_id, document.artifact_id,
                          organization_id, workspace_id),
                     ).fetchone()
@@ -112,9 +113,17 @@ class ArtifactStudio:
                     parent_hash = str(prior["document_hash"])
                 if len(document.revisions) != sequence:
                     raise ArtifactServiceError("document revision history must match artifact sequence")
+                if prior is not None:
+                    prior_document = ArtifactDocument.from_json(prior["document_json"])
+                    if document.revisions[:-1] != prior_document.revisions:
+                        raise ArtifactServiceError(
+                            "document revision history prefix must match the immutable parent"
+                        )
                 latest_revision = document.revisions[-1] if document.revisions else None
                 if latest_revision is None or latest_revision.sequence != sequence:
                     raise ArtifactServiceError("document requires an exact latest revision record")
+                if latest_revision.author_id != created_by:
+                    raise ArtifactServiceError("latest revision author must match the version actor")
                 if latest_revision.parent_hash != parent_hash:
                     raise ArtifactServiceError("document revision parent hash does not match the artifact head")
                 conn.execute(
@@ -328,6 +337,8 @@ class ArtifactStudio:
         review_ids = {row["review_id"] for row in reviews}
         if any(row["review_id"] not in review_ids for row in signatures):
             raise ArtifactServiceError("artifact signature is not bound to an approved release review")
+        review_id_list = tuple(sorted(review_ids))
+        signature_id_list = tuple(sorted(row["signature_id"] for row in signatures))
         run_payload = self._run_payload(
             organization_id, workspace_id, run_id, checkpoint_id
         )
@@ -344,6 +355,8 @@ class ArtifactStudio:
             "workspace_id": workspace_id,
             "document_sha256": version.document_hash,
             "formats": list(formats),
+            "review_ids": list(review_id_list),
+            "signature_ids": list(signature_id_list),
             "run_id": run_id,
             "checkpoint_id": checkpoint_id,
             "idempotency_key": idempotency_key,
@@ -371,8 +384,6 @@ class ArtifactStudio:
         except ArtifactBundleError as exc:
             raise ArtifactServiceError(str(exc)) from exc
         bundle_hash = hashlib.sha256(bundle).hexdigest()
-        review_id_list = tuple(sorted(review_ids))
-        signature_id_list = tuple(sorted(row["signature_id"] for row in signatures))
         try:
             with self.store._lock:
                 conn = self.store._conn
@@ -517,6 +528,8 @@ class ArtifactStudio:
             "workspace_id": release.workspace_id,
             "document_sha256": release.document_hash,
             "formats": list(release.formats),
+            "review_ids": list(release.review_ids),
+            "signature_ids": list(release.signature_ids),
             "run_id": release.run_id,
             "checkpoint_id": release.checkpoint_id,
             "idempotency_key": release.idempotency_key,

@@ -5,7 +5,7 @@ into validated, versioned deliverables and self-verifying release packages.
 
 ## Status
 
-Implemented in Praxis `0.27.5` as the PP50 / Phase 5 capability. JSON and Markdown
+Implemented in Praxis `0.27.6` as the PP50 / Phase 5 capability. JSON and Markdown
 remain dependency-free. DOCX, PDF, PPTX, and XLSX use the optional `artifacts`
 extra.
 
@@ -141,30 +141,37 @@ governance/run.json
 validation/report.json
 ```
 
-`manifest.json` is canonical JSON and records release identity plus the SHA-256,
-byte length, media type, and safe relative path for every other member. ZIP member
-names and timestamps are fixed and sorted for byte-for-byte reproduction.
+`manifest.json` is canonical bundle-schema-v2 JSON and records release identity,
+exact review/signature ID sets, and the SHA-256, byte length, media type, and safe
+relative path for every other member. ZIP member names and timestamps are fixed and
+sorted for byte-for-byte reproduction.
 
 ## Security and integrity guarantees
 
 - Organization/workspace ownership is applied to every artifact, version, asset,
   signature, release, evidence lookup, review, and run/checkpoint lookup.
 - Versions, assets, signatures, and releases are append-only. SQLite triggers block
-  update, delete, conflict-upsert, and `INSERT OR REPLACE` mutation paths.
+  update, delete, conflict-upsert, and `INSERT OR REPLACE` mutation paths; revision
+  prefixes are immutable and artifact heads advance by exactly one parent-linked
+  sequence. Logical artifact IDs are keyed by organization/workspace, and the early
+  global-key schema migrates atomically without dropping rows.
 - Expected-head version writes and release idempotency are serialized with
   `BEGIN IMMEDIATE`, including cross-process SQLite writers.
 - Citations bind exact source IDs, source-version IDs, content hashes, span IDs, and
   linked claim IDs.
 - Release-time authorization rechecks that each signer and creator remains active
   in the owning scope and that the signer still holds the recorded role.
-- Bundle verification rejects malformed/noncanonical JSON and ZIP order/metadata,
-  duplicate names, case-insensitive collisions, absolute, traversing, drive-qualified,
-  Windows-reserved, or backslash paths, directories, symlinks, unsupported formats,
-  unexpected members, member and aggregate size violations, unreadable payloads,
-  hash/size or declared media-type mismatches, and document/release scope, artifact,
-  asset, or digest identity mismatch.
+- Bundle verification recomputes deterministic JSON/Markdown, document validation,
+  image byte signatures, source/version/span/claim linkage, exact approved review and
+  signature ID sets, and run/checkpoint scope. It rejects malformed/noncanonical JSON
+  and ZIP order/metadata, duplicate names, case-insensitive collisions, absolute,
+  traversing, drive-qualified, Windows-reserved, or backslash paths, directories,
+  symlinks, unsupported formats, unexpected members, member and aggregate size
+  violations, unreadable payloads, hash/size or declared media-type mismatches, and
+  document/release/governance identity mismatch.
 - Renderers never retrieve external resources. Figure bytes must be supplied by the
-  caller and match declared asset IDs exactly.
+  caller, match declared asset IDs exactly, and decode as the declared PNG, JPEG, or
+  SVG media type.
 
 ## Accessibility boundary
 

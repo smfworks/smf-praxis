@@ -47,6 +47,20 @@ def _rewrite_bundle(bundle: bytes, mutate) -> bytes:
     return _canonical_zip(mutate(members))
 
 
+def _replace_bundle_member(bundle: bytes, path: str, payload: bytes) -> bytes:
+    def mutate(members: list[tuple[str, bytes]]) -> list[tuple[str, bytes]]:
+        values = dict(members)
+        manifest = json.loads(values["manifest.json"])
+        entry = next(item for item in manifest["files"] if item["path"] == path)
+        entry["sha256"] = hashlib.sha256(payload).hexdigest()
+        entry["size"] = len(payload)
+        values[path] = payload
+        values["manifest.json"] = canonical_json_bytes(manifest)
+        return [(name, values[name]) for name, _ in members]
+
+    return _rewrite_bundle(bundle, mutate)
+
+
 def _race_artifact_release(
     database: str,
     organization_id: str,
@@ -537,6 +551,84 @@ def test_bundle_binds_document_identity_assets_and_exact_media_types(tmp_path: P
         verify_release_bundle(_rewrite_bundle(release.bundle, wrong_media))
 
 
+def test_bundle_verifier_binds_deterministic_render_assets_and_governance(
+    tmp_path: Path,
+) -> None:
+    value = scope(tmp_path)
+    studio, version, _, _ = _reviewed_version(value)
+    release = _release(studio, value, version.version_id, key="semantic-binding")
+
+    with pytest.raises(ArtifactBundleError, match="Markdown"):
+        verify_release_bundle(
+            _replace_bundle_member(release.bundle, "renders/document.md", b"forged\n")
+        )
+    with pytest.raises(ArtifactBundleError, match="asset media"):
+        verify_release_bundle(
+            _replace_bundle_member(release.bundle, "assets/figure-asset-1", b"NOT-A-PNG")
+        )
+    with pytest.raises(ArtifactBundleError, match="signatures"):
+        verify_release_bundle(
+            _replace_bundle_member(
+                release.bundle,
+                "governance/signatures.json",
+                canonical_json_bytes([]),
+            )
+        )
+    with pytest.raises(ArtifactBundleError, match="reviews"):
+        verify_release_bundle(
+            _replace_bundle_member(
+                release.bundle,
+                "governance/reviews.json",
+                canonical_json_bytes([]),
+            )
+        )
+
+    with zipfile.ZipFile(io.BytesIO(release.bundle), "r") as archive:
+        run = json.loads(archive.read("governance/run.json"))
+        evidence = json.loads(archive.read("governance/evidence.json"))
+        claims = json.loads(archive.read("governance/claims.json"))
+        signatures = json.loads(archive.read("governance/signatures.json"))
+    signatures[0]["signature_id"] = "artifact-signature-substituted"
+    with pytest.raises(ArtifactBundleError, match="signature IDs"):
+        verify_release_bundle(
+            _replace_bundle_member(
+                release.bundle,
+                "governance/signatures.json",
+                canonical_json_bytes(signatures),
+            )
+        )
+    run["run"]["run_id"] = "run-unrelated"
+    run["checkpoint"]["run_id"] = "run-unrelated"
+    run["checkpoint"]["checkpoint_id"] = "checkpoint-unrelated"
+    with pytest.raises(ArtifactBundleError, match="run provenance"):
+        verify_release_bundle(
+            _replace_bundle_member(
+                release.bundle,
+                "governance/run.json",
+                canonical_json_bytes(run),
+            )
+        )
+
+    evidence["source_manifest"] = []
+    with pytest.raises(ArtifactBundleError, match="evidence"):
+        verify_release_bundle(
+            _replace_bundle_member(
+                release.bundle,
+                "governance/evidence.json",
+                canonical_json_bytes(evidence),
+            )
+        )
+    claims["claims"] = []
+    with pytest.raises(ArtifactBundleError, match="claims"):
+        verify_release_bundle(
+            _replace_bundle_member(
+                release.bundle,
+                "governance/claims.json",
+                canonical_json_bytes(claims),
+            )
+        )
+
+
 def test_bundle_verifier_requires_canonical_zip_and_normalizes_crc_errors(tmp_path: Path) -> None:
     value = scope(tmp_path)
     studio, version, _, _ = _reviewed_version(value)
@@ -553,6 +645,95 @@ def test_bundle_verifier_requires_canonical_zip_and_normalizes_crc_errors(tmp_pa
     corrupted[data_start + max(info.compress_size // 2, 1)] ^= 0x01
     with pytest.raises(ArtifactBundleError, match="cannot be read"):
         verify_release_bundle(bytes(corrupted))
+
+
+def _downgrade_artifact_scope_keys_for_migration_test(database: Path) -> None:
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("PRAGMA legacy_alter_table=ON")
+    triggers = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_artifact_%'"
+    ).fetchall()
+    for (name,) in triggers:
+        connection.execute(f'DROP TRIGGER "{name}"')
+    connection.execute("DROP INDEX IF EXISTS ix_artifact_documents_scope")
+    connection.execute("DROP INDEX IF EXISTS ix_artifact_versions_scope")
+    document_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='artifact_documents'"
+    ).fetchone()[0]
+    version_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='artifact_versions'"
+    ).fetchone()[0]
+    legacy_document_sql = document_sql.replace(
+        "artifact_id TEXT NOT NULL", "artifact_id TEXT PRIMARY KEY", 1
+    ).replace(
+        "PRIMARY KEY (artifact_id, organization_id, workspace_id),",
+        "UNIQUE (artifact_id, organization_id, workspace_id),",
+        1,
+    )
+    legacy_version_sql = version_sql.replace(
+        "UNIQUE (artifact_id, organization_id, workspace_id, sequence)",
+        "UNIQUE (artifact_id, sequence)",
+        1,
+    )
+    connection.execute(
+        "ALTER TABLE artifact_versions RENAME TO artifact_versions__tenant_layout"
+    )
+    connection.execute(
+        "ALTER TABLE artifact_documents RENAME TO artifact_documents__tenant_layout"
+    )
+    connection.execute(legacy_document_sql)
+    connection.execute(legacy_version_sql)
+    connection.execute(
+        "INSERT INTO artifact_documents SELECT * FROM artifact_documents__tenant_layout"
+    )
+    connection.execute(
+        "INSERT INTO artifact_versions SELECT * FROM artifact_versions__tenant_layout"
+    )
+    connection.execute("DROP TABLE artifact_versions__tenant_layout")
+    connection.execute("DROP TABLE artifact_documents__tenant_layout")
+    connection.commit()
+    connection.close()
+
+
+def test_existing_phase5_rows_migrate_to_tenant_scoped_artifact_keys(
+    tmp_path: Path,
+) -> None:
+    value = scope(tmp_path)
+    studio, version, review, signature = _reviewed_version(value)
+    release = _release(studio, value, version.version_id, key="scope-key-migration")
+    database = tmp_path / "praxis.db"
+    value.store.close()
+    _downgrade_artifact_scope_keys_for_migration_test(database)
+
+    store = Store(database)
+    migrated = ArtifactStudio(store)
+    primary_key = tuple(
+        row["name"]
+        for row in sorted(
+            store._directory_all("PRAGMA table_info(artifact_documents)"),
+            key=lambda row: row["pk"],
+        )
+        if row["pk"]
+    )
+    assert primary_key == ("artifact_id", "organization_id", "workspace_id")
+    assert migrated.get_version(
+        value.organization_id, value.workspace_id, version.version_id
+    ) == version
+    restored_release = migrated.get_release(
+        value.organization_id, value.workspace_id, release.release_id
+    )
+    assert restored_release is not None
+    assert restored_release.bundle_hash == release.bundle_hash
+    assert store._directory_all(
+        "SELECT signature_id FROM artifact_signatures WHERE signature_id=?",
+        (signature.signature_id,),
+    )
+    assert store._directory_all(
+        "SELECT review_id FROM professional_reviews WHERE review_id=?", (review.review_id,)
+    )
+    assert store._directory_all("PRAGMA foreign_key_check") == []
+    store.close()
 
 
 def test_existing_phase5_database_migrates_release_idempotency_columns(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import multiprocessing
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -10,12 +11,16 @@ from pathlib import Path
 import pytest
 
 from hybridagent.artifacts import ArtifactDocument, Section, SourceManifestEntry
+from hybridagent.artifacts.render_common import ArtifactRenderError
 from hybridagent.artifacts.service import ArtifactServiceError, ArtifactStudio
 from hybridagent.artifacts.versions import compare_documents
+from hybridagent.claims import ClaimLedger
+from hybridagent.evidence import EvidenceRegistry
+from hybridagent.extraction import ExtractionRegistry
 from hybridagent.organizations import OrganizationDirectory
 from hybridagent.persistence import Store
 from hybridagent.workspaces import WorkspaceDirectory
-from tests.artifact_helpers import PNG, artifact_document, scope
+from tests.artifact_helpers import PNG, ArtifactScope, artifact_document, scope
 
 
 def _race_artifact_version(
@@ -47,6 +52,84 @@ def _race_artifact_version(
         results.put(("created", version.version_id))
     finally:
         store.close()
+
+
+def _second_workspace_scope(value: ArtifactScope) -> ArtifactScope:
+    workspace = WorkspaceDirectory(value.store).create(
+        value.organization_id,
+        "MAT-ART-2",
+        "matter",
+        "Second Artifact Matter",
+        owner_user_id=value.owner_id,
+    )
+    evidence = EvidenceRegistry(value.store)
+    source = evidence.create_source(
+        value.organization_id,
+        workspace.workspace_id,
+        canonical_uri="https://example.test/evidence/source-2",
+        publisher="Example Publisher",
+        created_by=value.owner_id,
+    )
+    source_version = evidence.add_version(
+        value.organization_id,
+        workspace.workspace_id,
+        source.source_id,
+        content=b"The second exact supported finding.",
+        mime_type="text/plain",
+        retrieved_ts=time.time(),
+        parser="fixture",
+        parser_version="1",
+        parser_config={},
+        license="test",
+        original_object_path="evidence/source-2.txt",
+        created_by=value.owner_id,
+    )
+    span = ExtractionRegistry(value.store).add_span(
+        value.organization_id,
+        workspace.workspace_id,
+        source_version.version_id,
+        locator_type="document",
+        locator={"paragraph": 1},
+        extracted_text="The second exact supported finding.",
+        created_by=value.owner_id,
+    )
+    claims = ClaimLedger(value.store)
+    claim = claims.create(
+        value.organization_id,
+        workspace.workspace_id,
+        text="The second finding is supported.",
+        material=True,
+        created_by=value.owner_id,
+    )
+    claims.link_evidence(
+        value.organization_id,
+        workspace.workspace_id,
+        claim.claim_id,
+        span.span_id,
+        relationship="supports",
+        rationale="The second exact span supports the claim.",
+        created_by=value.owner_id,
+    )
+    claims.set_status(
+        value.organization_id,
+        workspace.workspace_id,
+        claim.claim_id,
+        status="supported",
+        actor_id=value.owner_id,
+    )
+    return ArtifactScope(
+        store=value.store,
+        organization_id=value.organization_id,
+        workspace_id=workspace.workspace_id,
+        owner_id=value.owner_id,
+        reviewer_id=value.reviewer_id,
+        source_id=source.source_id,
+        source_version_id=source_version.version_id,
+        source_hash=source_version.content_hash,
+        span_id=span.span_id,
+        claim_id=claim.claim_id,
+        run=value.run,
+    )
 
 
 def test_create_get_render_and_reopen_canonical_artifact_version(tmp_path: Path) -> None:
@@ -118,6 +201,61 @@ def test_version_head_cas_revision_chain_and_semantic_diff(tmp_path: Path) -> No
             created_by=value.owner_id,
             assets={"figure-asset-1": PNG},
             expected_parent_version_id=first.version_id,
+        )
+
+
+def test_version_append_preserves_revision_prefix_and_head_moves_forward_only(
+    tmp_path: Path,
+) -> None:
+    value = scope(tmp_path)
+    studio = ArtifactStudio(value.store)
+    first = studio.create_version(
+        value.organization_id,
+        value.workspace_id,
+        artifact_document(value),
+        created_by=value.owner_id,
+        assets={"figure-asset-1": PNG},
+    )
+    candidate = artifact_document(
+        value, sequence=2, parent_hash=first.document_hash, paragraph="Second version"
+    )
+    forged = replace(
+        candidate,
+        revisions=(
+            replace(candidate.revisions[0], summary="Fabricated historical summary"),
+            candidate.revisions[1],
+        ),
+    )
+    with pytest.raises(ArtifactServiceError, match="revision history prefix"):
+        studio.create_version(
+            value.organization_id,
+            value.workspace_id,
+            forged,
+            created_by=value.owner_id,
+            assets={"figure-asset-1": PNG},
+            expected_parent_version_id=first.version_id,
+        )
+
+    second = studio.create_version(
+        value.organization_id,
+        value.workspace_id,
+        candidate,
+        created_by=value.owner_id,
+        assets={"figure-asset-1": PNG},
+        expected_parent_version_id=first.version_id,
+    )
+    assert second.sequence == 2
+    with pytest.raises(sqlite3.IntegrityError, match="forward"):
+        value.store._directory_execute(
+            "UPDATE artifact_documents SET head_version_id=?,updated_ts=? "
+            "WHERE artifact_id=? AND organization_id=? AND workspace_id=?",
+            (
+                first.version_id,
+                time.time(),
+                first.artifact_id,
+                value.organization_id,
+                value.workspace_id,
+            ),
         )
 
 
@@ -270,6 +408,14 @@ def test_versions_fail_closed_on_scope_assets_sources_and_revision_contracts(tmp
     value = scope(tmp_path)
     studio = ArtifactStudio(value.store)
     document = artifact_document(value)
+    with pytest.raises(ArtifactRenderError, match="declared media type"):
+        studio.create_version(
+            value.organization_id,
+            value.workspace_id,
+            document,
+            created_by=value.owner_id,
+            assets={"figure-asset-1": b"NOT-A-PNG"},
+        )
     with pytest.raises(ArtifactServiceError, match="exactly match"):
         studio.create_version(
             value.organization_id, value.workspace_id, document,
@@ -293,6 +439,33 @@ def test_versions_fail_closed_on_scope_assets_sources_and_revision_contracts(tmp
             value.organization_id, value.workspace_id, no_revision,
             created_by=value.owner_id, assets={"figure-asset-1": PNG},
         )
+
+
+def test_two_workspaces_can_use_the_same_logical_artifact_id(tmp_path: Path) -> None:
+    first_scope = scope(tmp_path)
+    second_scope = _second_workspace_scope(first_scope)
+    studio = ArtifactStudio(first_scope.store)
+    first = studio.create_version(
+        first_scope.organization_id,
+        first_scope.workspace_id,
+        artifact_document(first_scope),
+        created_by=first_scope.owner_id,
+        assets={"figure-asset-1": PNG},
+    )
+    second = studio.create_version(
+        second_scope.organization_id,
+        second_scope.workspace_id,
+        artifact_document(second_scope),
+        created_by=second_scope.owner_id,
+        assets={"figure-asset-1": PNG},
+    )
+    assert first.artifact_id == second.artifact_id == "artifact-phase5"
+    assert studio.list_versions(
+        first_scope.organization_id, first_scope.workspace_id, first.artifact_id
+    ) == [first]
+    assert studio.list_versions(
+        second_scope.organization_id, second_scope.workspace_id, second.artifact_id
+    ) == [second]
 
 
 def test_artifact_versions_are_tenant_scoped_and_storage_is_immutable(tmp_path: Path) -> None:
@@ -326,7 +499,7 @@ def test_artifact_versions_are_tenant_scoped_and_storage_is_immutable(tmp_path: 
             "DELETE FROM artifact_version_assets WHERE version_id=?",
             (version.version_id,),
         )
-    with pytest.raises(sqlite3.IntegrityError, match="invalid artifact document update"):
+    with pytest.raises(sqlite3.IntegrityError, match="head must move forward"):
         value.store._directory_execute(
             "UPDATE artifact_documents SET title='rewritten' WHERE artifact_id=?",
             (version.artifact_id,),

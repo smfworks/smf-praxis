@@ -90,6 +90,25 @@ def checked_assets(
     missing = sorted(figure_ids(document) - result.keys())
     if missing:
         raise ArtifactRenderError(f"figure assets are missing: {missing}")
+    expected_kinds = {
+        "image/png": "png",
+        "image/jpeg": "jpeg",
+        "image/svg+xml": "svg",
+    }
+    for section in (*document.sections, *document.appendices):
+        for block in section.blocks:
+            if type(block) is not FigureBlock:
+                continue
+            try:
+                actual_kind = image_kind(result[block.asset_id])
+            except ArtifactRenderError as exc:
+                raise ArtifactRenderError(
+                    f"figure asset does not match its declared media type: {block.asset_id}"
+                ) from exc
+            if actual_kind != expected_kinds[block.media_type]:
+                raise ArtifactRenderError(
+                    f"figure asset does not match its declared media type: {block.asset_id}"
+                )
     return result
 
 
