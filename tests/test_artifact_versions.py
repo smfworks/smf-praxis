@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from hybridagent.artifacts import ArtifactDocument, SourceManifestEntry
+from hybridagent.artifacts import ArtifactDocument, Section, SourceManifestEntry
 from hybridagent.artifacts.service import ArtifactServiceError, ArtifactStudio
+from hybridagent.artifacts.versions import compare_documents
 from hybridagent.organizations import OrganizationDirectory
 from hybridagent.persistence import Store
 from hybridagent.workspaces import WorkspaceDirectory
@@ -118,6 +119,35 @@ def test_version_head_cas_revision_chain_and_semantic_diff(tmp_path: Path) -> No
             assets={"figure-asset-1": PNG},
             expected_parent_version_id=first.version_id,
         )
+
+
+def test_semantic_diff_detects_identity_order_and_section_container_changes(
+    tmp_path: Path,
+) -> None:
+    value = scope(tmp_path)
+    original = artifact_document(value)
+
+    identity_diff = compare_documents(
+        "before",
+        original,
+        "after",
+        replace(original, artifact_id="artifact-renamed"),
+    )
+    assert identity_diff.changed is True
+    assert identity_diff.document_fields == ("artifact_id",)
+
+    findings = original.sections[0]
+    methods = Section("methods", "Methods", 1, ())
+    ordered = replace(original, sections=(findings, methods))
+    reordered = replace(ordered, sections=(methods, findings))
+    order_diff = compare_documents("before", ordered, "after", reordered)
+    assert order_diff.changed is True
+    assert order_diff.changed_sections == ("findings", "methods")
+
+    moved = replace(ordered, sections=(findings,), appendices=(methods,))
+    container_diff = compare_documents("before", ordered, "after", moved)
+    assert container_diff.changed is True
+    assert container_diff.changed_sections == ("methods",)
 
 
 def test_concurrent_same_head_version_writers_have_one_winner(tmp_path: Path) -> None:

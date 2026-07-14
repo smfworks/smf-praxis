@@ -95,7 +95,10 @@ def test_missing_optional_backend_has_actionable_error(monkeypatch: pytest.Monke
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", missing)
-    with pytest.raises(MissingArtifactBackendError, match=r"praxis-agent\[artifacts\]"):
+    with pytest.raises(
+        MissingArtifactBackendError,
+        match=r'from a Praxis source checkout.*pip install -e "\.\[artifacts\]"',
+    ):
         render_docx(document(), {"asset-1": b"not-used"})
 
 

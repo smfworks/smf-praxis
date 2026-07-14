@@ -72,6 +72,7 @@ class ArtifactRelease:
 class ArtifactDiff:
     from_version_id: str
     to_version_id: str
+    document_fields: tuple[str, ...]
     metadata_fields: tuple[str, ...]
     added_sections: tuple[str, ...]
     removed_sections: tuple[str, ...]
@@ -96,27 +97,33 @@ class ArtifactDiff:
         )
 
 
-def _section_map(document: ArtifactDocument) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
+def _section_map(document: ArtifactDocument) -> dict[str, tuple[str, int, dict[str, Any]]]:
+    result: dict[str, tuple[str, int, dict[str, Any]]] = {}
     raw = document.to_dict()
-    for group in (raw["sections"], raw["appendices"]):
-        for section in group:
-            result[section["section_id"]] = section
+    for group_name in ("sections", "appendices"):
+        for position, section in enumerate(raw[group_name]):
+            result[section["section_id"]] = (group_name, position, section)
     return result
 
 
-def _block_map(document: ArtifactDocument) -> dict[str, tuple[str, dict[str, Any]]]:
-    result: dict[str, tuple[str, dict[str, Any]]] = {}
+def _block_map(document: ArtifactDocument) -> dict[str, tuple[str, int, dict[str, Any]]]:
+    result: dict[str, tuple[str, int, dict[str, Any]]] = {}
     raw = document.to_dict()
     for group in (raw["sections"], raw["appendices"]):
         for section in group:
-            for block in section["blocks"]:
-                result[block["block_id"]] = (section["section_id"], block)
+            for position, block in enumerate(section["blocks"]):
+                result[block["block_id"]] = (
+                    section["section_id"],
+                    position,
+                    block,
+                )
     return result
 
 
-def _record_map(values: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
-    return {value[key]: value for value in values}
+def _record_map(
+    values: list[dict[str, Any]], key: str
+) -> dict[str, tuple[int, dict[str, Any]]]:
+    return {value[key]: (position, value) for position, value in enumerate(values)}
 
 
 def _map_delta(
@@ -136,6 +143,11 @@ def compare_documents(
 ) -> ArtifactDiff:
     before_raw = before.to_dict()
     after_raw = after.to_dict()
+    document_fields = tuple(
+        key
+        for key in ("schema_version", "artifact_id")
+        if before_raw[key] != after_raw[key]
+    )
     metadata_fields = tuple(sorted(
         key for key in before_raw["metadata"]
         if before_raw["metadata"][key] != after_raw["metadata"][key]
@@ -157,6 +169,7 @@ def compare_documents(
     return ArtifactDiff(
         from_version_id=from_version_id,
         to_version_id=to_version_id,
+        document_fields=document_fields,
         metadata_fields=metadata_fields,
         added_sections=section_delta[0],
         removed_sections=section_delta[1],

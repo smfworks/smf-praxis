@@ -25,8 +25,8 @@ def require_backend(module: str, package: str) -> object:
         return __import__(module)
     except ImportError as exc:
         raise MissingArtifactBackendError(
-            f"{package} is required for this renderer; install "
-            'pip install "praxis-agent[artifacts]"'
+            f"{package} is required for this renderer; from a Praxis source checkout run "
+            'pip install -e ".[artifacts]"'
         ) from exc
 
 
