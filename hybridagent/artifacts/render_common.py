@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+import zlib
 
 from hybridagent.artifacts.models import ArtifactDocument, FigureBlock
 from hybridagent.artifacts.validation import validate_or_raise
@@ -10,6 +11,16 @@ from hybridagent.artifacts.validation import validate_or_raise
 _FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 MAX_ASSET_BYTES = 25 * 1024 * 1024
 MAX_TOTAL_ASSET_BYTES = 100 * 1024 * 1024
+_WINDOWS_RESERVED = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{index}" for index in range(1, 10)),
+        *(f"lpt{index}" for index in range(1, 10)),
+    }
+)
 
 
 class MissingArtifactBackendError(RuntimeError):
@@ -18,6 +29,22 @@ class MissingArtifactBackendError(RuntimeError):
 
 class ArtifactRenderError(ValueError):
     """An artifact could not be rendered safely."""
+
+
+def portable_member_path(path: str) -> bool:
+    if type(path) is not str or not path or path.startswith(("/", "\\")) or "\\" in path:
+        return False
+    for part in path.split("/"):
+        if (
+            not part
+            or part in {".", ".."}
+            or part.endswith((" ", "."))
+            or ":" in part
+            or any(ord(char) < 32 for char in part)
+            or part.split(".", 1)[0].rstrip(" .").casefold() in _WINDOWS_RESERVED
+        ):
+            return False
+    return True
 
 
 def require_backend(module: str, package: str) -> object:
@@ -52,7 +79,7 @@ def checked_assets(
     for key, value in assets.items():
         if type(key) is not str or type(value) is not bytes:
             raise ArtifactRenderError("asset keys and payloads must be exact text and bytes")
-        if not key or "/" in key or "\\" in key or key in {".", ".."}:
+        if not portable_member_path(f"assets/{key}") or "/" in key:
             raise ArtifactRenderError("asset ID is not a safe portable name")
         if len(value) > MAX_ASSET_BYTES:
             raise ArtifactRenderError("figure asset exceeds the per-asset size limit")
@@ -75,13 +102,15 @@ def normalize_zip_package(data: bytes) -> bytes:
             names = archive.namelist()
             if len(names) != len(set(names)):
                 raise ArtifactRenderError("generated package contains duplicate members")
+            if len(names) != len({name.casefold() for name in names}):
+                raise ArtifactRenderError("generated package member paths collide")
+            if any(not portable_member_path(name) for name in names):
+                raise ArtifactRenderError("generated package contains a nonportable member path")
             members = [(name, archive.read(name)) for name in sorted(names)]
-    except (OSError, zipfile.BadZipFile) as exc:
+    except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error) as exc:
         raise ArtifactRenderError("generated Office package is invalid") from exc
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, payload in members:
-            if name.startswith("/") or "\\" in name or ".." in name.split("/"):
-                raise ArtifactRenderError("generated package contains an unsafe member path")
             info = zipfile.ZipInfo(name, _FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 0

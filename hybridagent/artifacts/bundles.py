@@ -6,9 +6,11 @@ import io
 import json
 import math
 import zipfile
+import zlib
 from typing import Any, cast
 
-from hybridagent.artifacts.models import ArtifactDocument, ArtifactModelError
+from hybridagent.artifacts.models import ArtifactDocument, ArtifactModelError, FigureBlock
+from hybridagent.artifacts.render_common import portable_member_path
 from hybridagent.artifacts.renderers import extension_for, supported_formats
 from hybridagent.artifacts.validation import ArtifactValidationError, validate_or_raise
 
@@ -113,16 +115,77 @@ def _validate_release_context(value: Any) -> list[str]:
 
 
 def _safe_path(path: str) -> bool:
-    return (
-        type(path) is str
-        and bool(path)
-        and not path.startswith(("/", "\\"))
-        and "\\" not in path
-        and all(part not in {"", ".", ".."} for part in path.split("/"))
-    )
+    return portable_member_path(path)
+
+
+def _figure_media(document: ArtifactDocument) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for section in (*document.sections, *document.appendices):
+        for block in section.blocks:
+            if type(block) is FigureBlock:
+                previous = result.get(block.asset_id)
+                if previous is not None and previous != block.media_type:
+                    raise ArtifactBundleError("figure asset has conflicting media types")
+                result[block.asset_id] = block.media_type
+    return result
+
+
+def _validate_document_identity(
+    release_context: dict[str, Any], document: ArtifactDocument
+) -> None:
+    if (
+        release_context["artifact_id"] != document.artifact_id
+        or release_context["organization_id"] != document.metadata.organization_id
+        or release_context["workspace_id"] != document.metadata.workspace_id
+        or release_context["document_sha256"] != document.content_hash()
+    ):
+        raise ArtifactBundleError("release identity is not bound to the artifact document")
+
+
+def _canonical_zip(files: dict[str, bytes]) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(
+        output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as archive:
+        for path in sorted(files):
+            info = zipfile.ZipInfo(path, _FIXED_ZIP_TIME)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 0
+            info.external_attr = 0o600 << 16
+            archive.writestr(
+                info,
+                files[path],
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            )
+    return output.getvalue()
+
+
+def _read_member(archive: zipfile.ZipFile, path: str) -> bytes:
+    try:
+        return archive.read(path)
+    except (
+        OSError,
+        zipfile.BadZipFile,
+        RuntimeError,
+        NotImplementedError,
+        EOFError,
+        zlib.error,
+    ) as exc:
+        raise ArtifactBundleError(f"release bundle member cannot be read: {path}") from exc
+
+
+def _zip_flag_bits(path: str) -> int:
+    try:
+        path.encode("ascii")
+    except UnicodeEncodeError:
+        return 0x800
+    return 0
 
 
 def _media_type(path: str, asset_media: dict[str, str]) -> str:
+    if path.startswith("assets/"):
+        return asset_media[path.removeprefix("assets/")]
     if path == "artifact/document.json" or path.endswith(".json"):
         return "application/json"
     if path.endswith(".md"):
@@ -135,8 +198,6 @@ def _media_type(path: str, asset_media: dict[str, str]) -> str:
         return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     if path.endswith(".xlsx"):
         return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    if path.startswith("assets/"):
-        return asset_media[path.removeprefix("assets/")]
     return "application/octet-stream"
 
 
@@ -152,10 +213,18 @@ def build_release_bundle(
 ) -> tuple[bytes, dict[str, Any]]:
     validate_or_raise(document)
     formats = _validate_release_context(release_context)
+    _validate_document_identity(release_context, document)
     if type(renders) is not dict:
         raise ArtifactBundleError("release renders must be an exact object")
     if type(assets) is not dict or type(asset_media) is not dict:
         raise ArtifactBundleError("release assets must be exact objects")
+    if any(type(key) is not str or type(value) is not bytes for key, value in assets.items()):
+        raise ArtifactBundleError("asset payload is invalid")
+    if any(
+        type(key) is not str or type(value) is not str or not value
+        for key, value in asset_media.items()
+    ):
+        raise ArtifactBundleError("asset media manifest is invalid")
     if type(governance) is not dict or set(governance) != _REQUIRED_GOVERNANCE:
         raise ArtifactBundleError("release governance payload is incomplete")
     if type(validation_report) is not dict or validation_report.get("valid") is not True:
@@ -164,6 +233,14 @@ def build_release_bundle(
         raise ArtifactBundleError("release formats do not match rendered outputs")
     if set(assets) != set(asset_media):
         raise ArtifactBundleError("asset media manifest does not match payloads")
+    for asset_id in assets:
+        if not _safe_path(f"assets/{asset_id}"):
+            raise ArtifactBundleError("asset ID is not a safe portable name")
+    expected_asset_media = _figure_media(document)
+    if set(assets) != set(expected_asset_media):
+        raise ArtifactBundleError("figure assets must exactly match the artifact document")
+    if asset_media != expected_asset_media:
+        raise ArtifactBundleError("asset media type does not match the artifact document")
 
     files: dict[str, bytes] = {"artifact/document.json": document.canonical_bytes()}
     for format_name in formats:
@@ -208,15 +285,7 @@ def build_release_bundle(
     if len(files) > _MAX_MEMBERS or sum(len(value) for value in files.values()) > _MAX_BUNDLE_BYTES:
         raise ArtifactBundleError("release bundle exceeds governed limits")
 
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for path in sorted(files):
-            info = zipfile.ZipInfo(path, _FIXED_ZIP_TIME)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.create_system = 0
-            info.external_attr = 0o600 << 16
-            archive.writestr(info, files[path], compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
-    payload = output.getvalue()
+    payload = _canonical_zip(files)
     verify_release_bundle(payload)
     return payload, manifest
 
@@ -234,24 +303,33 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
         if (
             not infos
             or len(infos) > _MAX_MEMBERS
+            or names != sorted(names)
+            or archive.comment
             or len(names) != len(set(names))
             or len(names) != len({name.casefold() for name in names})
             or sum(info.file_size for info in infos) > _MAX_BUNDLE_BYTES
         ):
-            raise ArtifactBundleError("release bundle member set is invalid")
+            raise ArtifactBundleError("release bundle member set or canonical ZIP order is invalid")
         for info in infos:
-            mode = (info.external_attr >> 16) & 0o170000
             if (
                 not _safe_path(info.filename)
                 or info.is_dir()
-                or mode == 0o120000
                 or info.file_size > _MAX_MEMBER_BYTES
                 or info.date_time != _FIXED_ZIP_TIME
+                or info.compress_type != zipfile.ZIP_DEFLATED
+                or info.create_system != 0
+                or info.external_attr != 0o600 << 16
+                or info.internal_attr != 0
+                or info.extra
+                or info.comment
+                or info.flag_bits != _zip_flag_bits(info.filename)
+                or info.create_version != 20
+                or info.extract_version != 20
             ):
-                raise ArtifactBundleError("release bundle contains an unsafe member")
+                raise ArtifactBundleError("release bundle contains an unsafe or noncanonical member")
         if "manifest.json" not in names:
             raise ArtifactBundleError("release bundle manifest is missing")
-        manifest_bytes = archive.read("manifest.json")
+        manifest_bytes = _read_member(archive, "manifest.json")
         manifest = _strict_canonical_json(manifest_bytes, "release manifest")
         if (
             type(manifest) is not dict
@@ -289,10 +367,12 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
             ):
                 raise ArtifactBundleError("release manifest digest metadata is invalid")
             declared[path] = entry
+        if list(declared) != sorted(declared):
+            raise ArtifactBundleError("release manifest file order is not canonical")
         if set(names) != set(declared) | {"manifest.json"}:
             raise ArtifactBundleError("release payload and manifest file sets differ")
         for path, entry in declared.items():
-            member = archive.read(path)
+            member = _read_member(archive, path)
             if len(member) != entry["size"] or hashlib.sha256(member).hexdigest() != entry["sha256"]:
                 raise ArtifactBundleError(f"release member integrity failed: {path}")
         required_paths = {
@@ -303,7 +383,7 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
         if not required_paths <= set(declared):
             raise ArtifactBundleError("release governance payloads are incomplete")
         document_payload = _strict_canonical_json(
-            archive.read("artifact/document.json"), "artifact document"
+            _read_member(archive, "artifact/document.json"), "artifact document"
         )
         try:
             document = ArtifactDocument.from_dict(document_payload)
@@ -320,23 +400,29 @@ def verify_release_bundle(payload: bytes) -> dict[str, Any]:
         release = manifest.get("release")
         formats = _validate_release_context(release)
         release_context = cast(dict[str, Any], release)
-        if release_context.get("document_sha256") != document.content_hash():
-            raise ArtifactBundleError("release identity is not bound to the document")
+        _validate_document_identity(release_context, document)
         expected_renders = {f"renders/document.{extension_for(item)}" for item in formats}
-        actual_renders = {path for path in declared if path.startswith("renders/")}
-        if expected_renders != actual_renders:
-            raise ArtifactBundleError("release rendered outputs are incomplete or unexpected")
-        if "json" in formats and archive.read("renders/document.json") != document.canonical_bytes():
+        asset_media = _figure_media(document)
+        expected_assets = {f"assets/{asset_id}" for asset_id in asset_media}
+        if set(declared) != required_paths | expected_renders | expected_assets:
+            raise ArtifactBundleError("release payload members are incomplete or unexpected")
+        for path, entry in declared.items():
+            if entry["media_type"] != _media_type(path, asset_media):
+                raise ArtifactBundleError(f"release manifest media type is invalid: {path}")
+        if (
+            "json" in formats
+            and _read_member(archive, "renders/document.json") != document.canonical_bytes()
+        ):
             raise ArtifactBundleError("canonical JSON render differs from the released document")
         for name in _REQUIRED_GOVERNANCE:
             value = _strict_canonical_json(
-                archive.read(f"governance/{name}.json"),
+                _read_member(archive, f"governance/{name}.json"),
                 f"{name} governance",
             )
             if type(value) not in {dict, list}:
                 raise ArtifactBundleError(f"{name} governance payload is invalid")
         report = _strict_canonical_json(
-            archive.read("validation/report.json"), "validation report"
+            _read_member(archive, "validation/report.json"), "validation report"
         )
         if type(report) is not dict or report.get("valid") is not True:
             raise ArtifactBundleError("released validation report is not passing")

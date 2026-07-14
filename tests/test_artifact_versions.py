@@ -150,6 +150,48 @@ def test_semantic_diff_detects_identity_order_and_section_container_changes(
     assert container_diff.changed_sections == ("methods",)
 
 
+def test_semantic_diff_preserves_duplicate_identifier_occurrences(tmp_path: Path) -> None:
+    value = scope(tmp_path)
+    original = artifact_document(value)
+    section = original.sections[0]
+    duplicate_section = replace(section, title="Stable duplicate section")
+    before = replace(original, sections=(section, duplicate_section))
+    after = replace(
+        before,
+        sections=(replace(section, title="Changed shadowed section"), duplicate_section),
+    )
+    section_diff = compare_documents("before", before, "after", after)
+    assert section_diff.changed is True
+    assert section_diff.changed_sections == (section.section_id,)
+
+    block = section.blocks[0]
+    duplicate_block = replace(block, text="Stable duplicate block")
+    before = replace(original, sections=(replace(section, blocks=(block, duplicate_block)),))
+    after = replace(
+        before,
+        sections=(replace(section, blocks=(replace(block, text="Changed shadowed block"), duplicate_block)),),
+    )
+    block_diff = compare_documents("before", before, "after", after)
+    assert block_diff.changed is True
+    assert block_diff.changed_blocks == (block.block_id,)
+
+    citation = original.citations[0]
+    stable_citation = replace(citation, pinpoint="stable duplicate")
+    before = replace(original, citations=(citation, stable_citation))
+    after = replace(original, citations=(replace(citation, pinpoint="changed shadowed"), stable_citation))
+    citation_diff = compare_documents("before", before, "after", after)
+    assert citation_diff.changed is True
+    assert citation_diff.changed_citations == (citation.citation_id,)
+
+    source = original.sources[0]
+    stable_source = replace(source, title="Stable duplicate source")
+    before = replace(original, sources=(source, stable_source))
+    after = replace(original, sources=(replace(source, title="Changed shadowed source"), stable_source))
+    source_diff = compare_documents("before", before, "after", after)
+    assert source_diff.changed is True
+    assert source_diff.changed_sources == (source.source_id,)
+
+
 def test_concurrent_same_head_version_writers_have_one_winner(tmp_path: Path) -> None:
     value = scope(tmp_path)
     studio = ArtifactStudio(value.store)

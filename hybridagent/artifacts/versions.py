@@ -97,33 +97,50 @@ class ArtifactDiff:
         )
 
 
-def _section_map(document: ArtifactDocument) -> dict[str, tuple[str, int, dict[str, Any]]]:
-    result: dict[str, tuple[str, int, dict[str, Any]]] = {}
+def _append_occurrence(result: dict[str, list[Any]], key: str, value: Any) -> None:
+    result.setdefault(key, []).append(value)
+
+
+def _section_map(document: ArtifactDocument) -> dict[str, tuple[Any, ...]]:
+    grouped: dict[str, list[Any]] = {}
     raw = document.to_dict()
     for group_name in ("sections", "appendices"):
         for position, section in enumerate(raw[group_name]):
-            result[section["section_id"]] = (group_name, position, section)
-    return result
+            _append_occurrence(
+                grouped,
+                section["section_id"],
+                (group_name, position, section),
+            )
+    return {key: tuple(values) for key, values in grouped.items()}
 
 
-def _block_map(document: ArtifactDocument) -> dict[str, tuple[str, int, dict[str, Any]]]:
-    result: dict[str, tuple[str, int, dict[str, Any]]] = {}
+def _block_map(document: ArtifactDocument) -> dict[str, tuple[Any, ...]]:
+    grouped: dict[str, list[Any]] = {}
     raw = document.to_dict()
-    for group in (raw["sections"], raw["appendices"]):
-        for section in group:
-            for position, block in enumerate(section["blocks"]):
-                result[block["block_id"]] = (
-                    section["section_id"],
-                    position,
-                    block,
+    for group_name in ("sections", "appendices"):
+        for section_position, section in enumerate(raw[group_name]):
+            for block_position, block in enumerate(section["blocks"]):
+                _append_occurrence(
+                    grouped,
+                    block["block_id"],
+                    (
+                        group_name,
+                        section_position,
+                        section["section_id"],
+                        block_position,
+                        block,
+                    ),
                 )
-    return result
+    return {key: tuple(values) for key, values in grouped.items()}
 
 
 def _record_map(
     values: list[dict[str, Any]], key: str
-) -> dict[str, tuple[int, dict[str, Any]]]:
-    return {value[key]: (position, value) for position, value in enumerate(values)}
+) -> dict[str, tuple[Any, ...]]:
+    grouped: dict[str, list[Any]] = {}
+    for position, value in enumerate(values):
+        _append_occurrence(grouped, value[key], (position, value))
+    return {item_key: tuple(items) for item_key, items in grouped.items()}
 
 
 def _map_delta(
