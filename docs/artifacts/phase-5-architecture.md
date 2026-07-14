@@ -1,6 +1,6 @@
 # Phase 5 Artifact Studio — Research and Architecture Decision
 
-**Status:** implemented release candidate; final exact-head review and promotion pending
+**Status:** released as `v0.27.8`; three independent exact-SHA PASS reviews obtained on `2eaec9703361605feffdba3103373df236fe39a7`
 
 **Implementation:** Praxis `0.27.8` on `feat/professional-platform-phase-5`
 
