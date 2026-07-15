@@ -467,3 +467,126 @@ def test_consolidation_report_as_dict(tmp_path):
     assert d["insights_written"] == 1
     assert d["salience_rerated"] == 3
     assert d["skipped_reason"] == ""
+
+# ======================================================================
+# Slice 3 — Daemon wiring (gated off by default, fires when enabled)
+# ======================================================================
+from hybridagent import config as cfg
+from hybridagent.daemon import Daemon
+from hybridagent.llm import LLMClient
+
+
+class _FakeConsolidator:
+    """Replaces MemoryConsolidator in the daemon to detect when the tick fires."""
+    instances: list = []
+    next_report = ConsolidationReport(items_reviewed=3, connections_made=1,
+                                      insights_written=1, salience_rerated=2)
+
+    def __init__(self, memory, llm, store, **kwargs):
+        self.kwargs = kwargs
+        self.memory = memory
+        self.llm = llm
+        self.store = store
+        self.run_called = False
+        _FakeConsolidator.instances.append(self)
+
+    def run(self, re_consolidate_after=None):
+        self.run_called = True
+        return _FakeConsolidator.next_report
+
+    def stats(self):
+        return {"pending": 0}
+
+
+def test_consolidation_tick_is_noop_when_disabled(tmp_path, monkeypatch):
+    """Off by default: the tick reads config, sees enabled=false, returns
+    without touching the store or LLM."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    # ensure consolidation is off
+    cfg.set_consolidation_config({"enabled": False})
+    d = Daemon(llm=LLMClient(mode="mock"))
+    _FakeConsolidator.instances.clear()
+    d._consolidation_tick()
+    assert _FakeConsolidator.instances == []  # never constructed
+    assert d.consolidation_status()["enabled"] is False
+
+
+def test_consolidation_tick_fires_when_enabled(tmp_path, monkeypatch):
+    """When enabled, the tick constructs the consolidator and runs it."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({
+        "enabled": True, "intervalMinutes": 30,
+        "windowSize": 5, "minItemsToConsolidate": 1,
+    })
+    d = Daemon(llm=LLMClient(mode="mock"))
+    # seed at least one memory so the consolidator has a window (not strictly
+    # required since we mock, but realistic)
+    d._ensure_agent()
+    assert d.store is not None
+    d.store.add_memory("durable", "seed fact for consolidation", "test", "note")
+
+    import hybridagent.consolidation as cons_mod
+    orig = cons_mod.MemoryConsolidator
+    cons_mod.MemoryConsolidator = _FakeConsolidator
+    try:
+        d._consolidation_tick()
+    finally:
+        cons_mod.MemoryConsolidator = orig
+    assert len(_FakeConsolidator.instances) == 1
+    assert _FakeConsolidator.instances[0].run_called is True
+    # interval scheduled forward
+    import time as _t
+    assert d._next_consolidation_ts > _t.time()
+
+
+def test_consolidation_tick_deferred_by_pending_work(tmp_path, monkeypatch):
+    """If the task queue has pending work, the tick defers 60s and does NOT
+    run — consolidation never starves the user-facing loop."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({"enabled": True, "intervalMinutes": 30})
+    d = Daemon(llm=LLMClient(mode="mock"))
+    d._ensure_agent()
+    # simulate pending work by monkeypatching the manager.list to return non-empty
+    class _M:
+        def list(self, status=None):
+            return [{"id": "fake"}] if status == "pending" else []
+    d.manager = _M()
+    _FakeConsolidator.instances.clear()
+    import hybridagent.consolidation as cons_mod
+    orig = cons_mod.MemoryConsolidator
+    cons_mod.MemoryConsolidator = _FakeConsolidator
+    try:
+        d._consolidation_tick()
+    finally:
+        cons_mod.MemoryConsolidator = orig
+    assert _FakeConsolidator.instances == []  # deferred, never constructed
+    import time as _t
+    assert d._next_consolidation_ts >= _t.time() + 55  # ~60s
+
+
+def test_consolidation_run_respects_disabled_gate(tmp_path, monkeypatch):
+    """Manual trigger returns an error notice when consolidation is off."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({"enabled": False})
+    d = Daemon(llm=LLMClient(mode="mock"))
+    result = d.consolidation_run()
+    assert "error" in result
+    assert "disabled" in result["error"]
+
+
+def test_consolidation_run_fires_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({"enabled": True, "minItemsToConsolidate": 1})
+    d = Daemon(llm=LLMClient(mode="mock"))
+    d._ensure_agent()
+    d.store.add_memory("durable", "manual-trigger seed", "test", "note")
+    import hybridagent.consolidation as cons_mod
+    orig = cons_mod.MemoryConsolidator
+    cons_mod.MemoryConsolidator = _FakeConsolidator
+    _FakeConsolidator.instances.clear()
+    try:
+        result = d.consolidation_run()
+    finally:
+        cons_mod.MemoryConsolidator = orig
+    assert "report" in result
+    assert result["report"]["insights_written"] == 1

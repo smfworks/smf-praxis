@@ -2341,6 +2341,9 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.memory_delete(
                     int(payload.get("id", 0) or 0)))
                 return
+            if self.path == "/api/consolidation/run":
+                self._json_response(self.daemon.consolidation_run())
+                return
             if self.path == "/api/sources":
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode() or "{}")
@@ -2708,6 +2711,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/memory":
                 body = json.dumps(self.daemon.memory_list(), default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/consolidation":
+                body = json.dumps(self.daemon.consolidation_status(),
+                                  default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
             elif self.path.startswith("/api/search"):
@@ -3605,6 +3613,7 @@ class Daemon:
             while self.running and not self._stop_event.is_set():
                 self.tick()
                 self._cron_tick()
+                self._consolidation_tick()
                 self._compliance_autorevert()
                 if self._consecutive_errors >= self.max_consecutive_errors:
                     self._log("error", "too many consecutive errors; shutting down")
@@ -3665,6 +3674,56 @@ class Daemon:
             self._telegram_poll_tick()
         except Exception as exc:
             self._log("warning", f"telegram poll: {exc}")
+
+    def _consolidation_tick(self) -> None:
+        """Active memory consolidation — the "sleep" pass. Gated by
+        ``agents.consolidation.enabled`` (default off in v0.28.0). When off,
+        this method is a cheap no-op (one config read + one timestamp check).
+
+        When on: on a configurable interval, read recent episodic + durable
+        memory, extract entities/topics, find connections, synthesize one
+        cross-cutting insight, re-rate salience. READ-risk only — no external
+        effect. Defers when the task queue has pending work so it never
+        starves the user-facing loop. See hybridagent/consolidation.py and
+        praxis-consolidation-phase-plan.md."""
+        try:
+            from .config import get_consolidation_config
+            cc = get_consolidation_config()
+        except Exception:
+            return
+        if not cc.get("enabled", False):
+            return
+        now = time.time()
+        if now < getattr(self, "_next_consolidation_ts", 0.0):
+            return
+        # Don't starve the task queue — defer if work is pending/running.
+        if self.manager is not None and (
+            self.manager.list(status="pending") or self.manager.list(status="retry")
+        ):
+            self._next_consolidation_ts = now + 60.0
+            return
+        try:
+            from .consolidation import MemoryConsolidator
+            assert self.agent is not None and self.store is not None
+            consolidator = MemoryConsolidator(
+                self.agent.memory, self.agent.llm, self.store,
+                window_size=int(cc.get("windowSize", 20)),
+                min_items=int(cc.get("minItemsToConsolidate", 3)),
+                max_connections=int(cc.get("maxConnections", 5)),
+                rerate_salience=bool(cc.get("rerateSalience", True)),
+                extract_metadata=bool(cc.get("extractMetadata", True)),
+            )
+            report = consolidator.run()
+            interval = float(cc.get("intervalMinutes", 30)) * 60.0
+            self._next_consolidation_ts = now + interval
+            self.emit_event("consolidation", report.as_dict())
+            self._log("info", f"consolidation: {report.as_dict()}")
+        except Exception as exc:
+            self._log("error", f"consolidation tick error: {exc}")
+            # back off on error — cap at 5 min so a broken pass doesn't
+            # immediately retry and burn tokens
+            self._next_consolidation_ts = now + min(
+                float(cc.get("intervalMinutes", 30)) * 60.0, 300.0)
 
     def _run_cron_job(self, job: dict) -> str:
         """Execute one cron job's goal in its configured mode, deliver the result,
@@ -4253,6 +4312,56 @@ class Daemon:
         if self.store is None:
             return {"error": "no store"}
         return {"deleted": bool(self.store.delete_memory(int(memory_id)))}
+
+    # ------------------------------------------- active memory consolidation
+    def consolidation_status(self) -> dict:
+        """Report consolidation config + last-run state. Used by
+        ``praxis consolidation status`` and the dashboard Mind pane."""
+        from .config import get_consolidation_config
+        cc = get_consolidation_config()
+        status: dict = {
+            "enabled": bool(cc.get("enabled", False)),
+            "intervalMinutes": int(cc.get("intervalMinutes", 30)),
+            "windowSize": int(cc.get("windowSize", 20)),
+            "minItemsToConsolidate": int(cc.get("minItemsToConsolidate", 3)),
+            "maxConnections": int(cc.get("maxConnections", 5)),
+            "rerateSalience": bool(cc.get("rerateSalience", True)),
+            "extractMetadata": bool(cc.get("extractMetadata", True)),
+            "next_run_ts": getattr(self, "_next_consolidation_ts", 0.0),
+            "pending": 0,
+        }
+        if self.store is not None:
+            try:
+                status["pending"] = len(self.store.list_unconsolidated(limit=1000))
+            except Exception:
+                status["pending"] = 0
+        return status
+
+    def consolidation_run(self) -> dict:
+        """Manually trigger one consolidation pass. Respects the ``enabled``
+        gate — if consolidation is off, returns a notice instead of running
+        (mirrors the CLI behavior; don't silently run an off feature)."""
+        from .config import get_consolidation_config
+        cc = get_consolidation_config()
+        if not cc.get("enabled", False):
+            return {"error": "consolidation is disabled (agents.consolidation.enabled=false)"}
+        try:
+            from .consolidation import MemoryConsolidator
+            self._ensure_agent()
+            assert self.agent is not None and self.store is not None
+            consolidator = MemoryConsolidator(
+                self.agent.memory, self.agent.llm, self.store,
+                window_size=int(cc.get("windowSize", 20)),
+                min_items=int(cc.get("minItemsToConsolidate", 3)),
+                max_connections=int(cc.get("maxConnections", 5)),
+                rerate_salience=bool(cc.get("rerateSalience", True)),
+                extract_metadata=bool(cc.get("extractMetadata", True)),
+            )
+            report = consolidator.run()
+            self.emit_event("consolidation", report.as_dict())
+            return {"report": report.as_dict()}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     # ----------------------------------------------------------- global search
     def search(self, q: str, limit: int = 8) -> dict:

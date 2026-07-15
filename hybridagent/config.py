@@ -356,3 +356,33 @@ def set_notify_config(notify: dict) -> Path:
     cfg = load_config()
     cfg.setdefault("agents", {})["notify"] = notify
     return save_config(cfg)
+
+
+# -------------------------------------------------- active memory consolidation
+_CONSOLIDATION_DEFAULTS = {
+    "enabled": False,            # v0.28.0 ships off-by-default; flip after dogfood
+    "intervalMinutes": 30,
+    "windowSize": 20,            # max memories per pass (GCP used 10; 20 is safer)
+    "minItemsToConsolidate": 3,  # GCP used 2; 3 reduces noise from tiny passes
+    "rerateSalience": True,      # Gap D - bump connected/recalled items
+    "extractMetadata": True,     # Gap C - entities/topics on the window
+    "maxConnections": 5,
+}
+
+
+def get_consolidation_config() -> dict:
+    """Active memory consolidation settings (agents.consolidation in praxis.json).
+
+    Off by default in v0.28.0. The daemon _consolidation_tick() is a no-op
+    until enabled. See praxis-consolidation-phase-plan.md."""
+    cfg = load_config()
+    stored = cfg.get("agents", {}).get("consolidation", {}) or {}
+    merged = dict(_CONSOLIDATION_DEFAULTS)
+    merged.update(stored)
+    return merged
+
+
+def set_consolidation_config(consolidation: dict) -> Path:
+    cfg = load_config()
+    cfg.setdefault("agents", {})["consolidation"] = consolidation
+    return save_config(cfg)
