@@ -447,6 +447,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/metrics.css" />
 <link rel="stylesheet" href="/web/inference.css" />
 <link rel="stylesheet" href="/web/memory.css" />
+<link rel="stylesheet" href="/web/consolidation.css" />
 <link rel="stylesheet" href="/web/knowledge.css" />
 <link rel="stylesheet" href="/web/palette.css" />
 <link rel="stylesheet" href="/web/settings.css" />
@@ -637,6 +638,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/metrics.js" defer></script>
 <script src="/web/inference.js" defer></script>
 <script src="/web/memory.js" defer></script>
+<script src="/web/consolidation.js" defer></script>
 <script src="/web/knowledge.js" defer></script>
 <script src="/web/palette.js" defer></script>
 <script src="/web/settings.js" defer></script>
@@ -806,6 +808,10 @@ if ('serviceWorker' in navigator) {
         <div class="rail-section">
           <h2>Memory</h2>
           <div id="memory-mount"><div class="skel" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        </div>
+        <div class="rail-section">
+          <h2>Consolidation</h2>
+          <div id="consolidation-mount"><div class="empty">Loading consolidation…</div></div>
         </div>
         <div class="rail-section">
           <h2>Knowledge</h2>
@@ -3725,6 +3731,8 @@ class Daemon:
             report = consolidator.run()
             interval = float(cc.get("intervalMinutes", 30)) * 60.0
             self._next_consolidation_ts = now + interval
+            self._last_consolidation_report = report.as_dict()
+            self._last_consolidation_ts = now
             self.emit_event("consolidation", report.as_dict())
             self._log("info", f"consolidation: {report.as_dict()}")
         except Exception as exc:
@@ -4337,6 +4345,8 @@ class Daemon:
             "rerateSalience": bool(cc.get("rerateSalience", True)),
             "extractMetadata": bool(cc.get("extractMetadata", True)),
             "next_run_ts": getattr(self, "_next_consolidation_ts", 0.0),
+            "last_report": getattr(self, "_last_consolidation_report", None),
+            "last_run_ts": getattr(self, "_last_consolidation_ts", 0.0),
             "pending": 0,
         }
         if self.store is not None:
@@ -4367,6 +4377,8 @@ class Daemon:
                 extract_metadata=bool(cc.get("extractMetadata", True)),
             )
             report = consolidator.run()
+            self._last_consolidation_report = report.as_dict()
+            self._last_consolidation_ts = time.time()
             self.emit_event("consolidation", report.as_dict())
             return {"report": report.as_dict()}
         except Exception as exc:

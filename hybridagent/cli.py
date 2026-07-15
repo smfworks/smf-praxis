@@ -1349,6 +1349,78 @@ def cmd_memory_purge(args: argparse.Namespace) -> int:
     print(f"removed {removed} memory item(s)")
     return 0
 
+def cmd_consolidation(args: argparse.Namespace) -> int:
+    """``praxis consolidation status|run|enable|disable`` — operate the
+    active memory consolidation feature (v0.28.0+). See praxis-consolidation-
+    phase-plan.md."""
+    action = args.action or "status"
+    from .config import get_consolidation_config, set_consolidation_config
+
+    if action == "enable":
+        cc = get_consolidation_config()
+        cc["enabled"] = True
+        set_consolidation_config(cc)
+        print("consolidation enabled (agents.consolidation.enabled=true)")
+        print("the daemon will run a pass on the next interval tick; ")
+        print("use 'praxis consolidation run' to trigger one now")
+        return 0
+
+    if action == "disable":
+        cc = get_consolidation_config()
+        cc["enabled"] = False
+        set_consolidation_config(cc)
+        print("consolidation disabled (agents.consolidation.enabled=false)")
+        print("an in-flight pass finishes; no new passes will start")
+        return 0
+
+    # status and run both need the daemon HTTP API
+    from .daemon import daemon_status
+    status = daemon_status()
+    if not status.get("running"):
+        print("daemon not running (start with 'praxis daemon start')")
+        if action == "status":
+            # still show the config even when the daemon is down
+            cc = get_consolidation_config()
+            print(json.dumps(cc, indent=2, default=str))
+        return 1
+    port = status.get("port")
+    if port is None:
+        print("could not determine daemon port")
+        return 1
+    import urllib.request
+    if action == "status":
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/consolidation", timeout=5
+            ) as resp:
+                body = json.loads(resp.read().decode())
+        except Exception as exc:
+            print(f"could not fetch consolidation status: {exc}")
+            return 1
+        print(json.dumps(body, indent=2, default=str))
+        return 0
+    if action == "run":
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/consolidation/run",
+                data=b"{}", headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = json.loads(resp.read().decode())
+        except Exception as exc:
+            print(f"could not trigger consolidation: {exc}")
+            return 1
+        if body.get("error"):
+            print(f"consolidation: {body['error']}")
+            return 1
+        print(json.dumps(body, indent=2, default=str))
+        return 0
+    print(f"unknown action: {action}")
+    return 2
+
+
+
 
 def cmd_scratchpad_read(args: argparse.Namespace) -> int:
     from .persistence import Store
@@ -1926,6 +1998,15 @@ def build_parser() -> argparse.ArgumentParser:
     pmp.add_argument("--forget-provenance", default=None,
                      help="bulk-delete items whose provenance starts with this prefix")
     pmp.set_defaults(func=cmd_memory_purge)
+
+    pcn = sub.add_parser("consolidation",
+                         help="active memory consolidation (status/run/enable/disable)")
+    pcn.add_argument("action", nargs="?", default="status",
+                     choices=["status", "run", "enable", "disable"],
+                     help="status = show config + pending; run = trigger a pass; "
+                          "enable/disable = flip agents.consolidation.enabled")
+    pcn.set_defaults(func=cmd_consolidation)
+
 
     psr = sub.add_parser("scratchpad-read",
                          help="read scoped inter-subagent scratchpad entries")

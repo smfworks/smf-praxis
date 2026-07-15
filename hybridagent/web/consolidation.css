@@ -1,0 +1,28 @@
+/* Praxis Consolidation panel — Mind-pane section showing active memory
+   consolidation status + manual trigger. Modular shell asset. */
+
+#consolidation-mount { display: flex; flex-direction: column; gap: .5rem; }
+
+.cons-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: .6rem;
+  padding: .6rem .7rem; display: flex; flex-direction: column; gap: .4rem;
+}
+.cons-status { font-size: .72rem; font-weight: 600; letter-spacing: .02rem; }
+.cons-status.on { color: var(--ok); }
+.cons-status.off { color: var(--muted); }
+.cons-meta { display: flex; flex-wrap: wrap; gap: .3rem .55rem; font-size: .66rem; color: var(--muted); }
+.cons-meta span { background: var(--bg); border: 1px solid var(--border); border-radius: 1rem; padding: .08rem .45rem; }
+
+.cons-row { display: flex; justify-content: space-between; align-items: baseline; font-size: .76rem; }
+.cons-label { color: var(--muted); }
+.cons-value { color: var(--text); }
+.cons-last .cons-value { font-size: .7rem; }
+
+.cons-actions { display: flex; gap: .4rem; margin-top: .15rem; }
+.cons-run-btn {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: .5rem; padding: .32rem .7rem; cursor: pointer; font: inherit;
+  font-size: .76rem;
+}
+.cons-run-btn:hover:not(.disabled):not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.cons-run-btn:disabled, .cons-run-btn.disabled { opacity: .5; cursor: not-allowed; }

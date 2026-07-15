@@ -775,3 +775,195 @@ def test_agent_extract_off_when_config_disabled(tmp_path, monkeypatch):
     cfg.set_consolidation_config({"enabled": False, "extractMetadata": False})
     agent = PraxisAgent(store=Store(tmp_path / "p.db"))
     assert agent.memory.extract_metadata is False
+
+
+# ======================================================================
+# Slice 5 — CLI + dashboard visibility
+# ======================================================================
+import socket
+import urllib.parse
+import urllib.request
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _post(url, body):
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read())
+
+
+def test_consolidation_status_endpoint_returns_config(tmp_path, monkeypatch):
+    """GET /api/consolidation returns the config + pending count + timestamps."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent.daemon import Daemon
+    port = _free_port()
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=port)
+    d._start_status_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/consolidation", timeout=10
+        ) as r:
+            body = json.loads(r.read())
+        assert body["enabled"] is False  # off by default
+        assert "intervalMinutes" in body
+        assert "windowSize" in body
+        assert "pending" in body
+        assert "next_run_ts" in body
+    finally:
+        d._stop_status_server()
+
+
+def test_consolidation_dashboard_assets_served(tmp_path, monkeypatch):
+    """The dashboard serves consolidation.js and consolidation.css, and the
+    dashboard HTML embeds the consolidation mount + asset links."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent.daemon import Daemon
+    port = _free_port()
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=port)
+    d._start_status_server()
+    try:
+        for asset in ("consolidation.js", "consolidation.css"):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/web/{asset}", timeout=10
+            ) as r:
+                body = r.read().decode()
+            assert "consolidation" in body.lower() or "cons-" in body
+        # dashboard HTML references the mount + assets
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/", timeout=10
+        ) as r:
+            html = r.read().decode()
+        assert "consolidation-mount" in html
+        assert "/web/consolidation.js" in html
+        assert "/web/consolidation.css" in html
+    finally:
+        d._stop_status_server()
+
+
+def test_consolidation_run_endpoint_respects_disabled_gate(tmp_path, monkeypatch):
+    """POST /api/consolidation/run returns an error when consolidation is off."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({"enabled": False})
+    from hybridagent.daemon import Daemon
+    port = _free_port()
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=port)
+    d._start_status_server()
+    try:
+        result = _post(f"http://127.0.0.1:{port}/api/consolidation/run", {})
+        assert "error" in result
+        assert "disabled" in result["error"]
+    finally:
+        d._stop_status_server()
+
+
+def test_consolidation_run_endpoint_fires_when_enabled(tmp_path, monkeypatch):
+    """POST /api/consolidation/run triggers a pass and stores last_report
+    when enabled."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({
+        "enabled": True, "intervalMinutes": 30,
+        "windowSize": 5, "minItemsToConsolidate": 1,
+    })
+    from hybridagent.daemon import Daemon
+    port = _free_port()
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=port)
+    d._ensure_agent()
+    assert d.store is not None
+    d.store.add_memory("durable", "seed for manual run", "test", "note")
+    d._start_status_server()
+    try:
+        import hybridagent.consolidation as cons_mod
+        orig = cons_mod.MemoryConsolidator
+        cons_mod.MemoryConsolidator = _FakeConsolidator
+        _FakeConsolidator.instances.clear()
+        try:
+            result = _post(f"http://127.0.0.1:{port}/api/consolidation/run", {})
+        finally:
+            cons_mod.MemoryConsolidator = orig
+        assert "report" in result
+        assert result["report"]["insights_written"] == 1
+        # last_report stored on the daemon for status endpoint
+        assert d._last_consolidation_report is not None
+        assert d._last_consolidation_report["insights_written"] == 1
+    finally:
+        d._stop_status_server()
+
+
+def test_consolidation_status_shows_last_report_after_run(tmp_path, monkeypatch):
+    """After a pass, GET /api/consolidation includes last_report."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({"enabled": True, "minItemsToConsolidate": 1})
+    from hybridagent.daemon import Daemon
+    port = _free_port()
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=port)
+    d._ensure_agent()
+    d.store.add_memory("durable", "seed", "test", "note")
+    d._start_status_server()
+    try:
+        import hybridagent.consolidation as cons_mod
+        orig = cons_mod.MemoryConsolidator
+        cons_mod.MemoryConsolidator = _FakeConsolidator
+        try:
+            _post(f"http://127.0.0.1:{port}/api/consolidation/run", {})
+        finally:
+            cons_mod.MemoryConsolidator = orig
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/consolidation", timeout=10
+        ) as r:
+            body = json.loads(r.read())
+        assert body["last_report"] is not None
+        assert body["last_run_ts"] > 0
+    finally:
+        d._stop_status_server()
+
+
+# --- CLI smoke (subprocess-free: call the cmd function directly) ---
+import argparse
+
+
+def test_cli_consolidation_enable_disable_flips_config(tmp_path, monkeypatch):
+    """`praxis consolidation enable` then `disable` flips the config flag.
+    These don't need the daemon to be running."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent.cli import cmd_consolidation
+    # reset to a known state
+    cfg.set_consolidation_config({"enabled": False})
+    assert cfg.get_consolidation_config()["enabled"] is False
+
+    ns = argparse.Namespace(action="enable")
+    assert cmd_consolidation(ns) == 0
+    assert cfg.get_consolidation_config()["enabled"] is True
+
+    ns = argparse.Namespace(action="disable")
+    assert cmd_consolidation(ns) == 0
+    assert cfg.get_consolidation_config()["enabled"] is False
+
+
+def test_cli_consolidation_status_daemon_down_shows_config(tmp_path, monkeypatch):
+    """`praxis consolidation status` with no daemon still prints config
+    and returns exit 1 (daemon not running)."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent.cli import cmd_consolidation
+    cfg.set_consolidation_config({"enabled": False})
+    ns = argparse.Namespace(action="status")
+    rc = cmd_consolidation(ns)
+    assert rc == 1  # daemon down, but config was still printed
+
+
+def test_cli_consolidation_run_daemon_down_returns_1(tmp_path, monkeypatch):
+    """`praxis consolidation run` with no daemon returns 1."""
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    from hybridagent.cli import cmd_consolidation
+    cfg.set_consolidation_config({"enabled": True})
+    ns = argparse.Namespace(action="run")
+    rc = cmd_consolidation(ns)
+    assert rc == 1  # daemon not running
