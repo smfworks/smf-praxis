@@ -3693,6 +3693,15 @@ class Daemon:
             return
         if not cc.get("enabled", False):
             return
+        # Slice 4: sync memory.extract_metadata from config each tick so a
+        # runtime flip of agents.consolidation.extractMetadata takes effect
+        # without a daemon restart.
+        if self.agent is not None:
+            try:
+                self.agent.memory.extract_metadata = bool(
+                    cc.get("extractMetadata", False))
+            except Exception:
+                pass
         now = time.time()
         if now < getattr(self, "_next_consolidation_ts", 0.0):
             return

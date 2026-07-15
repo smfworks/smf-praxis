@@ -77,7 +77,18 @@ class PraxisAgent:
         self.store = store
         self.registry = registry or default_registry()
         self.llm = llm or LLMClient()
-        self.memory = memory or Memory(store=store)
+        # Slice 4: thread the LLM into Memory so add_episodic/add_durable can
+        # extract entities/topics on the write path. extract_metadata defaults
+        # off; the daemon flips it from agents.consolidation.extractMetadata
+        # each tick so runtime config changes take effect without restart.
+        _extract = False
+        try:
+            from .config import get_consolidation_config
+            _extract = bool(get_consolidation_config().get("extractMetadata", False))
+        except Exception:
+            _extract = False
+        self.memory = memory or Memory(store=store, llm=self.llm,
+                                        extract_metadata=_extract)
         # Least privilege: allow exactly the registered tools; consequential
         # ones still route through approval regardless of being allowlisted.
         self.broker = GovernanceBroker(

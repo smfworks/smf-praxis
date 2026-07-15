@@ -590,3 +590,188 @@ def test_consolidation_run_fires_when_enabled(tmp_path, monkeypatch):
         cons_mod.MemoryConsolidator = orig
     assert "report" in result
     assert result["report"]["insights_written"] == 1
+
+
+# ======================================================================
+# Slice 4 — Metadata extraction on ingest (Gap C, write path)
+# ======================================================================
+
+class _MetadataFakeLLM:
+    """Returns canned JSON for the extract-on-write prompt."""
+    def __init__(self, resp='{"entities": ["X"], "topics": ["y"]}'):
+        self.resp = resp
+        self.calls = 0
+
+    def complete(self, prompt, system=None, role="general",
+                 sensitivity="normal", difficulty=None):
+        self.calls += 1
+        return self.resp
+
+
+def test_extract_on_write_populates_metadata(tmp_path):
+    """When extract_metadata is enabled and an LLM is present, add_episodic
+    and add_durable extract entities/topics before the method returns."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM('{"entities": ["Anthropic", "Claude"], "topics": ["code"]}')
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+
+    item = mem.add_durable("Anthropic reports 62% code usage", "note", "test")
+    assert llm.calls == 1
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT entities, topics FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["entities"]) == ["Anthropic", "Claude"]
+    assert _j.loads(row["topics"]) == ["code"]
+
+
+def test_extract_on_write_episodic_also(tmp_path):
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM('{"entities": ["A"], "topics": ["b"]}')
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    item = mem.add_episodic("an episodic event", "test")
+    assert llm.calls == 1
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT entities FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["entities"]) == ["A"]
+
+
+def test_extract_off_by_default_no_llm_calls(tmp_path):
+    """Default Memory (no llm, extract_metadata=False) never calls the LLM."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM()
+    mem = Memory(store=s, llm=llm, extract_metadata=False)
+    mem.add_durable("a fact", "note", "test")
+    mem.add_episodic("an event", "test")
+    assert llm.calls == 0
+
+
+def test_extract_no_llm_no_extraction(tmp_path):
+    """extract_metadata=True but no llm -> no extraction, write succeeds."""
+    s = Store(tmp_path / "t.db")
+    mem = Memory(store=s, llm=None, extract_metadata=True)
+    item = mem.add_durable("a fact", "note", "test")
+    assert item.id is not None  # write succeeded
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT entities FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["entities"]) == []  # default, no extraction
+
+
+def test_extract_malformed_json_honest_fail(tmp_path):
+    """Malformed LLM response -> write still succeeds, metadata stays []."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM("this is not json")
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    item = mem.add_durable("a fact", "note", "test")
+    assert item.id is not None
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT entities, topics FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["entities"]) == []
+    assert _j.loads(row["topics"]) == []
+
+
+def test_extract_llm_raises_honest_fail(tmp_path):
+    """LLM raising an exception -> write succeeds, metadata stays []."""
+    s = Store(tmp_path / "t.db")
+
+    class _BoomLLM:
+        def complete(self, *a, **k):
+            raise RuntimeError("network down")
+
+    mem = Memory(store=s, llm=_BoomLLM(), extract_metadata=True)
+    item = mem.add_durable("a fact", "note", "test")
+    assert item.id is not None  # write succeeded despite LLM failure
+
+
+def test_extract_skipped_for_insights(tmp_path):
+    """Insights written by consolidation skip extraction (they're the output,
+    not the input — extracting would compound LLM cost every pass)."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM()
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    mem.add_durable("a cross-cutting insight", "insight", "consolidation:123")
+    assert llm.calls == 0  # no extraction on insights
+
+
+def test_extract_working_tier_not_extracted(tmp_path):
+    """Working tier is in-process, cleared each cycle — no metadata needed."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM()
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    mem.note_working("a working note")
+    assert llm.calls == 0
+
+
+def test_extract_fenced_json_parsed(tmp_path):
+    """LLM wrapping JSON in ```json fences still extracts correctly."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM('```json\n{"entities": ["X"], "topics": ["y"]}\n```')
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    item = mem.add_durable("a fact", "note", "test")
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT entities FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["entities"]) == ["X"]
+
+
+def test_extract_trailing_prose_parsed(tmp_path):
+    """LLM adding trailing prose around the JSON object still parses."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM('Here you go:\n{"entities": ["A"], "topics": ["b"]}\nDone.')
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    item = mem.add_durable("a fact", "note", "test")
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT topics FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["topics"]) == ["b"]
+
+
+def test_extract_returns_list_not_dict_honest_fail(tmp_path):
+    """LLM returning a list instead of a dict -> no extraction, write ok."""
+    s = Store(tmp_path / "t.db")
+    llm = _MetadataFakeLLM('["entities", "topics"]')
+    mem = Memory(store=s, llm=llm, extract_metadata=True)
+    item = mem.add_durable("a fact", "note", "test")
+    assert item.id is not None
+    with s._lock:
+        row = s._conn.execute(
+            "SELECT entities FROM memory_items WHERE id=?", (item.id,)
+        ).fetchone()
+    import json as _j
+    assert _j.loads(row["entities"]) == []
+
+
+def test_agent_threads_llm_to_memory(tmp_path, monkeypatch):
+    """PraxisAgent constructs Memory with its LLM so the write path can
+    extract when extractMetadata is enabled in config."""
+    from hybridagent.agent import PraxisAgent
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    # enable extraction in config so the agent constructor picks it up
+    cfg.set_consolidation_config({"enabled": True, "extractMetadata": True})
+    agent = PraxisAgent(store=Store(tmp_path / "p.db"))
+    assert agent.memory.llm is agent.llm
+    assert agent.memory.extract_metadata is True
+
+
+def test_agent_extract_off_when_config_disabled(tmp_path, monkeypatch):
+    """When extractMetadata is false in config, the agent's Memory starts
+    with extraction off (the daemon tick may flip it later)."""
+    from hybridagent.agent import PraxisAgent
+    monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
+    cfg.set_consolidation_config({"enabled": False, "extractMetadata": False})
+    agent = PraxisAgent(store=Store(tmp_path / "p.db"))
+    assert agent.memory.extract_metadata is False

@@ -11,10 +11,11 @@ private bodies are never stored durably — only concise summaries + provenance.
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from .bm25 import BM25Index
 
@@ -46,12 +47,25 @@ class MemoryItem:
 _MAX_DURABLE_CHARS = 280
 
 
+class _ExtractLLM(Protocol):
+    """Structural type for the optional extract-on-write LLM. Matches
+    LLMClient.complete(). Using a Protocol keeps memory.py dependency-free
+    (no import of llm.py at runtime)."""
+    def complete(self, prompt: str, system: str | None = None,
+                 role: str = "general", sensitivity: str = "normal",
+                 difficulty: str | None = None) -> str: ...
+
+
 class Memory:
-    def __init__(self, store: "Store | None" = None) -> None:
+    def __init__(self, store: "Store | None" = None,
+                 llm: "_ExtractLLM | None" = None,
+                 extract_metadata: bool = False) -> None:
         self.working: list[MemoryItem] = []
         self.episodic: list[MemoryItem] = []
         self.durable: list[MemoryItem] = []
         self.store = store
+        self.llm = llm
+        self.extract_metadata = extract_metadata
         if store is not None:
             self._hydrate(store)
 
@@ -88,6 +102,7 @@ class Memory:
             item.id = self.store.add_memory(
                 Tier.EPISODIC.value, item.text, item.provenance, item.kind,
                 item.ts, salience=item.salience, expires_at=item.expires_at)
+            self._extract_metadata(item)
         return item
 
     def add_durable(self, text: str, kind: str, provenance: str,
@@ -103,7 +118,55 @@ class Memory:
             item.id = self.store.add_memory(
                 Tier.DURABLE.value, item.text, item.provenance, item.kind,
                 item.ts, salience=item.salience, expires_at=item.expires_at)
+            # Insights written by consolidation are themselves durable memories;
+            # don't extract metadata on them (they're the output, not the input,
+            # and extracting would compound LLM cost on every consolidation pass).
+            if kind != "insight":
+                self._extract_metadata(item)
         return item
+
+    def _extract_metadata(self, item: MemoryItem) -> None:
+        """Gap C write path: extract entities/topics on insert. Honest-fail —
+        never blocks a memory write on extraction. No-op when no LLM, when
+        extract_metadata is off, or when the item has no store id yet."""
+        if not self.extract_metadata or self.llm is None or self.store is None:
+            return
+        if item.id is None:
+            return
+        try:
+            prompt = (
+                "Extract from this memory:\n"
+                "- entities: key people, companies, products, concepts, locations (max 6)\n"
+                "- topics: 2-4 short topic tags\n"
+                "Return JSON: {\"entities\": [...], \"topics\": [...]}\n"
+                "Only valid JSON, no prose.\n\nMemory:\n" + item.text
+            )
+            raw = self.llm.complete(prompt, role="consolidation")
+            text = raw.strip()
+            if text.startswith("```"):
+                inner = text.split("```", 2)
+                if len(inner) >= 2:
+                    body = inner[1]
+                    if body.lower().startswith("json"):
+                        body = body[4:]
+                    text = body.strip()
+            start = text.find("{")
+            end = text.rfind("}")
+            if start == -1 or end == -1 or end < start:
+                return  # malformed -> honest-fail, leave defaults
+            parsed = json.loads(text[start:end + 1])
+            if not isinstance(parsed, dict):
+                return
+            entities = parsed.get("entities", [])
+            topics = parsed.get("topics", [])
+            if not isinstance(entities, list) or not isinstance(topics, list):
+                return
+            self.store.update_memory_metadata(item.id, entities, topics)
+        except Exception:
+            # Honest-fail: any LLM/JSON/IO error leaves the memory written with
+            # default []/[] metadata. The consolidation pass (Slice 2) will
+            # still extract on the read window as a fallback.
+            return
 
     # --------------------------------------------------------------- reading
     def recall(self, query: str, k: int = 5) -> list[MemoryItem]:
