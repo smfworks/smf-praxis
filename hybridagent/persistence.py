@@ -1821,6 +1821,42 @@ FROM artifact_releases
             )
             self._conn.commit()
 
+    def list_unconsolidated(self, limit: int = 20,
+                            re_consolidate_after: float | None = None,
+                            workspace_id: str | None = None,
+                            exclude_kinds: tuple[str, ...] = ("insight",)
+                            ) -> list[dict]:
+        """Select memories eligible for consolidation: never consolidated, OR
+        last consolidated before ``re_consolidate_after`` (re-eligibility as
+        the corpus grows — NOT a one-shot boolean flag). Newest first.
+
+        ``exclude_kinds`` defaults to ``("insight",)`` because insights are the
+        *output* of consolidation, not the input — re-consolidating
+        insights-of-insights compounds drift and would let one bad insight
+        pollute future passes. Callers can pass ``exclude_kinds=()`` to include
+        everything (not recommended)."""
+        cols = ("id,workspace_id,tier,text,provenance,kind,salience,"
+                "access_count,last_access_ts,last_consolidated_at,ts")
+        with self._lock:
+            sql = f"SELECT {cols} FROM memory_items WHERE tier IN ('episodic','durable')"
+            params: list = []
+            if workspace_id is not None:
+                sql += " AND workspace_id=?"
+                params.append(workspace_id)
+            if exclude_kinds:
+                placeholders = ",".join("?" * len(exclude_kinds))
+                sql += f" AND kind NOT IN ({placeholders})"
+                params.extend(exclude_kinds)
+            if re_consolidate_after is None:
+                sql += " AND last_consolidated_at IS NULL"
+            else:
+                sql += " AND (last_consolidated_at IS NULL OR last_consolidated_at < ?)"
+                params.append(re_consolidate_after)
+            sql += " ORDER BY ts DESC LIMIT ?"
+            params.append(limit)
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+        return [dict(r) for r in rows]
+
     # -------------------------------------------------------------- audit
     def add_audit(self, actor: str, tool: str, risk: str, verdict: str,
                   detail: str, ts: float | None = None,

@@ -173,3 +173,297 @@ def test_mark_consolidated_is_idempotent_re_eligible(tmp_path):
             "SELECT last_consolidated_at FROM memory_items WHERE id=?", (mid,)
         ).fetchone()
     assert row["last_consolidated_at"] == 2000.0
+
+
+# ======================================================================
+# Slice 2 — MemoryConsolidator core (offline-testable, no daemon wiring)
+# ======================================================================
+import json as _json
+
+from hybridagent.consolidation import MemoryConsolidator, ConsolidationReport
+from hybridagent.memory import Memory
+
+
+class FakeLLM:
+    """Returns canned JSON per call index. Matches LLMClient.complete()."""
+    def __init__(self, metadata_resp=None, conn_resp=None, insight_resp=None):
+        self.metadata_resp = metadata_resp
+        self.conn_resp = conn_resp
+        self.insight_resp = insight_resp
+        self.calls = []
+
+    def complete(self, prompt: str, system=None, role="general",
+                 sensitivity="normal", difficulty=None) -> str:
+        self.calls.append((role, prompt[:40]))
+        if "entities" in prompt and "topics" in prompt:
+            return self.metadata_resp or "[]"
+        if "from_id" in prompt and "to_id" in prompt:
+            return self.conn_resp or "[]"
+        if "Insight:" in prompt:
+            return self.insight_resp or ""
+        return ""
+
+
+def _seed_window(store, n=3):
+    """Add n durable memories with distinct content for consolidation."""
+    texts = ["Anthropic reports 62% code usage",
+             "Q1 priority: reduce inference costs by 40%",
+             "Current LLM memory approaches have reliability gaps"]
+    ids = []
+    for t in texts[:n]:
+        ids.append(store.add_memory("durable", t, "seed", "note"))
+    return ids
+
+
+def test_consolidation_happy_path_writes_insight_and_connections(tmp_path):
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    mem = Memory(store=s)
+
+    fake = FakeLLM(
+        metadata_resp=_json.dumps([
+            {"id": ids[0], "entities": ["Anthropic", "Claude"], "topics": ["code-usage"]},
+            {"id": ids[1], "entities": ["inference"], "topics": ["cost"]},
+            {"id": ids[2], "entities": ["memory"], "topics": ["reliability"]},
+        ]),
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[1], "relationship": "usage drives cost pressure"},
+            {"from_id": ids[1], "to_id": ids[2], "relationship": "cost cut needs reliability fix"},
+        ]),
+        insight_resp="Code-heavy usage is driving inference costs, and fixing memory "
+                      "reliability is the precondition for any cost reduction to hold.",
+    )
+    c = MemoryConsolidator(mem, fake, s, window_size=20, min_items=3)
+    report = c.run()
+    assert report.items_reviewed == 3
+    assert report.connections_made == 2
+    assert report.insights_written == 1
+    assert report.skipped_reason == ""
+
+    # insight landed as a durable memory of kind=insight
+    insights = [m for m in mem.durable if m.kind == "insight"]
+    assert len(insights) == 1
+    assert "cost" in insights[0].text.lower()
+
+    # connections recorded against the insight
+    conns = s.connections_of(ids[0])
+    assert len(conns) == 1
+    assert conns[0]["insight_id"] == insights[0].id
+
+    # all three items marked consolidated
+    with s._lock:
+        rows = s._conn.execute(
+            f"SELECT last_consolidated_at FROM memory_items WHERE id IN ({ids[0]},{ids[1]},{ids[2]})"
+        ).fetchall()
+    assert all(r["last_consolidated_at"] is not None for r in rows)
+
+
+def test_consolidation_skips_below_min_items(tmp_path):
+    s = Store(tmp_path / "t.db")
+    s.add_memory("durable", "only one", "seed", "note")
+    mem = Memory(store=s)
+    fake = FakeLLM()
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report = c.run()
+    assert report.items_reviewed == 1
+    assert report.insights_written == 0
+    assert "too few" in report.skipped_reason
+    # LLM was never called
+    assert fake.calls == []
+
+
+def test_consolidation_malformed_metadata_json_does_not_block(tmp_path):
+    s = Store(tmp_path / "t.db")
+    _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="this is not json at all",
+        conn_resp=_json.dumps([]),
+        insight_resp="A valid insight despite bad metadata upstream.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report = c.run()
+    # metadata skipped, but pass still completed and wrote an insight
+    assert report.insights_written == 1
+    assert report.skipped_reason == ""
+
+
+def test_consolidation_malformed_connections_json_still_writes_insight(tmp_path):
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp="{not valid json",
+        insight_resp="Insight with no connections found but still synthesized.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report = c.run()
+    assert report.connections_made == 0
+    assert report.insights_written == 1
+
+
+def test_consolidation_empty_insight_response_skips_insight(tmp_path):
+    s = Store(tmp_path / "t.db")
+    _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp="[]",
+        insight_resp="",   # empty
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report = c.run()
+    assert report.insights_written == 0
+    # but items still marked consolidated
+    uncons = s.list_unconsolidated()
+    assert len(uncons) == 0
+
+
+def test_consolidation_rerates_salience_bounded_monotonic(tmp_path):
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    # give them all some salience + access to verify the bump + clamp
+    for mid in ids:
+        s.update_memory_salience(mid, 0.95)
+        s.record_memory_access(mid)  # access_count -> 1
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[1], "relationship": "linked"},
+        ]),
+        insight_resp="An insight connecting the first two items.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3, rerate_salience=True)
+    report = c.run()
+    assert report.salience_rerated >= 2  # ids[0] + ids[1] bumped by connection, all 3 by access
+    # connection bump (+0.1) on 0.95 would exceed 1.0 -> clamped
+    rows = {r["id"]: r for r in s.list_memory(tier="durable")}
+    assert rows[ids[0]]["salience"] == 1.0  # 0.95 + 0.1 + 0.05 -> clamped
+    assert rows[ids[1]]["salience"] == 1.0  # 0.95 + 0.1 + 0.05 -> clamped
+    assert rows[ids[2]]["salience"] == 1.0  # 0.95 + 0.05 -> 1.0
+
+
+def test_consolidation_rerate_disabled_skips_bump(tmp_path):
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    s.record_memory_access(ids[0])
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[1], "relationship": "rel"},
+        ]),
+        insight_resp="Insight.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3, rerate_salience=False)
+    report = c.run()
+    assert report.salience_rerated == 0
+
+
+def test_consolidation_idempotent_rerun_within_window(tmp_path):
+    """Re-running with re_consolidate_after=None skips already-consolidated
+    items (last_consolidated_at IS NOT NULL). This is the anti-one-shot-flag
+    behavior: items STAY re-eligible if re_consolidate_after is set, but a
+    plain re-run doesn't re-process them immediately."""
+    s = Store(tmp_path / "t.db")
+    _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]", conn_resp="[]",
+        insight_resp="First insight.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report1 = c.run()
+    assert report1.insights_written == 1
+
+    # second run with no re_consolidate_after -> window empty -> skipped
+    report2 = c.run()
+    assert report2.items_reviewed == 0
+    assert "too few" in report2.skipped_reason
+
+
+def test_consolidation_re_eligible_after_window(tmp_path):
+    """With re_consolidate_after set, already-consolidated items become
+    eligible again — the anti-one-shot-flag behavior."""
+    s = Store(tmp_path / "t.db")
+    _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]", conn_resp="[]",
+        insight_resp="First insight.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report1 = c.run()
+    assert report1.insights_written == 1
+
+    # mark all items consolidated far in the past -> re-eligible
+    fake.insight_resp = "Second insight after re-eligibility window."
+    report2 = c.run(re_consolidate_after=time.time() + 1)
+    assert report2.items_reviewed == 3
+    assert report2.insights_written == 1
+
+
+def test_consolidation_connection_to_self_rejected(tmp_path):
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[0], "relationship": "self-link"},
+            {"from_id": 99999, "to_id": ids[0], "relationship": "foreign id"},
+            {"from_id": ids[0], "to_id": ids[1], "relationship": "valid link"},
+        ]),
+        insight_resp="Valid insight despite bad links.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report = c.run()
+    assert report.connections_made == 1  # only the valid link survives
+
+
+def test_consolidation_respects_max_connections_cap(tmp_path):
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[1], "relationship": f"rel {i}"}
+            for i in range(10)
+        ]),
+        insight_resp="Insight.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3, max_connections=2)
+    report = c.run()
+    assert report.connections_made == 2
+
+
+def test_consolidation_json_parser_strips_fences_and_prose(tmp_path):
+    """The strict parser must tolerate ```json fences and trailing prose,
+    and reject responses with no JSON array."""
+    parse = MemoryConsolidator._parse_json_list
+    # fenced
+    assert parse('```json\n[{"id": 1}]\n```') == [{"id": 1}]
+    # trailing prose
+    assert parse('Here you go:\n[{"a": 1}]\nThat is all.') == [{"a": 1}]
+    # no array
+    import pytest as _pt
+    try:
+        parse("no json here")
+        assert False, "should have raised"
+    except ValueError:
+        pass
+
+
+def test_consolidation_report_as_dict(tmp_path):
+    r = ConsolidationReport(items_reviewed=5, connections_made=2,
+                            insights_written=1, salience_rerated=3,
+                            skipped_reason="")
+    d = r.as_dict()
+    assert d["items_reviewed"] == 5
+    assert d["connections_made"] == 2
+    assert d["insights_written"] == 1
+    assert d["salience_rerated"] == 3
+    assert d["skipped_reason"] == ""
