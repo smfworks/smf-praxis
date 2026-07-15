@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS memory_items (
 );
 CREATE INDEX IF NOT EXISTS ix_memory_tier ON memory_items(tier);
 
+CREATE TABLE IF NOT EXISTS memory_connections (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id     INTEGER NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+    to_id       INTEGER NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL,
+    insight_id  INTEGER REFERENCES memory_items(id) ON DELETE SET NULL,
+    created_at  REAL NOT NULL,
+    UNIQUE(from_id, to_id, relationship)
+);
+CREATE INDEX IF NOT EXISTS ix_memconn_from ON memory_connections(from_id);
+CREATE INDEX IF NOT EXISTS ix_memconn_to ON memory_connections(to_id);
+
 CREATE TABLE IF NOT EXISTS audit_entries (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     decision_id TEXT NOT NULL DEFAULT '',
@@ -1409,6 +1421,10 @@ class Store:
             "access_count": "INTEGER NOT NULL DEFAULT 0",
             "last_access_ts": "REAL",
             "expires_at": "REAL",
+            # Active Memory Consolidation (v0.28.0) — Gap A/C/D
+            "entities": "TEXT NOT NULL DEFAULT '[]'",
+            "topics": "TEXT NOT NULL DEFAULT '[]'",
+            "last_consolidated_at": "REAL",
         })
         self._ensure_columns_locked("runs", {
             "workspace_id": "TEXT NOT NULL DEFAULT ''",
@@ -1720,6 +1736,90 @@ FROM artifact_releases
                 "DELETE FROM memory_items WHERE id=?", (memory_id,))
             self._conn.commit()
             return cur.rowcount > 0
+
+    # ------------------------------------------- active memory consolidation
+    def add_memory_connection(self, from_id: int, to_id: int,
+                              relationship: str, insight_id: int | None = None,
+                              created_at: float | None = None) -> int | None:
+        """Insert a memory-to-memory link. Returns the connection id, or
+        None if the (from,to,relationship) triple already exists (UNIQUE)."""
+        created_at = time.time() if created_at is None else created_at
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO memory_connections"
+                    "(from_id,to_id,relationship,insight_id,created_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (from_id, to_id, relationship, insight_id, created_at),
+                )
+                self._conn.commit()
+                return int(cur.lastrowid or 0) or None
+            except sqlite3.IntegrityError:
+                # UNIQUE(from_id,to_id,relationship) — already linked
+                return None
+
+    def delete_memory_connections_for(self, memory_id: int) -> int:
+        """Delete all connections touching a memory (either side). Returns count."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM memory_connections WHERE from_id=? OR to_id=?",
+                (memory_id, memory_id),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def connections_of(self, memory_id: int) -> list[dict]:
+        """Return all connections touching a memory, with the linked item's
+        text/kind so callers don't need a second round-trip."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT mc.id, mc.from_id, mc.to_id, mc.relationship, "
+                "mc.insight_id, mc.created_at, "
+                "       mi.text AS linked_text, mi.kind AS linked_kind "
+                "FROM memory_connections mc "
+                "LEFT JOIN memory_items mi "
+                "  ON mi.id = CASE WHEN mc.from_id=? THEN mc.to_id ELSE mc.from_id END "
+                "WHERE mc.from_id=? OR mc.to_id=? "
+                "ORDER BY mc.created_at ASC",
+                (memory_id, memory_id, memory_id),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_memory_metadata(self, memory_id: int, entities: list[str],
+                                topics: list[str]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE memory_items SET entities=?, topics=? WHERE id=?",
+                (json.dumps(entities), json.dumps(topics), memory_id),
+            )
+            self._conn.commit()
+
+    def update_memory_salience(self, memory_id: int, salience: float) -> None:
+        """Bounded salience update. Caller is expected to clamp to [0.0, 1.0];
+        we clamp again here as a safety net (consolidation never down-rates)."""
+        salience = max(0.0, min(1.0, salience))
+        with self._lock:
+            self._conn.execute(
+                "UPDATE memory_items SET salience=? WHERE id=?",
+                (salience, memory_id),
+            )
+            self._conn.commit()
+
+    def mark_consolidated(self, memory_ids: list[int], ts: float | None = None
+                          ) -> None:
+        """Set last_consolidated_at for the given items. NOT a boolean flag —
+        items remain eligible for re-consolidation as the corpus grows."""
+        if not memory_ids:
+            return
+        ts = time.time() if ts is None else ts
+        placeholders = ",".join("?" * len(memory_ids))
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE memory_items SET last_consolidated_at=? "
+                f"WHERE id IN ({placeholders})",
+                (ts, *memory_ids),
+            )
+            self._conn.commit()
 
     # -------------------------------------------------------------- audit
     def add_audit(self, actor: str, tool: str, risk: str, verdict: str,
