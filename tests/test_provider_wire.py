@@ -141,3 +141,91 @@ def test_chat_messages_malformed_response_raises(base_url):
         chat_messages(provider=_OLLAMA, model="badshape",
                       messages=[{"role": "user", "content": "ping"}],
                       api_key=None, base_url=base_url, timeout=5.0)
+
+
+# ======================================================================
+# Reasoning-model support — content null, reasoning present (Slice 6 prep)
+# ======================================================================
+def test_chat_falls_back_to_reasoning_when_content_null(base_url):
+    """Reasoning models (Qwen3, Kimi thinking, DeepSeek-R1) return content=null
+    with the chain-of-thought in `reasoning`. Praxis must fall back so a
+    low-token pass still returns text instead of empty/failing."""
+    # Drive a request whose stub returns the reasoning-model shape.
+    # We can't easily vary the stub per-test without a fixture, so call
+    # _chat_openai directly with a monkeypatched _post.
+    from hybridagent.providers import _chat_openai, _extract_text
+
+    reasoning_response = {
+        "choices": [{"message": {
+            "role": "assistant", "content": None,
+            "reasoning": "The answer is 4 because 2+2=4.",
+        }, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 12, "total_tokens": 22},
+    }
+    captured = {}
+    import hybridagent.providers as p
+    real_post = p._post
+    def fake_post(url, headers, payload, timeout, retries=2, backoff=0.5):
+        captured["payload"] = payload
+        return reasoning_response
+    monkeypatch_target = p
+    try:
+        monkeypatch_target._post = fake_post
+        out = _chat_openai("http://stub/v1", "qwen3", "prompt", None,
+                           None, 5.0, 0.0, 1024)
+    finally:
+        monkeypatch_target._post = real_post
+    assert out == "The answer is 4 because 2+2=4.", f"got {out!r}"
+
+
+def test_chat_uses_content_when_present(base_url):
+    """Normal models return content; the reasoning fallback must not interfere."""
+    from hybridagent.providers import _chat_openai
+    import hybridagent.providers as p
+    normal_response = {
+        "choices": [{"message": {
+            "role": "assistant", "content": "pong", "reasoning": "thinking...",
+        }}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+    }
+    real_post = p._post
+    p._post = lambda *a, **k: normal_response
+    try:
+        out = _chat_openai("http://stub/v1", "llama3.2", "ping", None,
+                           None, 5.0, 0.0, 1024)
+    finally:
+        p._post = real_post
+    assert out == "pong", f"got {out!r}"
+
+
+def test_chat_empty_when_both_content_and_reasoning_absent(base_url):
+    """No content and no reasoning -> empty string, not a crash."""
+    from hybridagent.providers import _chat_openai
+    import hybridagent.providers as p
+    empty_response = {
+        "choices": [{"message": {"role": "assistant", "content": None}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 5},
+    }
+    real_post = p._post
+    p._post = lambda *a, **k: empty_response
+    try:
+        out = _chat_openai("http://stub/v1", "model", "prompt", None,
+                           None, 5.0, 0.0, 1024)
+    finally:
+        p._post = real_post
+    assert out == "", f"got {out!r}"
+
+
+def test_extract_text_reasoning_content_variant():
+    """Some servers use `reasoning_content` instead of `reasoning`."""
+    from hybridagent.providers import _extract_text
+    assert _extract_text({"content": None, "reasoning_content": "via variant"}) == "via variant"
+    assert _extract_text({"content": None, "reasoning": "via primary"}) == "via primary"
+    # content wins over reasoning when both present
+    assert _extract_text({"content": "final", "reasoning": "thinking"}) == "final"
+    # empty content falls back to reasoning
+    assert _extract_text({"content": "", "reasoning": "thinking"}) == "thinking"
+    # truly empty -> empty string
+    assert _extract_text({"content": None}) == ""
+    assert _extract_text(None) == ""
+    assert _extract_text({}) == ""

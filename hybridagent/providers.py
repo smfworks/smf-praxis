@@ -280,6 +280,31 @@ def _post(url: str, headers: dict, payload: dict, timeout: float,
             raise RuntimeError(f"provider unreachable: {e.reason}") from e
 
 
+def _extract_text(message: dict | None) -> str:
+    """Pull the assistant's reply text from an OpenAI-style message dict.
+
+    Reasoning models (Qwen3, Kimi K2.7 thinking, DeepSeek-R1-style) put their
+    chain-of-thought in a ``reasoning`` (or ``reasoning_content``) field and
+    leave ``content`` null until reasoning finishes — and when the token budget
+    runs out mid-reasoning, ``content`` stays null. Falling back to ``reasoning``
+    there means a low-token pass still returns *something* useful instead of an
+    empty string that every caller treats as a failure. Normal models keep
+    returning ``content`` and are unaffected.
+    """
+    if not isinstance(message, dict):
+        return ""
+    text = message.get("content")
+    if isinstance(text, str) and text.strip():
+        return text
+    # content null/empty/missing — try reasoning fields (reasoning first, then
+    # the reasoning_content variant some servers use). Return "" if none.
+    for key in ("reasoning", "reasoning_content"):
+        alt = message.get(key)
+        if isinstance(alt, str) and alt.strip():
+            return alt
+    return text if isinstance(text, str) else ""
+
+
 def _chat_openai(root: str, model: str, prompt: str, system: str | None,
                  api_key: str | None, timeout: float,
                  temperature: float = 0.0, max_tokens: int = 1024,
@@ -293,7 +318,7 @@ def _chat_openai(root: str, model: str, prompt: str, system: str | None,
                  {"model": model, "messages": messages,
                   "temperature": temperature, "max_tokens": max_tokens}, timeout)
     try:
-        text = data["choices"][0]["message"]["content"]
+        text = _extract_text(data["choices"][0]["message"])
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
     if usage_sink is not None:
@@ -372,7 +397,7 @@ def _chat_messages_openai(root: str, model: str, messages: list[dict],
                  {"model": model, "messages": wire,
                   "temperature": temperature, "max_tokens": max_tokens}, timeout)
     try:
-        text = data["choices"][0]["message"]["content"]
+        text = _extract_text(data["choices"][0]["message"])
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"unexpected provider response: {str(data)[:300]}") from exc
     if usage_sink is not None:
@@ -500,6 +525,12 @@ def _chat_messages_stream_openai(root: str, model: str, messages: list[dict],
             usage_sink.update(_usage_of(obj))
         try:
             piece = obj["choices"][0].get("delta", {}).get("content")
+            if not piece:
+                # reasoning models stream chain-of-thought in `reasoning` while
+                # `content` is null; yield it so streaming callers aren't silent
+                # during the thinking phase. Mirrors _extract_text's fallback.
+                piece = obj["choices"][0].get("delta", {}).get("reasoning") \
+                    or obj["choices"][0].get("delta", {}).get("reasoning_content")
         except (KeyError, IndexError, TypeError):
             continue
         if piece:
