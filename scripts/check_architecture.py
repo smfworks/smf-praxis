@@ -56,6 +56,7 @@ LOCAL_MODULES = {
     "validation", "vault", "vecsim", "vertical_evals", "voice", "wiki",
     "wiki_safe", "workspaces", "workspace_context", "workspace_timeline", "wsutil", "verifier", "verifier_llm", "benchmark", "errors",
  "goal_runner", "context_profile", "a2a_client", "providers",
+    "consolidation", "jurisdictions", "security_attestation",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml
