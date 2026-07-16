@@ -199,6 +199,12 @@ class MemoryConsolidator:
         """Gap B: pairwise relationships across the window."""
         if len(window) < 2:
             return []
+        # max_connections <= 0 means "no connections" (disable the feature).
+        # Without this guard the append-then-break loop below would make 1
+        # connection even when max_connections=0, which is wrong for both
+        # interpretations of 0 (no-connections / no-limit). Caught by bug-hunt.
+        if self.max_connections <= 0:
+            return []
         prompt = self._connections_prompt(window)
         try:
             raw = self.llm.complete(prompt, role="consolidation")

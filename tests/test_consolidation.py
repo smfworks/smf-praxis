@@ -967,3 +967,45 @@ def test_cli_consolidation_run_daemon_down_returns_1(tmp_path, monkeypatch):
     ns = argparse.Namespace(action="run")
     rc = cmd_consolidation(ns)
     assert rc == 1  # daemon not running
+
+
+# ======================================================================
+# Slice 6 — bug-hunt regression: max_connections=0 must make zero connections
+# Bug: append-then-break loop made 1 connection even when max_connections=0.
+# Fixed by a guard at the top of _find_connections.
+# ======================================================================
+def test_consolidation_max_connections_zero_makes_none(tmp_path):
+    """max_connections=0 means 'no connections' (disable the feature), not
+    'forbid all then accidentally make one'. Regression for bug-hunt finding."""
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[1], "relationship": "should not be made"},
+        ]),
+        insight_resp="Insight with no connections due to max_connections=0.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3, max_connections=0)
+    report = c.run()
+    assert report.connections_made == 0, (
+        "max_connections=0 must make zero connections (disable feature), "
+        f"but made {report.connections_made}")
+
+
+def test_consolidation_max_connections_negative_makes_none(tmp_path):
+    """Negative max_connections is treated as 'no connections' too — defensive."""
+    s = Store(tmp_path / "t.db")
+    ids = _seed_window(s, 3)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp=_json.dumps([
+            {"from_id": ids[0], "to_id": ids[1], "relationship": "r"},
+        ]),
+        insight_resp="Negative max connections insight.",
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3, max_connections=-5)
+    report = c.run()
+    assert report.connections_made == 0
