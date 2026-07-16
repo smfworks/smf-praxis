@@ -814,7 +814,7 @@ def test_consolidation_status_endpoint_returns_config(tmp_path, monkeypatch):
             f"http://127.0.0.1:{port}/api/consolidation", timeout=10
         ) as r:
             body = json.loads(r.read())
-        assert body["enabled"] is False  # off by default
+        assert body["enabled"] is True  # on by default since v0.28.6
         assert "intervalMinutes" in body
         assert "windowSize" in body
         assert "pending" in body

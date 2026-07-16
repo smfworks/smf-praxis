@@ -360,7 +360,9 @@ def set_notify_config(notify: dict) -> Path:
 
 # -------------------------------------------------- active memory consolidation
 _CONSOLIDATION_DEFAULTS = {
-    "enabled": False,            # v0.28.0 ships off-by-default; flip after dogfood
+    "enabled": True,             # v0.28.6 flips on-by-default after dogfood +
+                                 # bug-hunt passed (insight-quality fix against
+                                 # reasoning models verified live on Spark Qwen3.6)
     "intervalMinutes": 30,
     "windowSize": 20,            # max memories per pass (GCP used 10; 20 is safer)
     "minItemsToConsolidate": 3,  # GCP used 2; 3 reduces noise from tiny passes
@@ -373,8 +375,10 @@ _CONSOLIDATION_DEFAULTS = {
 def get_consolidation_config() -> dict:
     """Active memory consolidation settings (agents.consolidation in praxis.json).
 
-    Off by default in v0.28.0. The daemon _consolidation_tick() is a no-op
-    until enabled. See praxis-consolidation-phase-plan.md."""
+    On by default since v0.28.6 (flipped after the bounded dogfood + 22-probe
+    bug-hunt passed and the reasoning-model insight-quality fix was verified
+    live on Spark Qwen3.6). The daemon _consolidation_tick() runs the pass
+    every intervalMinutes. See praxis-consolidation-phase-plan.md."""
     cfg = load_config()
     stored = cfg.get("agents", {}).get("consolidation", {}) or {}
     merged = dict(_CONSOLIDATION_DEFAULTS)
