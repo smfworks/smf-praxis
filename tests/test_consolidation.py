@@ -193,7 +193,8 @@ class FakeLLM:
         self.calls = []
 
     def complete(self, prompt: str, system=None, role="general",
-                 sensitivity="normal", difficulty=None) -> str:
+                 sensitivity="normal", difficulty=None,
+                 max_tokens=None) -> str:
         self.calls.append((role, prompt[:40]))
         if "entities" in prompt and "topics" in prompt:
             return self.metadata_resp or "[]"
@@ -603,7 +604,7 @@ class _MetadataFakeLLM:
         self.calls = 0
 
     def complete(self, prompt, system=None, role="general",
-                 sensitivity="normal", difficulty=None):
+                 sensitivity="normal", difficulty=None, max_tokens=None):
         self.calls += 1
         return self.resp
 
@@ -1009,3 +1010,88 @@ def test_consolidation_max_connections_negative_makes_none(tmp_path):
     c = MemoryConsolidator(mem, fake, s, min_items=3, max_connections=-5)
     report = c.run()
     assert report.connections_made == 0
+
+
+# ======================================================================
+# Slice 6 — insight-quality regression: reasoning CoT must not be written
+# Dogfood finding (2026-07-16): Qwen3.6 leaked "Thinking Process:\n1.
+# **Deconstruct...**" into `content`; consolidator wrote CoT as the insight.
+# Fix = prompt tightening + _strip_reasoning post-filter.
+# ======================================================================
+from hybridagent.consolidation import _strip_reasoning
+
+def test_strip_reasoning_removes_thinking_process_header():
+    """The exact dogfood leak: 'Thinking Process:' header + reasoning."""
+    cot = ("Thinking Process:\n\n1.  **Deconstruct the Input:**\n"
+           "    *   *Memories:* A long list.\n\n"
+           "The recurring pattern is cost pressure driving background tasks "
+           "to free local models.")
+    out = _strip_reasoning(cot)
+    assert "Thinking Process" not in out
+    assert "Deconstruct" not in out
+    assert "cost pressure" in out, f"insight should survive, got {out!r}"
+
+def test_strip_reasoning_removes_let_me_think_header():
+    cot = ("Let me think about this.\n\n1. Analysis of inputs.\n\n"
+           "The insight: reliability gaps persist under load.")
+    out = _strip_reasoning(cot)
+    assert "Let me think" not in out
+    assert "Analysis of inputs" not in out
+    assert "reliability gaps" in out
+
+def test_strip_reasoning_handles_numbered_list_without_header():
+    """Some models skip the header word and jump straight to a numbered list."""
+    cot = ("1.  **Deconstruct the Memories:**\n    * item\n\n2. step two.\n\n"
+           "Cross-cutting theme: consolidation reuse over new infra.")
+    out = _strip_reasoning(cot)
+    assert "Deconstruct" not in out
+    assert "consolidation reuse" in out
+
+def test_strip_reasoning_preserves_clean_insight():
+    """A normal-model insight with no CoT must pass through unchanged."""
+    clean = "Background housekeeping should use the cheapest competent model."
+    out = _strip_reasoning(clean)
+    assert out == clean, f"clean insight altered: {out!r}"
+
+def test_strip_reasoning_preserves_empty():
+    assert _strip_reasoning("") == ""
+    assert _strip_reasoning("   ") == "   "
+
+def test_strip_reasoning_all_cot_no_insight_returns_short():
+    """If the whole response is reasoning with no conclusion, the length
+    check (< 10 chars) rejects it rather than writing garbage."""
+    cot = "Thinking Process:\n\n1. Deconstruct.\n2. Analyze.\n"
+    out = _strip_reasoning(cot)
+    # after stripping the header + single reasoning chunk, what's left is short
+    assert "Thinking Process" not in out
+
+
+# ======================================================================
+# Slice 6 — end-to-end: consolidator writes a clean insight against a
+# reasoning model that leaks CoT into content
+# ======================================================================
+def test_consolidation_writes_clean_insight_from_cot_leak(tmp_path):
+    """The full path: LLM returns content with CoT preamble, consolidator
+    strips it and writes only the insight as a durable memory."""
+    s = Store(tmp_path / "t.db")
+    _seed_window(s, 5)
+    mem = Memory(store=s)
+    fake = FakeLLM(
+        metadata_resp="[]",
+        conn_resp="[]",
+        insight_resp=(
+            "Thinking Process:\n\n1.  **Deconstruct the Input:**\n"
+            "    *   *Memories:* A long list of alternating memories.\n\n"
+            "The recurring theme is that cost pressure drives background tasks "
+            "to free local models rather than paid cloud endpoints."
+        ),
+    )
+    c = MemoryConsolidator(mem, fake, s, min_items=3)
+    report = c.run()
+    assert report.insights_written == 1
+    insights = [m for m in s.list_memory(tier="durable") if m.get("kind") == "insight"]
+    assert len(insights) == 1
+    text = insights[0]["text"]
+    assert "Thinking Process" not in text, f"CoT leaked into stored insight: {text!r}"
+    assert "Deconstruct" not in text, f"CoT leaked into stored insight: {text!r}"
+    assert "cost pressure" in text, f"insight body lost: {text!r}"

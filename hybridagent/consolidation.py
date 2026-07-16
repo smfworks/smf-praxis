@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -36,11 +37,70 @@ from typing import Any, Protocol
 _log = logging.getLogger(__name__)
 
 
+# Reasoning-model CoT preambles we strip from insight text. Qwen3 / Kimi
+# thinking / DeepSeek-R1-style models often leak "Thinking Process:\n\n1.
+# **Deconstruct...**" into `content` before (or instead of) the actual answer.
+# We strip these so the consolidator writes the synthesized insight, not the
+# chain-of-thought. Dogfood finding (2026-07-16).
+_REASONING_HEADERS = re.compile(
+    r"^\s*(?:here(?:'s| is| are)? (?:a |the )?(?:thinking process|reasoning|"
+    r"analysis|step(?:-by-step)?)|thinking process|let(?:'s| us| me) "
+    r"(?:think|break this down|analyze)|reasoning|step \d+|analysis)\b[^:\n]*"
+    r"[:.]?\s*\n",
+    re.IGNORECASE,
+)
+# Markdown numbered-list reasoning steps: "1.  **Deconstruct the Input:**..." —
+# the bullet that opens a reasoning block. We cut from the first such step to
+# the end (the insight, if any, comes after the reasoning).
+_REASONING_STEP = re.compile(
+    r"^\s*\d+\.\s+\*\*[^*\n]+\*\*\s*:?\s*\n", re.MULTILINE,
+)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove reasoning-model chain-of-thought from an insight response.
+
+    Strategy: if the text opens with a known reasoning header or numbered-list
+    step, the model wrote its thinking into `content`. The actual insight
+    (when present) is the final declarative sentence(s) after the reasoning.
+    When we can't confidently separate them, return the text unchanged — a
+    leaky insight is better than a discarded one, and the prompt tightening
+    below is the primary defence.
+    """
+    if not text:
+        return text
+    # Cut a leading "Thinking Process:" / "Let me think:" style header + the
+    # reasoning block that follows. Keep anything *after* the first blank line
+    # that follows the header (the actual insight, if the model wrote one).
+    m = _REASONING_HEADERS.match(text)
+    if m:
+        after = text[m.end():]
+        # the insight is usually after the first blank line in the remainder;
+        # if there's no clear split, prefer the last short declarative line.
+        parts = [p.strip() for p in after.split("\n\n") if p.strip()]
+        if len(parts) >= 2:
+            # last chunk is the most likely insight (reasoning → conclusion)
+            return parts[-1].split("\n")[-1].strip() or parts[-1]
+        # only one chunk after header → it's all reasoning; return as-is so the
+        # length check rejects it if it's too short, or keeps it if substantive.
+        return after.strip()
+    # Numbered-list reasoning opener (no header word) — same heuristic.
+    m = _REASONING_STEP.match(text)
+    if m:
+        after = text[m.end():]
+        parts = [p.strip() for p in after.split("\n\n") if p.strip()]
+        if len(parts) >= 2:
+            return parts[-1].split("\n")[-1].strip() or parts[-1]
+        return after.strip()
+    return text
+
+
 class _LLMLike(Protocol):
     """Structural type for the LLM dependency. Matches LLMClient.complete()."""
     def complete(self, prompt: str, system: str | None = None,
                  role: str = "general", sensitivity: str = "normal",
-                 difficulty: str | None = None) -> str: ...
+                 difficulty: str | None = None,
+                 max_tokens: int | None = None) -> str: ...
 
 
 class _MemoryLike(Protocol):
@@ -239,10 +299,20 @@ class MemoryConsolidator:
         kind='insight'. Returns the new memory id, or None on failure."""
         prompt = self._insight_prompt(window, conns)
         try:
-            text = self.llm.complete(prompt, role="consolidation").strip()
+            # Reasoning models (Qwen3, Kimi thinking) need a larger token budget
+            # than the default 1024 to finish chain-of-thought and emit the
+            # conclusion. The post-filter (_strip_reasoning) then extracts the
+            # insight from the reasoning preamble. Dogfood finding.
+            text = self.llm.complete(
+                prompt, role="consolidation", max_tokens=4096
+            ).strip()
         except Exception as exc:
             _log.warning("consolidation insight synthesis failed: %s", exc)
             return None
+        # Reasoning models (Qwen3, Kimi thinking, DeepSeek-R1) often leak their
+        # chain-of-thought into `content` before the actual answer. Strip the
+        # reasoning preamble so we don't write CoT as an insight.
+        text = _strip_reasoning(text)
         if not text or len(text) < 10:
             return None
         # summarize-not-hoard: Memory.add_durable clips to _MAX_DURABLE_CHARS.
@@ -329,7 +399,9 @@ class MemoryConsolidator:
             "Given these memories and the connections found between them, "
             "synthesize ONE cross-cutting insight — a pattern, theme, or "
             "implication that no single memory states alone. Be concrete, "
-            "not generic. 1-2 sentences max.\n\n"
+            "not generic. Respond with ONLY the insight: 1-2 sentences, no "
+            "reasoning, no thinking process, no numbered steps, no 'the "
+            "insight is' preamble. Start directly with the insight.\n\n"
             "Memories:\n" + "\n".join(lines) + "\n\nConnections:\n"
             + "\n".join(conn_lines) + "\n\nInsight:"
         )

@@ -143,9 +143,11 @@ class LLMClient:
     # ------------------------------------------------------------------ public
     def complete(self, prompt: str, system: str | None = None,
                  role: str = "general", sensitivity: str = NORMAL,
-                 difficulty: str | None = None) -> str:
+                 difficulty: str | None = None,
+                 max_tokens: int | None = None) -> str:
         if self._effective_mode() == "real":
-            return self._route(prompt, system, role, sensitivity, difficulty)
+            return self._route(prompt, system, role, sensitivity, difficulty,
+                               max_tokens=max_tokens)
         return self._mock_complete(prompt, system)
 
     def summarize(self, text: str, role: str = "summarizer",
@@ -309,7 +311,8 @@ class LLMClient:
 
     # ------------------------------------------------------------------- route
     def _route(self, prompt: str, system: str | None,
-               role: str, sensitivity: str, difficulty: str | None = None) -> str:
+               role: str, sensitivity: str, difficulty: str | None = None,
+               max_tokens: int | None = None) -> str:
         candidates = self.router.select(role, sensitivity,
                                         difficulty or _difficulty_of(prompt))
         if not candidates:
@@ -322,7 +325,8 @@ class LLMClient:
             if ref == "mock":          # router's offline-safe choice (e.g. sensitive)
                 return self._mock_complete(prompt, system)
             try:
-                return self._complete_with_ref(ref, prompt, system)
+                return self._complete_with_ref(ref, prompt, system,
+                                                max_tokens=max_tokens)
             except RuntimeError as exc:
                 self._usage.fallbacks += 1
                 last_exc = exc
@@ -331,7 +335,8 @@ class LLMClient:
         raise last_exc if last_exc else RuntimeError("no usable model")
 
     def _complete_with_ref(self, model_ref: str, prompt: str,
-                           system: str | None) -> str:
+                           system: str | None,
+                           max_tokens: int | None = None) -> str:
         provider_id, model = cfg.split_model_ref(model_ref)
         if not model:
             raise RuntimeError(
@@ -349,9 +354,12 @@ class LLMClient:
                 f"re-run 'praxis onboard' and paste the key."
             )
         usage: dict = {}
-        text = chat(
-            provider=provider, model=model, prompt=prompt, system=system,
-            api_key=api_key, base_url=entry.get("baseUrl"), usage_sink=usage)
+        kw: dict = {"provider": provider, "model": model, "prompt": prompt,
+                    "system": system, "api_key": api_key,
+                    "base_url": entry.get("baseUrl"), "usage_sink": usage}
+        if max_tokens is not None:                # only override when caller asks
+            kw["max_tokens"] = max_tokens
+        text = chat(**kw)
         self._account(model_ref, usage)
         return text
 

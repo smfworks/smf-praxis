@@ -83,7 +83,7 @@ def test_fallback_walks_candidate_list(tmp_path, monkeypatch):
     cfg.save_config(data)
     llm = LLMClient(mode="real")
 
-    def fake_call(ref, prompt, system):
+    def fake_call(ref, prompt, system, max_tokens=None):
         if "broken" in ref:
             raise RuntimeError("primary down")
         return f"ok via {ref}"
