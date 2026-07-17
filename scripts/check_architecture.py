@@ -58,7 +58,7 @@ LOCAL_MODULES = {
  "goal_runner", "context_profile", "a2a_client", "providers",
     "consolidation", "jurisdictions", "security_attestation",
     "advertising_filing", "legal_hold", "credentials", "conflicts",
-    "discovery_templates",
+    "discovery_templates", "clinical_attestation",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml
