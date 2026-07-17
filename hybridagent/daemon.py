@@ -448,6 +448,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/inference.css" />
 <link rel="stylesheet" href="/web/memory.css" />
 <link rel="stylesheet" href="/web/consolidation.css" />
+<link rel="stylesheet" href="/web/law_firm.css" />
 <link rel="stylesheet" href="/web/knowledge.css" />
 <link rel="stylesheet" href="/web/palette.css" />
 <link rel="stylesheet" href="/web/settings.css" />
@@ -639,6 +640,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/inference.js" defer></script>
 <script src="/web/memory.js" defer></script>
 <script src="/web/consolidation.js" defer></script>
+<script src="/web/law_firm.js" defer></script>
 <script src="/web/knowledge.js" defer></script>
 <script src="/web/palette.js" defer></script>
 <script src="/web/settings.js" defer></script>
@@ -812,6 +814,10 @@ if ('serviceWorker' in navigator) {
         <div class="rail-section">
           <h2>Consolidation</h2>
           <div id="consolidation-mount"><div class="empty">Loading consolidation…</div></div>
+        </div>
+        <div class="rail-section" id="law-firm-section" hidden>
+          <h2>Law Firm Compliance</h2>
+          <div id="law-firm-mount"><div class="empty">Law Firm pack not active.</div></div>
         </div>
         <div class="rail-section">
           <h2>Knowledge</h2>
@@ -2724,6 +2730,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
                                   default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/law_firm":
+                body = json.dumps(self.daemon.law_firm_compliance(),
+                                  default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
             elif self.path.startswith("/api/search"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
@@ -4383,6 +4394,119 @@ class Daemon:
             return {"report": report.as_dict()}
         except Exception as exc:
             return {"error": str(exc)}
+
+    # --------------------------------------------------- law firm pack surfaces
+    def law_firm_compliance(self) -> dict:
+        """Aggregate compliance data for the Law Firm pack dashboard. Returns
+        the four surfaces: matter-hold summary, credential compliance, ad-filing
+        tracker, and security attestation. Each degrades to an empty state if
+        the underlying module has no data (the modules are in-memory ledgers
+        until a firm persists them)."""
+        from . import pack as _pack
+        ap = _pack.active()
+        if ap is None or ap.name != "law_firm":
+            return {"active": False, "pack": None}
+        return {
+            "active": True,
+            "pack": {"name": ap.name, "vertical": ap.vertical,
+                     "theme": ap.theme},
+            "matter_holds": self._lf_matter_holds(),
+            "credentials": self._lf_credentials(),
+            "ad_filings": self._lf_ad_filings(),
+            "security_attestations": self._lf_security_attestations(),
+        }
+
+    def _lf_matter_holds(self) -> dict:
+        """Matter-hold summary: count of active holds + per-matter status."""
+        try:
+            from .legal_hold import LegalHoldLedger
+            ledger = getattr(self, "_lf_hold_ledger", None) or LegalHoldLedger()
+            self._lf_hold_ledger = ledger
+            holds = ledger.all_holds()
+            active = [h for h in holds if h.is_active]
+            return {
+                "total": len(holds),
+                "active": len(active),
+                "matters": [
+                    {"hold_id": h.hold_id, "matter_id": h.matter_id,
+                     "status": h.status, "scope": h.scope,
+                     "custodian": h.custodian, "is_active": h.is_active}
+                    for h in active[:20]  # cap for the dashboard
+                ],
+            }
+        except Exception as exc:
+            return {"error": str(exc), "total": 0, "active": 0, "matters": []}
+
+    def _lf_credentials(self) -> dict:
+        """Credential compliance summary: per-credential status counts."""
+        try:
+            from .credentials import CredentialLedger
+            ledger = getattr(self, "_lf_cred_ledger", None) or CredentialLedger()
+            self._lf_cred_ledger = ledger
+            creds = ledger.all_credentials()
+            from .credentials import compliance_status
+            statuses = [compliance_status(c) for c in creds]
+            return {
+                "total": len(creds),
+                "current": sum(1 for s in statuses if s == "current"),
+                "expiring_soon": sum(1 for s in statuses if s == "expiring_soon"),
+                "expired": sum(1 for s in statuses if s == "expired"),
+                "ce_deficient": sum(1 for s in statuses if s == "ce_deficient"),
+                "no_requirement": sum(1 for s in statuses if s == "no_requirement"),
+                "credentials": [
+                    {"user_id": c.user_id, "profession": c.profession,
+                     "state": c.state, "status": compliance_status(c),
+                     "accumulated": c.accumulated_hours,
+                     "required": c.required_hours}
+                    for c in creds[:20]
+                ],
+            }
+        except Exception as exc:
+            return {"error": str(exc), "total": 0}
+
+    def _lf_ad_filings(self) -> dict:
+        """Ad-filing tracker: filings per jurisdiction + compliant count."""
+        try:
+            from .advertising_filing import FilingLedger, can_send, filing_required
+            ledger = getattr(self, "_lf_filing_ledger", None) or FilingLedger()
+            self._lf_filing_ledger = ledger
+            all_filings = ledger.all_filings()
+            ny = [f for f in all_filings if f.jurisdiction == "NY"]
+            fl = [f for f in all_filings if f.jurisdiction == "FL"]
+            return {
+                "total": len(all_filings),
+                "ny": {"total": len(ny),
+                       "compliant": sum(1 for f in ny if can_send(f))},
+                "fl": {"total": len(fl),
+                       "compliant": sum(1 for f in fl if can_send(f))},
+                "filing_required_states": [s.upper() for s in
+                                           ("ny", "fl") if filing_required(s)],
+            }
+        except Exception as exc:
+            return {"error": str(exc), "total": 0}
+
+    def _lf_security_attestations(self) -> dict:
+        """Security attestation summary: per-jurisdiction pass/fail."""
+        try:
+            from .security_attestation import SecurityControls, attest
+            # the firm's asserted controls (defaults to unconfigured until set)
+            controls = getattr(self, "_lf_security_controls", None) or SecurityControls()
+            self._lf_security_controls = controls
+            # attest against the active jurisdictions (default to MA + NY, the
+            # strictest two, so the dashboard shows the ceiling)
+            jurisdictions = getattr(self, "_lf_jurisdictions", ["MA", "NY"])
+            results = []
+            for st in jurisdictions:
+                att = attest(st, controls)
+                results.append({
+                    "state": att.jurisdiction, "tier": att.tier,
+                    "passed": att.passed, "citation": att.profile_citation,
+                    "findings": len(att.findings),
+                    "critical": sum(1 for f in att.findings if f.severity == "critical"),
+                })
+            return {"jurisdictions": results}
+        except Exception as exc:
+            return {"error": str(exc), "jurisdictions": []}
 
     # ----------------------------------------------------------- global search
     def search(self, q: str, limit: int = 8) -> dict:

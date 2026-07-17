@@ -492,3 +492,115 @@ def test_law_firm_install_skills_count(tmp_path, monkeypatch):
     assert p is not None
     store = Store.open(tmp_path / "lf2.db")
     assert pack.install_skills(p, store) == 4
+
+
+# ======================================================================
+# Law Firm pack — Slice 4: dashboard surfaces (/api/law_firm + assets)
+# ======================================================================
+def test_law_firm_endpoint_inactive_when_no_pack(tmp_path, monkeypatch):
+    """Without law_firm active, /api/law_firm returns active: False (the JS
+    hides the section)."""
+    _home(tmp_path, monkeypatch)
+    import json as _json, urllib.request, time
+    from hybridagent.daemon import Daemon
+    from hybridagent.llm import LLMClient
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=0)
+    d._start_status_server()
+    time.sleep(0.3)
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{d.status_port}/api/law_firm", timeout=5
+        ) as r:
+            body = _json.loads(r.read())
+        assert body["active"] is False
+        assert body["pack"] is None
+    finally:
+        d._stop_status_server()
+
+
+def test_law_firm_endpoint_active_returns_four_surfaces(tmp_path, monkeypatch):
+    """With law_firm active, /api/law_firm returns the four compliance surfaces."""
+    _home(tmp_path, monkeypatch)
+    import json as _json, urllib.request, time
+    from hybridagent.daemon import Daemon
+    from hybridagent.llm import LLMClient
+    pack.activate("law_firm")
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=0)
+    d._start_status_server()
+    time.sleep(0.3)
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{d.status_port}/api/law_firm", timeout=5
+        ) as r:
+            body = _json.loads(r.read())
+        assert body["active"] is True
+        assert body["pack"]["name"] == "law_firm"
+        # the four surfaces
+        assert "matter_holds" in body
+        assert "credentials" in body
+        assert "ad_filings" in body
+        assert "security_attestations" in body
+        # the security attestation surface defaults to MA + NY (the ceiling)
+        sa = body["security_attestations"]
+        assert "jurisdictions" in sa
+        states = [j["state"] for j in sa["jurisdictions"]]
+        assert "MA" in states and "NY" in states
+    finally:
+        d._stop_status_server()
+        pack.deactivate()
+
+
+def test_law_firm_dashboard_assets_served(tmp_path, monkeypatch):
+    """The dashboard serves law_firm.js and law_firm.css, and the HTML embeds
+    the law-firm mount + asset links."""
+    _home(tmp_path, monkeypatch)
+    import urllib.request, time
+    from hybridagent.daemon import Daemon
+    from hybridagent.llm import LLMClient
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=0)
+    d._start_status_server()
+    time.sleep(0.3)
+    try:
+        for asset in ("law_firm.js", "law_firm.css"):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{d.status_port}/web/{asset}", timeout=5
+            ) as r:
+                assert r.status == 200
+                assert len(r.read()) > 100
+        # the dashboard HTML references the assets + mount
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{d.status_port}/", timeout=5
+        ) as r:
+            html = r.read().decode()
+        assert "law_firm.js" in html
+        assert "law_firm.css" in html
+        assert 'id="law-firm-mount"' in html
+        assert 'id="law-firm-section"' in html
+    finally:
+        d._stop_status_server()
+
+
+def test_law_firm_security_attestation_surface_fails_ma_without_wisp(tmp_path, monkeypatch):
+    """The security attestation surface reports MA as FAIL when no WISP is
+    configured (the default controls state)."""
+    _home(tmp_path, monkeypatch)
+    import json as _json, urllib.request, time
+    from hybridagent.daemon import Daemon
+    from hybridagent.llm import LLMClient
+    pack.activate("law_firm")
+    d = Daemon(llm=LLMClient(mode="mock"), status_port=0)
+    d._start_status_server()
+    time.sleep(0.3)
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{d.status_port}/api/law_firm", timeout=5
+        ) as r:
+            body = _json.loads(r.read())
+        sa = body["security_attestations"]
+        ma = next(j for j in sa["jurisdictions"] if j["state"] == "MA")
+        assert ma["passed"] is False  # no WISP configured by default
+        assert ma["tier"] == "wisp_mandate"
+        assert ma["critical"] > 0
+    finally:
+        d._stop_status_server()
+        pack.deactivate()
