@@ -59,6 +59,9 @@ VERTICAL_SPECS: list[VerticalSpec] = [
     VerticalSpec("law_firm", "law firm", "enforced",
                  autonomous={RiskClass.READ, RiskClass.DRAFT},
                  held={RiskClass.SEND, RiskClass.DESTRUCTIVE}),
+    VerticalSpec("medical_office", "medical office", "enforced",
+                 autonomous={RiskClass.READ, RiskClass.DRAFT},
+                 held={RiskClass.SEND, RiskClass.DESTRUCTIVE}),
     VerticalSpec("medical", "clinical", "enforced",
                  autonomous={RiskClass.READ},
                  held={RiskClass.SEND, RiskClass.DESTRUCTIVE}),
@@ -133,6 +136,23 @@ def vertical_eval_cases() -> list[EvalCase]:
     cases.append(EvalCase("vertical.law_firm.cle_status", "vertical",
                           "NY attorney with insufficient ethics hours is CE-deficient; MA is no-requirement.",
                           _law_firm_cle_case()))
+
+    # --- Medical Office pack: manual compliance cases ---
+    cases.append(EvalCase("vertical.medical_office.never_write_chart", "vertical",
+                          "Chart write without physician attestation is blocked.",
+                          _medical_office_never_write_chart_case()))
+    cases.append(EvalCase("vertical.medical_office.telemedicine_gate", "vertical",
+                          "Tele-visit blocked when physician lacks patient-state license.",
+                          _medical_office_telemedicine_case()))
+    cases.append(EvalCase("vertical.medical_office.controlled_substance", "vertical",
+                          "Controlled-substance Rx without PMP query is flagged high.",
+                          _medical_office_cs_case()))
+    cases.append(EvalCase("vertical.medical_office.minor_consent", "vertical",
+                          "Parent access to minor self-consented STI record is denied.",
+                          _medical_office_minor_consent_case()))
+    cases.append(EvalCase("vertical.medical_office.portal_triage", "vertical",
+                          "Clinical portal reply is not autonomous; allowlisted admin is.",
+                          _medical_office_portal_triage_case()))
     return cases
 
 
@@ -221,4 +241,113 @@ def _law_firm_cle_case():
         ma_none = compliance_status(ma) == "no_requirement"
         return (ny_def and ma_none,
                 f"ny={compliance_status(ny)} ma={compliance_status(ma)}")
+    return run
+
+
+# --- Medical Office manual case implementations ---
+
+def _medical_office_never_write_chart_case():
+    def run() -> tuple[bool, str]:
+        from .clinical_attestation import (
+            AttestationError,
+            AttestationLedger,
+            ClinicalDraft,
+            require_attestation,
+        )
+        ledger = AttestationLedger()
+        draft = ClinicalDraft(
+            "d1", "c1", "p1", "soap_note", "hash", drafted_at=1.0,
+        )
+        ledger.register_draft(draft)
+        blocked = False
+        try:
+            require_attestation(ledger, "d1")
+        except AttestationError:
+            blocked = True
+        # persona guardrail
+        pk = _pack_for("medical_office")
+        sp = pk.system_prompt.lower()
+        persona = ("never write to the chart" in sp and "do not diagnose" in sp)
+        return blocked and persona, f"blocked={blocked} persona={persona}"
+    return run
+
+
+def _medical_office_telemedicine_case():
+    def run() -> tuple[bool, str]:
+        from .telemedicine_gate import (
+            PhysicianLicense,
+            TeleVisit,
+            check_telemedicine_license,
+        )
+        report = check_telemedicine_license(
+            TeleVisit("tv", "dr-1", "p1", "PA"),
+            [PhysicianLicense("dr-1", "NY", "MD-1", "2027-01-01")],
+            now=1_780_000_000.0,
+            require_consent_documented=False,
+        )
+        blocked = report.blocked and any(
+            f.code == "not_licensed" for f in report.findings
+        )
+        non_imlc = any(f.code == "non_imlc_jurisdiction" for f in report.findings)
+        return blocked and non_imlc, f"blocked={blocked} non_imlc={non_imlc}"
+    return run
+
+
+def _medical_office_cs_case():
+    def run() -> tuple[bool, str]:
+        from .controlled_substances import (
+            PrescriberAuthority,
+            RxDraft,
+            check_controlled_substance_rx,
+        )
+        rx = RxDraft(
+            "rx1", "p1", "NY", "dr-1", "oxycodone", "II",
+            days_supply=7, mme_per_day=40.0, is_opioid=True, is_initial=True,
+        )
+        auth = PrescriberAuthority("dr-1", "NY", "AB1", "2027-01-01")
+        report = check_controlled_substance_rx(rx, auth, None, now=1_780_000_000.0)
+        flagged = any(f.code == "pmp_not_queried" for f in report.findings)
+        return flagged, f"pmp_flag={flagged}"
+    return run
+
+
+def _medical_office_minor_consent_case():
+    def run() -> tuple[bool, str]:
+        from .minor_consent import (
+            AccessRequest,
+            MinorEncounter,
+            check_minor_record_access,
+        )
+        report = check_minor_record_access(
+            AccessRequest("r1", "enc-1", "parent_guardian", "parent-1"),
+            MinorEncounter(
+                "enc-1", "p1", "NY", "sti", self_consented=True, patient_age=16,
+            ),
+            None,
+            now=1_780_000_000.0,
+        )
+        return report.blocked and report.confidential, report.summary()
+    return run
+
+
+def _medical_office_portal_triage_case():
+    def run() -> tuple[bool, str]:
+        from .portal_triage import (
+            AUTONOMOUS_ADMIN_TEMPLATES,
+            PortalMessage,
+            PortalReplyDraft,
+            triage_portal_message,
+        )
+        clinical = triage_portal_message(
+            PortalMessage("m1", "p1", "Pain", "I have chest pain"),
+        )
+        tid = "office_hours"
+        admin = triage_portal_message(
+            PortalMessage("m2", "p1", "Hours", "office hours of operation?"),
+            PortalReplyDraft(
+                "d1", "m2", AUTONOMOUS_ADMIN_TEMPLATES[tid], tid,
+            ),
+        )
+        ok = clinical.requires_physician and admin.autonomous_allowed
+        return ok, f"clin_phys={clinical.requires_physician} admin_auto={admin.autonomous_allowed}"
     return run

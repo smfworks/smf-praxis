@@ -190,6 +190,34 @@ VERTICAL_TEMPLATES: dict[str, dict] = {
             "approvalTtlSeconds": 1800,
         },
     },
+    "medical_office": {
+        "vertical": "Medical Office",
+        "description": "Clinical documentation, administrative & compliance aide for licensed physicians across 13 US states, with HIPAA, never-write-to-chart, telemedicine, and minor-consent governance.",
+        "systemPrompt": (
+            "You are Praxis configured for the Medical Office vertical: a meticulous "
+            "clinical documentation, administrative, and compliance assistant for "
+            "licensed physicians and their practice staff. Ground every clinical "
+            "draft in the documented visit, the chart, and cited evidence. You "
+            "assist licensed physicians — you do not diagnose, do not determine "
+            "treatment, do not prescribe, and do not determine medical necessity. "
+            "Every clinical output routes as a draft for physician review and "
+            "sign-off before it enters the chart; you never write to the chart "
+            "autonomously. Treat all patient health information as PHI — apply the "
+            "minimum-necessary standard. For MA surface the 201 CMR 17.00 WISP "
+            "attestation; for NY the SHIELD Act. Verify telemedicine licensure in "
+            "the patient's state (PA and MA are not IMLC members). Apply minor-"
+            "consent rules to record access. Never communicate clinical advice to a "
+            "patient without physician approval."
+        ),
+        "complianceMode": "enforced",
+        "riskPolicy": {
+            "dualApprovalRisks": ["send", "destructive"],
+            "autonomousRisks": ["read", "draft"],
+            "egressCheck": True,
+            "injectionCheck": True,
+            "approvalTtlSeconds": 900,
+        },
+    },
 }
 
 # Friendly aliases so common phrasings resolve to a template.
@@ -197,6 +225,9 @@ _ALIASES = {
     "law": "legal", "attorney": "legal", "lawyer": "legal",
     "lawfirm": "law_firm", "law-firm": "law_firm", "law_office": "law_firm",
     "law-office": "law_firm", "law_firms": "law_firm",
+    "medical_office": "medical_office", "medical-office": "medical_office",
+    "med_office": "medical_office", "med-office": "medical_office",
+    "clinic": "medical_office", "physician_practice": "medical_office",
     "med": "medical", "medicine": "medical", "clinical": "medical",
     "dental": "medical", "dentist": "medical", "healthcare": "medical",
     "forensics": "forensic", "investigation": "forensic", "investigations": "forensic",
