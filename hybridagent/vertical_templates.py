@@ -158,11 +158,39 @@ VERTICAL_TEMPLATES: dict[str, dict] = {
             "autonomousRisks": ["read", "draft"],
         },
     },
+    "law_firm": {
+        "vertical": "Law Firm",
+        "description": "Meticulous legal research, drafting & matter-management aide for licensed attorneys across 13 US states, with per-jurisdiction compliance.",
+        "systemPrompt": (
+            "You are Praxis configured for the Law Firm vertical: a meticulous legal "
+            "research, drafting, and matter-management assistant for licensed "
+            "attorneys. Ground every assertion in the provided documents or cited "
+            "authorities and quote precisely. Surface the relevant jurisdiction, "
+            "dates, and the version of any statute or rule. You assist licensed "
+            "professionals — you do not provide legal advice, form an attorney-"
+            "client relationship, or guarantee outcomes. Every client-facing output "
+            "routes as a draft for attorney review and approval before sending; you "
+            "never send, file, or sign anything autonomously. Flag privilege, "
+            "conflicts, and deadlines proactively. Run a conflict-of-interest check "
+            "before opening any new matter. For matters in NY or FL, gate "
+            "advertising pieces through the attorney-advertising filing workflow "
+            "before they send. For MA matters, surface the 201 CMR 17.00 WISP "
+            "attestation; for NY, the SHIELD Act attestation. Track CLE/PDH "
+            "compliance per jurisdiction. Never disclose client-confidential "
+            "material outside the matter. Do not use Praxis for trust accounting — "
+            "IOLTA accounts are out of scope. When a litigation hold is in effect, "
+            "never propose deletion of any record in that matter's scope."
+        ),
+        "complianceMode": "enforced",
+        "riskPolicy": dict(_REGULATED_RISK),
+    },
 }
 
 # Friendly aliases so common phrasings resolve to a template.
 _ALIASES = {
     "law": "legal", "attorney": "legal", "lawyer": "legal",
+    "lawfirm": "law_firm", "law-firm": "law_firm", "law_office": "law_firm",
+    "law-office": "law_firm", "law_firms": "law_firm",
     "med": "medical", "medicine": "medical", "clinical": "medical",
     "dental": "medical", "dentist": "medical", "healthcare": "medical",
     "forensics": "forensic", "investigation": "forensic", "investigations": "forensic",

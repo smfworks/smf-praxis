@@ -276,3 +276,131 @@ def test_install_skills_inline_and_retrievable(tmp_path, monkeypatch):
     assert hits and hits[0].name == "lesson-plan"
     assert hits[0].provenance == "pack:hs"
 
+
+
+# ======================================================================
+# Law Firm pack (Slice 1) — the 13-state legal vertical pack
+# ======================================================================
+def test_law_firm_pack_discoverable(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    packs = pack.list_packs()
+    assert "law_firm" in packs
+    p = packs["law_firm"]
+    assert p.vertical == "Law Firm"
+    assert p.compliance_mode == "enforced"
+
+
+def test_law_firm_persona_contains_guardrails(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    # UPL guardrail — non-negotiable across all 13 states
+    assert "do not provide legal advice" in p.system_prompt
+    assert "unauthorized practice of law" in p.system_prompt
+    # IOLTA / trust-accounting guardrail
+    assert "IOLTA" in p.system_prompt
+    assert "trust accounting" in p.system_prompt.lower()
+    # the per-jurisdiction compliance flags
+    assert "NY" in p.system_prompt and "FL" in p.system_prompt  # ad-filing states
+    assert "MA" in p.system_prompt  # WISP
+    assert "SHIELD" in p.system_prompt  # NY SHIELD
+    assert "conflict" in p.system_prompt.lower()
+    assert "litigation hold" in p.system_prompt.lower()
+
+
+def test_law_firm_risk_policy_holds_send_and_destructive(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    assert "send" in p.risk_policy["dualApprovalRisks"]
+    assert "destructive" in p.risk_policy["dualApprovalRisks"]
+    assert "read" in p.risk_policy["autonomousRisks"]
+    assert "draft" in p.risk_policy["autonomousRisks"]
+    # egress + injection guards on (regulated posture)
+    assert p.risk_policy.get("egressCheck") is True
+    assert p.risk_policy.get("injectionCheck") is True
+
+
+def test_law_firm_tool_allowlist_includes_compliance_tools(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    # the seven compliance-module tools must be allowed
+    for t in ("conflict_check", "filing_track", "legal_hold_issue",
+              "credential_status", "security_attest", "privilege_log",
+              "expert_disclosure"):
+        assert t in p.tools, f"{t} should be in the law_firm tool allowlist"
+    # read/draft research tools
+    assert "rag_search" in p.tools
+    assert "draft_email" in p.tools
+
+
+def test_law_firm_skills_present(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    skill_names = [s["name"] for s in p.skills]
+    assert "conflict-check" in skill_names
+    assert "ad-filing-gate" in skill_names
+    assert "matter-hold" in skill_names
+    assert "ce-status" in skill_names
+    # each skill has a trigger + body
+    for s in p.skills:
+        assert s.get("trigger") and s.get("body")
+
+
+def test_law_firm_knowledge_file_present(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    assert "knowledge.md" in p.knowledge
+
+
+def test_law_firm_template_in_vertical_templates():
+    from hybridagent.vertical_templates import get_template, list_templates
+    assert "law_firm" in list_templates()
+    t = get_template("law_firm")
+    assert t is not None
+    assert t["vertical"] == "Law Firm"
+    assert t["complianceMode"] == "enforced"
+    # the template persona carries the same guardrails
+    assert "do not provide legal advice" in t["systemPrompt"]
+    assert "IOLTA" in t["systemPrompt"]
+
+
+def test_law_firm_aliases_resolve():
+    from hybridagent.vertical_templates import get_template
+    for alias in ("lawfirm", "law-firm", "law_office", "law-office"):
+        t = get_template(alias)
+        assert t is not None and t["vertical"] == "Law Firm", (
+            f"{alias} should resolve to Law Firm")
+
+
+def test_law_firm_activate_sets_pointer_and_compliance(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    p = pack.activate("law_firm")
+    assert p is not None
+    from hybridagent import config as cfg
+    assert cfg.get_active_pack_name() == "law_firm"
+    assert p.compliance_mode == "enforced"
+    # the risk policy applies to a broker
+    from hybridagent.broker import GovernanceBroker, GovernancePolicy
+    broker = GovernanceBroker(GovernancePolicy())
+    applied = pack.apply_active_to_broker(broker)
+    assert applied is not None
+    assert applied.name == "law_firm"
+    pack.deactivate()
+    assert cfg.get_active_pack_name() is None
+
+
+def test_law_firm_theme_exposed():
+    from hybridagent.vertical_templates import get_template
+    # the pack theme is on the pack, not the template; check via load_pack
+    import hybridagent.config as cfg
+    import os, pathlib
+    # use the bundled pack dir directly (no home override needed for read)
+    from hybridagent.pack import bundled_packs_dir, _load_dir
+    p = _load_dir(bundled_packs_dir() / "law_firm")
+    assert p is not None
+    assert p.theme.get("accent") == "#1e3a8a"
+    assert p.theme.get("panel") == "#0f172a"
