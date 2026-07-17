@@ -21,6 +21,7 @@ Notable:
 from __future__ import annotations
 
 from . import (
+    EducationProfile,
     ForensicProfile,
     LegalProfile,
     MedicalProfile,
@@ -124,5 +125,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
+    confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="MA",
+    state_name="Massachusetts",
+    sea_name="Department of Elementary and Secondary Education",
+    sea_url="https://www.doe.mass.edu",
+    governing_statute="M.G.L. c.71; 603 CMR",
+    statute_url="https://www.doe.mass.edu/lawsregs/603cmr23.html",
+    privacy_tier="enhanced_operator",
+    privacy_citation="603 CMR 23.00 + FERPA + M.G.L. c.93H",
+    operator_law=False,
+    operator_citation="No FL-style SOPIPA; FERPA + 603 CMR 23 third-party consent",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="DESE AI Guidance (voluntary) — human oversight principles",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="603 CMR 28; M.G.L. c.71B",
+    transition_planning_age=14,
+    teacher_cert_authority="DESE",
+    teacher_cert_citation="M.G.L. c.71 §38G; CMVS c.71 §94",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=60,
+    temporary_record_retention_years=7,
+    parent_access_days=45,
+    records_citation="603 CMR 23.00 (transcript 60 yrs; temporary ≤7)",
+    mandatory_report_citation="M.G.L. c.119 §51A",
+    parent_rights_citation="603 CMR 23 inspection/amendment rights",
     confidence="primary_source",
 )

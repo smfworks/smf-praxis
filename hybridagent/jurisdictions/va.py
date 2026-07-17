@@ -6,7 +6,7 @@ Notable: VA follows Daubert; firm registration required; VA uses the UBE.
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="VA",
@@ -106,5 +106,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="Va. Code §32.1-327 (ESTABLISHED — verify)",
+    confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="VA",
+    state_name="Virginia",
+    sea_name="Virginia Department of Education",
+    sea_url="https://www.doe.virginia.gov",
+    governing_statute="Code of Virginia Title 22.1",
+    statute_url="https://law.lis.virginia.gov",
+    privacy_tier="enhanced_operator",
+    privacy_citation="§22.1-287, §22.1-287.02, §22.1-289.01 school service providers",
+    operator_law=True,
+    operator_citation="§22.1-289.01",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="§22.1-70.2 internet safety includes AI-generated content",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=True,
+    sped_eval_timeline_days=60,
+    sped_citation="§22.1-214, §22.1-215 + IDEA",
+    transition_planning_age=16,
+    teacher_cert_authority="VDOE",
+    teacher_cert_citation="§22.1-298.1, §22.1-299; 8VAC20-23",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="§22.1-287 + Library of VA schedules (ESTABLISHED — verify)",
+    mandatory_report_citation="§63.2-1509",
+    parent_rights_citation="§22.1-16.8; §22.1-207.2",
     confidence="primary_source",
 )

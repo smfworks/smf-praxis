@@ -9,7 +9,7 @@ most states — not the divergence). CT has mandatory CLE (12 credits/yr).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="CT",
@@ -110,4 +110,44 @@ MEDICAL = MedicalProfile(
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
     confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="CT",
+    state_name="Connecticut",
+    sea_name="Connecticut State Department of Education",
+    sea_url="https://portal.ct.gov/sde",
+    governing_statute="CGS Title 10",
+    statute_url="https://portal.ct.gov/das/ctedtech",
+    privacy_tier="ct_contract",
+    privacy_citation="CGS §§10-234aa–10-234dd",
+    operator_law=True,
+    operator_citation="CGS §§10-234aa–dd (contracts void if missing clauses)",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="IDEA + Bureau of Special Education",
+    transition_planning_age=16,
+    teacher_cert_authority="CSDE",
+    teacher_cert_citation="CSDE certification",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="Board owns student data under 10-234aa–dd",
+    mandatory_report_citation="CGS §17a-101",
+    parent_rights_citation="Contract notice/posting under PA 16-189 lineage",
+    confidence="mixed",
 )

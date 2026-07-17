@@ -7,7 +7,7 @@ WV explicitly REJECTS facsimile signatures (must be wet/original seal).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="WV",
@@ -107,5 +107,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
+    confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="WV",
+    state_name="West Virginia",
+    sea_name="West Virginia Department of Education",
+    sea_url="https://wvde.us",
+    governing_statute="W. Va. Code ch. 18",
+    statute_url="https://code.wvlegislature.gov",
+    privacy_tier="enhanced_operator",
+    privacy_citation="§18-2-5h Student Data Accessibility, Transparency and Accountability Act",
+    operator_law=True,
+    operator_citation="§18-2-5h vendor privacy clauses + penalties",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=True,
+    affective_computing_banned=True,
+    vendor_breach_notice_days=0,
+    encryption_required=True,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="IDEA + Policy 2419 (ESTABLISHED — verify)",
+    transition_planning_age=16,
+    teacher_cert_authority="WVDE",
+    teacher_cert_citation="WVDE certification",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="§18-2-5h retention/disposition in security plan",
+    mandatory_report_citation="§49-2-803 (≤24h)",
+    parent_rights_citation="§18-2-5h parent opt-out interagency",
     confidence="primary_source",
 )

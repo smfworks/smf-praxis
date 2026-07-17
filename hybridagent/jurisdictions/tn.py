@@ -6,7 +6,7 @@ Notable: TN follows Daubert; firm registration required.
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="TN",
@@ -106,5 +106,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="T.C.A. §68-34-104+ (ESTABLISHED — verify)",
+    confidence="established_knowledge",
+)
+
+
+EDUCATION = EducationProfile(
+    state="TN",
+    state_name="Tennessee",
+    sea_name="Tennessee Department of Education",
+    sea_url="https://www.tn.gov/education",
+    governing_statute="T.C.A. Title 49",
+    statute_url="https://www.tn.gov/education",
+    privacy_tier="enhanced_operator",
+    privacy_citation="TN Data Accessibility Act + SOPIPA (Title 49; ESTABLISHED — verify)",
+    operator_law=True,
+    operator_citation="Title 49 Part 7 (ESTABLISHED — verify)",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="IDEA + TNDOE (ESTABLISHED — verify)",
+    transition_planning_age=16,
+    teacher_cert_authority="TN State Board / DOE",
+    teacher_cert_citation="ESTABLISHED — verify",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="FERPA + state (ESTABLISHED — verify)",
+    mandatory_report_citation="T.C.A. §37-1-403 (ESTABLISHED — verify)",
+    parent_rights_citation="Parental rights statutes (ESTABLISHED — verify)",
     confidence="established_knowledge",
 )

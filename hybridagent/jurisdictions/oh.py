@@ -7,7 +7,7 @@ OH explicitly authorizes digital seals with specific criteria (§4733.14).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="OH",
@@ -107,5 +107,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
+    confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="OH",
+    state_name="Ohio",
+    sea_name="Ohio Department of Education and Workforce",
+    sea_url="https://education.ohio.gov",
+    governing_statute="ORC Title 33",
+    statute_url="https://codes.ohio.gov",
+    privacy_tier="enhanced_operator",
+    privacy_citation="ORC §§3319.325–.327 (SB 29)",
+    operator_law=True,
+    operator_citation="ORC §§3319.325–.327",
+    deletion_days_after_exit=90,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=True,
+    ai_policy_citation="ORC §3301.24 — district AI policy by July 1, 2026",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="OAC 3301-51 (ESTABLISHED — verify)",
+    transition_planning_age=14,
+    teacher_cert_authority="ODEW",
+    teacher_cert_citation="ODE licensure",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="ORC §§3319.325–.327 (district property; 90-day return/destroy)",
+    mandatory_report_citation="ORC §2151.421",
+    parent_rights_citation="FERPA + annual tech-provider notice (SB 29)",
     confidence="primary_source",
 )

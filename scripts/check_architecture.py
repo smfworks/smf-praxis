@@ -61,6 +61,7 @@ LOCAL_MODULES = {
     "discovery_templates", "clinical_attestation", "hipaa_governance",
     "controlled_substances", "telemedicine_gate", "minor_consent",
     "records_retention", "portal_triage", "ambient_documentation",
+    "student_privacy", "sped_guardrails", "educator_attestation",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml

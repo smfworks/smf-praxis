@@ -10,7 +10,7 @@ other in this 13). MD follows Daubert. Firm registration likely required
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="MD",
@@ -111,4 +111,44 @@ MEDICAL = MedicalProfile(
     minor_parent_access_restricted=True,
     minor_consent_citation="MD Code §20-102+ (ESTABLISHED — verify)",
     confidence="established_knowledge",
+)
+
+
+EDUCATION = EducationProfile(
+    state="MD",
+    state_name="Maryland",
+    sea_name="Maryland State Department of Education",
+    sea_url="https://marylandpublicschools.org",
+    governing_statute="Md. Code, Education Article",
+    statute_url="https://mgaleg.maryland.gov",
+    privacy_tier="enhanced_operator",
+    privacy_citation="Educ. §4-131 Student Data Privacy Act of 2015",
+    operator_law=True,
+    operator_citation="Educ. §4-131",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="MSDE AI guidance + 2026 AI legislation track (verify enactment)",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="IDEA + COMAR (ESTABLISHED — verify)",
+    transition_planning_age=16,
+    teacher_cert_authority="MSDE",
+    teacher_cert_citation="MSDE certification",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="FERPA + §4-131 delete-on-request",
+    mandatory_report_citation="Family Law / Education (ESTABLISHED — verify)",
+    parent_rights_citation="FERPA + state",
+    confidence="primary_source",
 )

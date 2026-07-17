@@ -9,7 +9,7 @@ CLE (24 credits/2yr incl. ethics). The least-verified of the 13 states.
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="NJ",
@@ -109,5 +109,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
+    confidence="established_knowledge",
+)
+
+
+EDUCATION = EducationProfile(
+    state="NJ",
+    state_name="New Jersey",
+    sea_name="New Jersey Department of Education",
+    sea_url="https://www.nj.gov/education",
+    governing_statute="N.J.S.A. Title 18A",
+    statute_url="https://www.nj.gov/education",
+    privacy_tier="enhanced_operator",
+    privacy_citation="SOPPA-type / 18A:36-35 (ESTABLISHED — verify; sites blocked)",
+    operator_law=True,
+    operator_citation="ESTABLISHED — verify",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="N.J.A.C. 6A:14 (ESTABLISHED — verify)",
+    transition_planning_age=16,
+    teacher_cert_authority="NJDOE",
+    teacher_cert_citation="NJDOE certification",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="FERPA + state (ESTABLISHED — verify)",
+    mandatory_report_citation="N.J.S.A. 9:6-8.10 (ESTABLISHED — verify)",
+    parent_rights_citation="FERPA + state",
     confidence="established_knowledge",
 )

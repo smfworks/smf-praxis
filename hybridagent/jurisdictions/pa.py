@@ -11,6 +11,7 @@ most significant forensic divergence for a firm using Praxis in PA courts.
 from __future__ import annotations
 
 from . import (
+    EducationProfile,
     ForensicProfile,
     LegalProfile,
     MedicalProfile,
@@ -114,5 +115,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
+    confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="PA",
+    state_name="Pennsylvania",
+    sea_name="Pennsylvania Department of Education",
+    sea_url="https://www.education.pa.gov",
+    governing_statute="Public School Code + 22 Pa. Code",
+    statute_url="https://www.pacodeandbulletin.gov",
+    privacy_tier="ferpa_floor",
+    privacy_citation="22 Pa. Code §12.31 records plans; FERPA",
+    operator_law=False,
+    operator_citation="",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="No verified statewide AI statute",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="22 Pa. Code Chapter 14 (IEP §14.131, ESY §14.132)",
+    transition_planning_age=16,
+    teacher_cert_authority="PDE",
+    teacher_cert_citation="Chapter 49 certification",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="22 Pa. Code §12.31",
+    mandatory_report_citation="23 Pa.C.S. §6311; Act 126 training",
+    parent_rights_citation="22 Pa. Code Ch. 12 student rights",
     confidence="primary_source",
 )

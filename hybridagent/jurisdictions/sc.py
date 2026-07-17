@@ -14,6 +14,7 @@ Notable:
 from __future__ import annotations
 
 from . import (
+    EducationProfile,
     ForensicProfile,
     LegalProfile,
     MedicalProfile,
@@ -118,4 +119,44 @@ MEDICAL = MedicalProfile(
     minor_parent_access_restricted=True,
     minor_consent_citation="SC Code §44-29-140 (STI minor consent — verify)",
     confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="SC",
+    state_name="South Carolina",
+    sea_name="SC Department of Education",
+    sea_url="https://ed.sc.gov",
+    governing_statute="S.C. Code Title 59",
+    statute_url="https://www.scstatehouse.gov",
+    privacy_tier="ferpa_floor",
+    privacy_citation="§59-1-490 data governance (DOE cites; ESTABLISHED — verify)",
+    operator_law=False,
+    operator_citation="",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="IDEA + SCDE (ESTABLISHED — verify)",
+    transition_planning_age=16,
+    teacher_cert_authority="SCDE Office of Educator Services",
+    teacher_cert_citation="SCDE (ESTABLISHED — verify)",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="FERPA + local",
+    mandatory_report_citation="§63-7-310 (ESTABLISHED — verify)",
+    parent_rights_citation="§59-28 Parental Involvement Act",
+    confidence="mixed",
 )

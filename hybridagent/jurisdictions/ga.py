@@ -7,7 +7,7 @@ Notable: GA follows Daubert; firm COA required (O.C.G.A. §43-15-13).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile, MedicalProfile
+from . import EducationProfile, ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="GA",
@@ -107,5 +107,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="O.C.G.A. §31-9-2 (ESTABLISHED — verify)",
+    confidence="established_knowledge",
+)
+
+
+EDUCATION = EducationProfile(
+    state="GA",
+    state_name="Georgia",
+    sea_name="Georgia Department of Education",
+    sea_url="https://www.gadoe.org",
+    governing_statute="O.C.G.A. Title 20",
+    statute_url="https://www.gadoe.org",
+    privacy_tier="enhanced_operator",
+    privacy_citation="O.C.G.A. §20-2-661–667 (GaDOE; ESTABLISHED — verify)",
+    operator_law=True,
+    operator_citation="O.C.G.A. §20-2-661–667 (ESTABLISHED — verify)",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="IDEA + GaDOE SPED rules (ESTABLISHED — verify)",
+    transition_planning_age=16,
+    teacher_cert_authority="GaPSC",
+    teacher_cert_citation="GaPSC (ESTABLISHED — verify)",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="FERPA + state (ESTABLISHED — verify)",
+    mandatory_report_citation="O.C.G.A. §19-7-5 (ESTABLISHED — verify)",
+    parent_rights_citation="§20-2-667 parental review (ESTABLISHED — verify)",
     confidence="established_knowledge",
 )

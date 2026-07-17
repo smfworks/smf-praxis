@@ -17,6 +17,7 @@ Notable:
 from __future__ import annotations
 
 from . import (
+    EducationProfile,
     ForensicProfile,
     LegalProfile,
     MedicalProfile,
@@ -121,4 +122,44 @@ MEDICAL = MedicalProfile(
     minor_parent_access_restricted=True,
     minor_consent_citation="ESTABLISHED — verify",
     confidence="established_knowledge",
+)
+
+
+EDUCATION = EducationProfile(
+    state="NY",
+    state_name="New York",
+    sea_name="New York State Education Department",
+    sea_url="https://www.nysed.gov",
+    governing_statute="Education Law; 8 NYCRR",
+    statute_url="https://www.nysed.gov/data-privacy-security",
+    privacy_tier="ny_2d_ceiling",
+    privacy_citation="Ed Law §2-d + 8 NYCRR Part 121",
+    operator_law=True,
+    operator_citation="Ed Law §2-d third-party contractor rules",
+    deletion_days_after_exit=0,
+    biometric_collection_banned=False,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=7,
+    encryption_required=True,
+    parent_bill_of_rights_required=True,
+    teacher_appr_data_protected=True,
+    ai_policy_required=False,
+    ai_policy_citation="No statewide AI act; 2-d + local policy",
+    parent_ai_interaction_access=False,
+    closed_system_ai_preferred=False,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="8 NYCRR Part 200; Education Law Art. 89",
+    transition_planning_age=15,
+    teacher_cert_authority="NYSED Office of Teaching",
+    teacher_cert_citation="NYSED certification",
+    teacher_pd_hours=0,
+    teacher_pd_cycle_years=0,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="FERPA + §2-d retention/destruction in contracts",
+    mandatory_report_citation="SSL §413",
+    parent_rights_citation="§2-d Parents' Bill of Rights",
+    confidence="mixed",
 )

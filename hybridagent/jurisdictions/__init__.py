@@ -185,6 +185,71 @@ class MedicalProfile:
     confidence: str = "primary_source"   # primary_source | established_knowledge | mixed
 
 
+# Student-privacy / operator-law tier for K-12 AI platforms
+EducationPrivacyTier = Literal[
+    "ferpa_floor",           # FERPA + general breach only
+    "enhanced_operator",     # SOPIPA-style operator law (FL/MD/VA/etc.)
+    "ct_contract",           # CT CGS 10-234aa–dd void-if-missing contracts
+    "ny_2d_ceiling",         # NY Ed Law 2-d + Part 121 (strictest vendor bar)
+]
+
+
+@dataclass(frozen=True)
+class EducationProfile:
+    """Per-state K-12 / school-system regulatory facts (Gap E1 foundation for
+    the ``school_system`` pack). Downstream FERPA, SPED, attestation, and
+    vendor-hygiene modules load these instead of hardcoding."""
+    state: str
+    state_name: str
+    sea_name: str                      # state education agency
+    sea_url: str
+    governing_statute: str
+    statute_url: str
+
+    # Privacy / operator
+    privacy_tier: EducationPrivacyTier
+    privacy_citation: str
+    operator_law: bool                 # SOPIPA / school-service provider statute present
+    operator_citation: str
+    deletion_days_after_exit: int      # 90 FL/OH; 0 = not encoded / FERPA+contract
+    biometric_collection_banned: bool
+    affective_computing_banned: bool
+    vendor_breach_notice_days: int     # 7 NY vendor→LEA; 0 = state default / ASAP
+    encryption_required: bool          # explicit at-rest/in-transit (NY 2-d)
+    parent_bill_of_rights_required: bool
+    teacher_appr_data_protected: bool  # NY 2-d covers teacher/principal APPR
+
+    # AI policy
+    ai_policy_required: bool           # OH §3301.24 by 2026-07-01
+    ai_policy_citation: str
+    parent_ai_interaction_access: bool  # FL §1002.321(3) grant platforms
+    closed_system_ai_preferred: bool
+    ai_generated_content_instruction: bool  # VA §22.1-70.2
+
+    # Special education
+    sped_eval_timeline_days: int       # typical 60 under IDEA; state may tighten
+    sped_citation: str
+    transition_planning_age: int       # 14 or 16 depending on state practice
+
+    # Staff
+    teacher_cert_authority: str
+    teacher_cert_citation: str
+    teacher_pd_hours: int              # 0 if not encoded
+    teacher_pd_cycle_years: int
+
+    # Records
+    transcript_retention_years: int    # MA 60; 0 = local schedule
+    temporary_record_retention_years: int
+    parent_access_days: int            # FERPA 45 floor; 0 = 45 default
+    records_citation: str
+
+    # Safety
+    mandatory_report_citation: str
+    parent_rights_citation: str
+
+    confidence: str = "primary_source"
+
+
 # ---------------------------------------------------------------------------
 # Loader — imports the state module on demand. Returns None if absent.
 
@@ -227,6 +292,14 @@ def get_medical_profile(state: str) -> MedicalProfile | None:
     return prof if isinstance(prof, MedicalProfile) else None
 
 
+def get_education_profile(state: str) -> EducationProfile | None:
+    """Return the K-12 / school-system regulatory profile for ``state``, or
+    ``None`` if absent. Downstream school_system pack features (E2–E11) call
+    this instead of hardcoding state rules."""
+    prof = _load(state, "EDUCATION")
+    return prof if isinstance(prof, EducationProfile) else None
+
+
 def registered_states() -> tuple[str, ...]:
     """Return the two-letter codes of all states with registry entries."""
     return _STATES
@@ -257,6 +330,36 @@ def legal_summary() -> list[dict]:
                 "state": p.state, "cle": p.cle_required,
                 "ad_filing": p.advertising_filing_required,
                 "data_security": p.data_security_tier,
+                "confidence": p.confidence,
+            })
+    return out
+
+
+def medical_summary() -> list[dict]:
+    """Compact summary of all 13 medical profiles."""
+    out = []
+    for st in _STATES:
+        p = get_medical_profile(st)
+        if p:
+            out.append({
+                "state": p.state, "imlc": p.imlc_member,
+                "cme": f"{p.cme_hours}/{p.cme_cycle_years}y",
+                "data_security": p.data_security_tier,
+                "confidence": p.confidence,
+            })
+    return out
+
+
+def education_summary() -> list[dict]:
+    """Compact summary of all 13 education/school-system profiles."""
+    out = []
+    for st in _STATES:
+        p = get_education_profile(st)
+        if p:
+            out.append({
+                "state": p.state, "privacy_tier": p.privacy_tier,
+                "operator_law": p.operator_law,
+                "ai_policy_required": p.ai_policy_required,
                 "confidence": p.confidence,
             })
     return out

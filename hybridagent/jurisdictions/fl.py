@@ -13,6 +13,7 @@ Notable:
 from __future__ import annotations
 
 from . import (
+    EducationProfile,
     ForensicProfile,
     LegalProfile,
     MedicalProfile,
@@ -116,5 +117,45 @@ MEDICAL = MedicalProfile(
     minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
     minor_parent_access_restricted=True,
     minor_consent_citation="§384.30 (STI), §384.25 (HIV) — minor may consent; ESTABLISHED for others — verify",
+    confidence="primary_source",
+)
+
+
+EDUCATION = EducationProfile(
+    state="FL",
+    state_name="Florida",
+    sea_name="Florida Department of Education",
+    sea_url="https://www.fldoe.org",
+    governing_statute="F.S. Title XLVIII (K-20 Education Code)",
+    statute_url="https://www.flsenate.gov/Laws/Statutes",
+    privacy_tier="enhanced_operator",
+    privacy_citation="§1002.22, §1002.222, §1006.1494 (SOPIPA)",
+    operator_law=True,
+    operator_citation="§1006.1494",
+    deletion_days_after_exit=90,
+    biometric_collection_banned=True,
+    affective_computing_banned=False,
+    vendor_breach_notice_days=0,
+    encryption_required=False,
+    parent_bill_of_rights_required=False,
+    teacher_appr_data_protected=False,
+    ai_policy_required=False,
+    ai_policy_citation="§1002.321(3) AI grants (not universal district mandate)",
+    parent_ai_interaction_access=True,
+    closed_system_ai_preferred=True,
+    ai_generated_content_instruction=False,
+    sped_eval_timeline_days=60,
+    sped_citation="§1003.57 + IDEA",
+    transition_planning_age=16,
+    teacher_cert_authority="FL DOE",
+    teacher_cert_citation="§1012.56, §1012.585",
+    teacher_pd_hours=120,
+    teacher_pd_cycle_years=5,
+    transcript_retention_years=0,
+    temporary_record_retention_years=0,
+    parent_access_days=45,
+    records_citation="§1002.22 + local/SBE schedules",
+    mandatory_report_citation="§39.201",
+    parent_rights_citation="§1002.20, §1006.28",
     confidence="primary_source",
 )
