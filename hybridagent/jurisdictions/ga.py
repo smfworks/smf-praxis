@@ -7,7 +7,7 @@ Notable: GA follows Daubert; firm COA required (O.C.G.A. §43-15-13).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile
+from . import ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="GA",
@@ -53,5 +53,59 @@ LEGAL = LegalProfile(
     iolta_authority="Georgia Bar Foundation / GA IOLTA program",
     upl_statute="O.C.G.A. §15-19-9 (unauthorized practice of law)",
     mdp_prohibited=True,
+    confidence="established_knowledge",
+)
+
+MEDICAL = MedicalProfile(
+    state="GA",
+    state_name="Georgia",
+    board_name="Composite State Board of Medical Examiners",
+    board_url="https://sos.ga.gov/georgia-consumer-services/composite-state-board-medical-examiners",
+    board_parent_agency="GA Secretary of State, Professional Licensing Boards",
+    governing_statute="O.C.G.A. Title 43, Ch. 34",
+    statute_url="https://www.legis.ga.gov/legislation/ocga (Cloudflare-blocked — verify when web tools restored)",
+    license_cycle_years=2,
+    license_renewal_note="biennial",
+    imlc_member=True,
+    imlc_citation="O.C.G.A. — IMLC member (ESTABLISHED — verify)",
+    np_supervision_model="supervision",
+    np_supervision_citation="O.C.G.A. §43-34-25 — NP requires protocol/delegation (ESTABLISHED — verify)",
+    corporate_practice_prohibited=True,
+    corporate_practice_citation="Corporate practice doctrine (ESTABLISHED — verify)",
+    upl_statute="O.C.G.A. §43-34-20 (unlicensed practice — misdemeanor/felony) (ESTABLISHED — verify)",
+    record_retention_adult_years=10,
+    record_retention_minor_years=10,
+    record_retention_minor_rule="10 years from last visit (ESTABLISHED — verify)",
+    record_retention_citation="O.C.G.A. §43-34-37 (ESTABLISHED — verify)",
+    patient_access_days=0,
+    patient_access_citation="ESTABLISHED — verify (HIPAA floor applies)",
+    telemedicine_requirement="no_prior_exam",
+    telemedicine_prior_in_person=False,
+    telemedicine_citation="O.C.G.A. §43-34-31.1 (ESTABLISHED — verify)",
+    cross_state_practice_allowed=False,
+    cross_state_citation="ESTABLISHED — verify",
+    written_consent_procedures="ESTABLISHED — verify",
+    telemedicine_consent_documented=True,
+    advertising_filing_required=False,
+    advertising_restrictions="ESTABLISHED — verify",
+    data_security_tier="breach_notification_only",
+    data_security_citation="O.C.G.A. §39-1-2 (ESTABLISHED — verify)",
+    breach_notification_days=60,
+    breach_notification_citation="GA breach law (ESTABLISHED — verify; likely 60 days)",
+    cme_required=True,
+    cme_hours=40,
+    cme_cycle_years=2,
+    cme_mandatory_topics=(),
+    cme_topic_cycle_years=0,
+    cme_citation="40 hrs/biennium (ESTABLISHED — verify)",
+    pmp_query_required=True,
+    pmp_citation="O.C.G.A. §16-13-64 (PDMP) (ESTABLISHED — verify)",
+    initial_opioid_rx_limit_days=0,
+    initial_opioid_rx_citation="ESTABLISHED — verify",
+    mat_buprenorphine_permitted=True,
+    mat_citation="DEA-registered (ESTABLISHED — verify)",
+    minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
+    minor_parent_access_restricted=True,
+    minor_consent_citation="O.C.G.A. §31-9-2 (ESTABLISHED — verify)",
     confidence="established_knowledge",
 )

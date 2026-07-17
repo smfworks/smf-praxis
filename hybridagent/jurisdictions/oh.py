@@ -7,7 +7,7 @@ OH explicitly authorizes digital seals with specific criteria (§4733.14).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile
+from . import ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="OH",
@@ -53,5 +53,59 @@ LEGAL = LegalProfile(
     iolta_authority="OH IOLTA / Ohio State Bar Foundation",
     upl_statute="ORC §4705 (unauthorized practice of law)",
     mdp_prohibited=True,
+    confidence="primary_source",
+)
+
+MEDICAL = MedicalProfile(
+    state="OH",
+    state_name="Ohio",
+    board_name="OH State Medical Board",
+    board_url="https://med.ohio.gov/",
+    board_parent_agency="OH Department of Health (independent board)",
+    governing_statute="ORC Ch. 4731",
+    statute_url="https://codes.ohio.gov/ohio-revised-code/chapter-4731",
+    license_cycle_years=2,
+    license_renewal_note="biennial (2 yr from issuance)",
+    imlc_member=True,
+    imlc_citation="ORC — IMLC member (ESTABLISHED — verify section)",
+    np_supervision_model="collaborative",
+    np_supervision_citation="ORC §4723.01+ (ESTABLISHED — verify; OH NPs have Standard Care Arrangement)",
+    corporate_practice_prohibited=True,
+    corporate_practice_citation="ORC §4731.22 (ESTABLISHED — verify)",
+    upl_statute="ORC §4731.34 (unauthorized practice — misdemeanor) (ESTABLISHED — verify)",
+    record_retention_adult_years=7,
+    record_retention_minor_years=10,
+    record_retention_minor_rule="7 years adult; until age 21 for minors (ESTABLISHED — verify)",
+    record_retention_citation="ESTABLISHED — verify",
+    patient_access_days=0,
+    patient_access_citation="ESTABLISHED — verify (HIPAA floor)",
+    telemedicine_requirement="no_prior_exam",
+    telemedicine_prior_in_person=False,
+    telemedicine_citation="ESTABLISHED — verify (OH telemedicine rules)",
+    cross_state_practice_allowed=False,
+    cross_state_citation="ESTABLISHED — verify",
+    written_consent_procedures="ESTABLISHED — verify",
+    telemedicine_consent_documented=True,
+    advertising_filing_required=False,
+    advertising_restrictions="ESTABLISHED — verify",
+    data_security_tier="breach_notification_only",
+    data_security_citation="OH breach notification §1349.19 (ESTABLISHED — verify)",
+    breach_notification_days=60,
+    breach_notification_citation="ESTABLISHED — verify (OH likely 45-60 days)",
+    cme_required=True,
+    cme_hours=100,
+    cme_cycle_years=2,
+    cme_mandatory_topics=("opioid_education",),
+    cme_topic_cycle_years=0,
+    cme_citation="ESTABLISHED — verify (100 hrs/biennium incl. opioid CME)",
+    pmp_query_required=True,
+    pmp_citation="ORC §4729.74+ (OARRS) (ESTABLISHED — verify)",
+    initial_opioid_rx_limit_days=7,
+    initial_opioid_rx_citation="ORC §4731.75+ (7-day acute opioid Rx limit) (ESTABLISHED — verify)",
+    mat_buprenorphine_permitted=True,
+    mat_citation="DEA-registered (ESTABLISHED — verify)",
+    minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
+    minor_parent_access_restricted=True,
+    minor_consent_citation="ESTABLISHED — verify",
     confidence="primary_source",
 )

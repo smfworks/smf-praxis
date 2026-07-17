@@ -89,6 +89,102 @@ class LegalProfile:
     confidence: str = "primary_source"
 
 
+# NP/PA supervision model
+SupervisionModel = Literal[
+    "independent",          # NP may practice + prescribe without physician supervision
+    "collaborative",        # NP/PA practices under a collaborative practice agreement
+    "supervision",          # NP/PA requires physician supervision (delegation)
+]
+
+# Telemedicine prior-relationship requirement
+TelemedicineRequirement = Literal[
+    "no_prior_exam",        # no in-person exam required before a tele-visit
+    "prior_exam_required",  # an established relationship / prior in-person exam required
+    "registration",         # out-of-state providers must register (e.g. FL §456.47)
+]
+
+
+@dataclass(frozen=True)
+class MedicalProfile:
+    """Per-state medical-practice regulatory facts (the medical vertical's
+    Gap M1 foundation). Encodes the 10 research domains: licensure, scope/
+    delegation, records, telemedicine, informed consent, advertising, data
+    security, CME, controlled substances, sensitive services. Downstream
+    medical-pack features (M2-M10) load these instead of hardcoding."""
+    state: str                     # two-letter code, e.g. "MA"
+    state_name: str
+    board_name: str                # state medical board
+    board_url: str
+    board_parent_agency: str       # e.g. "NYSED Office of the Professions"
+    governing_statute: str         # e.g. "MGL c. 112"
+    statute_url: str               # primary source
+
+    # Licensure + renewal
+    license_cycle_years: int       # 1=annual (CT), 2=biennial (most)
+    license_renewal_note: str      # e.g. "on birthday", "in birth month"
+    imlc_member: bool              # Interstate Medical Licensure Compact (PA + MA are False)
+    imlc_citation: str
+
+    # Scope / delegation / corporate practice
+    np_supervision_model: SupervisionModel
+    np_supervision_citation: str
+    corporate_practice_prohibited: bool   # non-physician ownership of medical practices
+    corporate_practice_citation: str
+    upl_statute: str                # unauthorized practice of medicine citation
+
+    # Medical records
+    record_retention_adult_years: int    # 5 (FL) to 7 (MA, TN)
+    record_retention_minor_years: int    # until 21+, or N years after last visit
+    record_retention_minor_rule: str     # e.g. "until age 21 or 7yr after last visit, whichever longer"
+    record_retention_citation: str
+    patient_access_days: int            # business days to produce records on request (NY=10)
+    patient_access_citation: str
+
+    # Telemedicine
+    telemedicine_requirement: TelemedicineRequirement
+    telemedicine_prior_in_person: bool  # True if a prior in-person exam is required
+    telemedicine_citation: str
+    cross_state_practice_allowed: bool  # may an out-of-state physician treat in-state patients (rarely True)
+    cross_state_citation: str
+
+    # Informed consent
+    written_consent_procedures: str      # what requires written consent (summary)
+    telemedicine_consent_documented: bool # consent for telehealth must be documented
+
+    # Advertising
+    advertising_filing_required: bool
+    advertising_restrictions: str        # testimonials, "best doctor" claims, etc.
+
+    # Data security (same 3 tiers as the law-firm vertical)
+    data_security_tier: DataSecurityTier
+    data_security_citation: str
+    breach_notification_days: int        # 30 (MA) to 60 (HIPAA floor) — 0 if "without unreasonable delay"
+    breach_notification_citation: str
+
+    # CME
+    cme_required: bool
+    cme_hours: int                       # per cycle (PA + MA = 100, CT = 50, FL = 40)
+    cme_cycle_years: int                 # 1=annual (CT), 2=biennial (most)
+    cme_mandatory_topics: tuple[str, ...]   # per-state (FL: CS/DV/HIV/trafficking; CT: 6yr cycles)
+    cme_topic_cycle_years: int           # 0=no separate topic cycle; 6 for CT
+    cme_citation: str
+
+    # Controlled substances
+    pmp_query_required: bool             # prescription monitoring program query before Rx
+    pmp_citation: str
+    initial_opioid_rx_limit_days: int    # 7 (NY, MA) or 0 if no state limit
+    initial_opioid_rx_citation: str
+    mat_buprenorphine_permitted: bool    # DEA-registered prescribers (post X-waiver elimination)
+    mat_citation: str
+
+    # Sensitive services — minor consent + record access
+    minor_consent_services: tuple[str, ...]  # what minors may self-consent to (reproductive, STI, BH, SU)
+    minor_parent_access_restricted: bool     # parent portal access restricted for those encounters
+    minor_consent_citation: str
+
+    confidence: str = "primary_source"   # primary_source | established_knowledge | mixed
+
+
 # ---------------------------------------------------------------------------
 # Loader — imports the state module on demand. Returns None if absent.
 
@@ -121,6 +217,14 @@ def get_legal_profile(state: str) -> LegalProfile | None:
     """Return the law-firm regulatory profile for ``state``, or ``None``."""
     prof = _load(state, "LEGAL")
     return prof if isinstance(prof, LegalProfile) else None
+
+
+def get_medical_profile(state: str) -> MedicalProfile | None:
+    """Return the medical-practice regulatory profile for ``state`` (two-letter
+    code), or ``None`` if the state isn't in the registry. Downstream medical-
+    pack features (M2-M10) call this instead of hardcoding state rules."""
+    prof = _load(state, "MEDICAL")
+    return prof if isinstance(prof, MedicalProfile) else None
 
 
 def registered_states() -> tuple[str, ...]:

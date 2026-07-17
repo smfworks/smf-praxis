@@ -7,7 +7,7 @@ WV explicitly REJECTS facsimile signatures (must be wet/original seal).
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile
+from . import ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="WV",
@@ -53,5 +53,59 @@ LEGAL = LegalProfile(
     iolta_authority="WV State Bar IOLTA / WV Law Foundation",
     upl_statute="WVC §30-2-4 (unauthorized practice of law)",
     mdp_prohibited=True,
+    confidence="primary_source",
+)
+
+MEDICAL = MedicalProfile(
+    state="WV",
+    state_name="West Virginia",
+    board_name="WV Board of Medicine (allopathic) + WV Board of Osteopathic Medicine",
+    board_url="https://www.wvbom.wv.gov/",
+    board_parent_agency="WV Department of Health",
+    governing_statute="WV Code Ch. 30, Art. 3",
+    statute_url="https://code.wvlegislature.gov/chapter/30/Article-3/",
+    license_cycle_years=2,
+    license_renewal_note="biennial",
+    imlc_member=True,
+    imlc_citation="WV Code — IMLC member (ESTABLISHED — verify section)",
+    np_supervision_model="collaborative",
+    np_supervision_citation="WV Code §30-7-1+ (ESTABLISHED — verify)",
+    corporate_practice_prohibited=True,
+    corporate_practice_citation="WV Code — COA required for corporations (§30-3-15 ESTABLISHED)",
+    upl_statute="WV Code §30-3-15 (unauthorized practice — misdemeanor/felony)",
+    record_retention_adult_years=7,
+    record_retention_minor_years=10,
+    record_retention_minor_rule="ESTABLISHED — verify (7 years adult)",
+    record_retention_citation="ESTABLISHED — verify (WV general records statute)",
+    patient_access_days=0,
+    patient_access_citation="ESTABLISHED — verify (HIPAA floor)",
+    telemedicine_requirement="no_prior_exam",
+    telemedicine_prior_in_person=False,
+    telemedicine_citation="WV Code §16-5DD (telehealth) (ESTABLISHED — verify)",
+    cross_state_practice_allowed=False,
+    cross_state_citation="ESTABLISHED — verify",
+    written_consent_procedures="ESTABLISHED — verify",
+    telemedicine_consent_documented=True,
+    advertising_filing_required=False,
+    advertising_restrictions="ESTABLISHED — verify",
+    data_security_tier="breach_notification_only",
+    data_security_citation="WV breach notification §46A-2A-100+ (ESTABLISHED — verify)",
+    breach_notification_days=60,
+    breach_notification_citation="ESTABLISHED — verify",
+    cme_required=True,
+    cme_hours=50,
+    cme_cycle_years=2,
+    cme_mandatory_topics=("controlled_substance",),
+    cme_topic_cycle_years=0,
+    cme_citation="§30-3-12 — 50 CME/biennium incl. controlled-substance CME (ESTABLISHED — verify opioid-specific)",
+    pmp_query_required=True,
+    pmp_citation="WV Code — PDMP (ESTABLISHED — verify)",
+    initial_opioid_rx_limit_days=0,
+    initial_opioid_rx_citation="ESTABLISHED — verify",
+    mat_buprenorphine_permitted=True,
+    mat_citation="DEA-registered (ESTABLISHED — verify)",
+    minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
+    minor_parent_access_restricted=True,
+    minor_consent_citation="ESTABLISHED — verify",
     confidence="primary_source",
 )

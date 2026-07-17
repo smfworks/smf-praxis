@@ -10,7 +10,7 @@ other in this 13). MD follows Daubert. Firm registration likely required
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile
+from . import ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="MD",
@@ -56,5 +56,59 @@ LEGAL = LegalProfile(
     iolta_authority="MD Legal Services Trust Account program / MD Bar Foundation",
     upl_statute="MD Business Occupations Code §10-601 (unauthorized practice of law)",
     mdp_prohibited=True,
+    confidence="established_knowledge",
+)
+
+MEDICAL = MedicalProfile(
+    state="MD",
+    state_name="Maryland",
+    board_name="MD Board of Physicians",
+    board_url="https://mbp.state.md.us/",
+    board_parent_agency="MD Department of Health",
+    governing_statute="MD Health Occupations Article, Title 14",
+    statute_url="https://mgaleg.maryland.gov (JS-gated — verify when web tools restored)",
+    license_cycle_years=2,
+    license_renewal_note="biennial",
+    imlc_member=True,
+    imlc_citation="MD HO Art. — IMLC member (ESTABLISHED — verify)",
+    np_supervision_model="collaborative",
+    np_supervision_citation="HO Art. §8-316+ (ESTABLISHED — verify)",
+    corporate_practice_prohibited=True,
+    corporate_practice_citation="HO Art. — corporate practice doctrine (ESTABLISHED — verify)",
+    upl_statute="HO Art. §14-601 (unauthorized practice — misdemeanor) (ESTABLISHED — verify)",
+    record_retention_adult_years=7,
+    record_retention_minor_years=10,
+    record_retention_minor_rule="ESTABLISHED — verify (7 years adult)",
+    record_retention_citation="ESTABLISHED — verify",
+    patient_access_days=21,
+    patient_access_citation="ESTABLISHED — verify (21 days MD)",
+    telemedicine_requirement="no_prior_exam",
+    telemedicine_prior_in_person=False,
+    telemedicine_citation="ESTABLISHED — verify (MD has parity law)",
+    cross_state_practice_allowed=False,
+    cross_state_citation="ESTABLISHED — verify",
+    written_consent_procedures="ESTABLISHED — verify",
+    telemedicine_consent_documented=True,
+    advertising_filing_required=False,
+    advertising_restrictions="ESTABLISHED — verify",
+    data_security_tier="breach_notification_only",
+    data_security_citation="MD breach notification CM 10-30-08 (ESTABLISHED — verify)",
+    breach_notification_days=60,
+    breach_notification_citation="ESTABLISHED — verify (MD likely 60 days)",
+    cme_required=True,
+    cme_hours=50,
+    cme_cycle_years=2,
+    cme_mandatory_topics=(),
+    cme_topic_cycle_years=0,
+    cme_citation="50 hrs/biennium (ESTABLISHED — verify)",
+    pmp_query_required=True,
+    pmp_citation="HO Art. §21-2A-04+ (PDMP) (ESTABLISHED — verify)",
+    initial_opioid_rx_limit_days=0,
+    initial_opioid_rx_citation="ESTABLISHED — verify",
+    mat_buprenorphine_permitted=True,
+    mat_citation="DEA-registered (ESTABLISHED — verify)",
+    minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
+    minor_parent_access_restricted=True,
+    minor_consent_citation="MD Code §20-102+ (ESTABLISHED — verify)",
     confidence="established_knowledge",
 )

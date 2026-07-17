@@ -6,7 +6,7 @@ Notable: TN follows Daubert; firm registration required.
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile
+from . import ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="TN",
@@ -53,4 +53,58 @@ LEGAL = LegalProfile(
     upl_statute="T.C.A. §23-3-603 (unauthorized practice of law)",
     mdp_prohibited=True,
     confidence="primary_source",
+)
+
+MEDICAL = MedicalProfile(
+    state="TN",
+    state_name="Tennessee",
+    board_name="Board of Medical Examiners",
+    board_url="https://www.tn.gov/health/health-boards/medical-examiners.html",
+    board_parent_agency="TN Dept. of Health, Division of Health Related Boards",
+    governing_statute="T.C.A. Title 63, Ch. 6",
+    statute_url="https://www.tn.gov/health/health-boards/medical-examiners.html (site reorganized — verify when web tools restored)",
+    license_cycle_years=2,
+    license_renewal_note="biennial (ESTABLISHED — verify; batch 1 noted annual but standard is biennial)",
+    imlc_member=True,
+    imlc_citation="T.C.A. — IMLC member (ESTABLISHED — verify)",
+    np_supervision_model="supervision",
+    np_supervision_citation="T.C.A. §63-7-101+ (ESTABLISHED — verify)",
+    corporate_practice_prohibited=True,
+    corporate_practice_citation="T.C.A. (ESTABLISHED — verify)",
+    upl_statute="T.C.A. §63-6-204 (unlicensed practice — felony) (ESTABLISHED — verify)",
+    record_retention_adult_years=7,
+    record_retention_minor_years=10,
+    record_retention_minor_rule="7 years adult; 10 years for minors OR until age 21 (ESTABLISHED — verify)",
+    record_retention_citation="T.C.A. §63-6-1016 — 7 years",
+    patient_access_days=0,
+    patient_access_citation="ESTABLISHED — verify (HIPAA floor)",
+    telemedicine_requirement="no_prior_exam",
+    telemedicine_prior_in_person=False,
+    telemedicine_citation="T.C.A. §63-6-120 (ESTABLISHED — verify)",
+    cross_state_practice_allowed=False,
+    cross_state_citation="ESTABLISHED — verify",
+    written_consent_procedures="ESTABLISHED — verify",
+    telemedicine_consent_documented=True,
+    advertising_filing_required=False,
+    advertising_restrictions="ESTABLISHED — verify",
+    data_security_tier="breach_notification_only",
+    data_security_citation="T.C.A. §47-18-211 (ESTABLISHED — verify)",
+    breach_notification_days=45,
+    breach_notification_citation="TN breach law (ESTABLISHED — verify; likely 45 days)",
+    cme_required=True,
+    cme_hours=40,
+    cme_cycle_years=2,
+    cme_mandatory_topics=("controlled_substance",),
+    cme_topic_cycle_years=0,
+    cme_citation="40 hrs/2 yrs incl. controlled-substance CME (ESTABLISHED — verify)",
+    pmp_query_required=True,
+    pmp_citation="T.C.A. §53-10-111+ (CSMD query) (ESTABLISHED — verify)",
+    initial_opioid_rx_limit_days=0,
+    initial_opioid_rx_citation="ESTABLISHED — verify",
+    mat_buprenorphine_permitted=True,
+    mat_citation="DEA-registered (ESTABLISHED — verify)",
+    minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
+    minor_parent_access_restricted=True,
+    minor_consent_citation="T.C.A. §68-34-104+ (ESTABLISHED — verify)",
+    confidence="established_knowledge",
 )

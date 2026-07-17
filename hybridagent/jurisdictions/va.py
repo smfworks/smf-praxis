@@ -6,7 +6,7 @@ Notable: VA follows Daubert; firm registration required; VA uses the UBE.
 """
 from __future__ import annotations
 
-from . import ForensicProfile, LegalProfile
+from . import ForensicProfile, LegalProfile, MedicalProfile
 
 FORENSIC = ForensicProfile(
     state="VA",
@@ -53,4 +53,58 @@ LEGAL = LegalProfile(
     upl_statute="VA Code §54.1-3904 (unauthorized practice of law)",
     mdp_prohibited=True,
     confidence="established_knowledge",
+)
+
+MEDICAL = MedicalProfile(
+    state="VA",
+    state_name="Virginia",
+    board_name="Board of Medicine",
+    board_url="https://www.dhp.virginia.gov/medicine/",
+    board_parent_agency="VA Dept. of Health Professions (DPOR)",
+    governing_statute="Va. Code Title 54.1, Ch. 29",
+    statute_url="https://law.lis.virginia.gov/vacodefull/title54.1/chapter29/",
+    license_cycle_years=2,
+    license_renewal_note="biennial",
+    imlc_member=True,
+    imlc_citation="§54.1-205 (universal license recognition); PA Compact (ESTABLISHED — verify IMLC section)",
+    np_supervision_model="collaborative",
+    np_supervision_citation="§54.1-2957 — NP/PA practice agreement (ESTABLISHED — verify)",
+    corporate_practice_prohibited=True,
+    corporate_practice_citation="§54.1-2902 (ESTABLISHED — verify)",
+    upl_statute="§54.1-2904 (unauthorized practice — misdemeanor/felony)",
+    record_retention_adult_years=6,
+    record_retention_minor_years=3,
+    record_retention_minor_rule="6 years from last visit; 3 years for minors OR until age 18 (ESTABLISHED — verify pediatric rule)",
+    record_retention_citation="§54.1-2910.4 — 6 years (3 for minors)",
+    patient_access_days=15,
+    patient_access_citation="ESTABLISHED — verify (15 days; HIPAA floor 30)",
+    telemedicine_requirement="no_prior_exam",
+    telemedicine_prior_in_person=False,
+    telemedicine_citation="18VAC85-40-60 et seq. (ESTABLISHED — verify)",
+    cross_state_practice_allowed=False,
+    cross_state_citation="ESTABLISHED — verify",
+    written_consent_procedures="ESTABLISHED — verify",
+    telemedicine_consent_documented=True,
+    advertising_filing_required=False,
+    advertising_restrictions="ESTABLISHED — verify",
+    data_security_tier="breach_notification_only",
+    data_security_citation="Va. breach notification §18.2-186.6 (ESTABLISHED — verify)",
+    breach_notification_days=60,
+    breach_notification_citation="ESTABLISHED — verify (likely 30 days VA; flag for verification)",
+    cme_required=True,
+    cme_hours=60,
+    cme_cycle_years=2,
+    cme_mandatory_topics=("controlled_substance",),
+    cme_topic_cycle_years=0,
+    cme_citation="60 hrs/2 yrs (30 Type 1 + 30 Type 2) (ESTABLISHED — verify)",
+    pmp_query_required=True,
+    pmp_citation="§54.1-2928.2; VA PMP",
+    initial_opioid_rx_limit_days=7,
+    initial_opioid_rx_citation="ESTABLISHED — verify (VA may have 7-day limit)",
+    mat_buprenorphine_permitted=True,
+    mat_citation="DEA-registered (ESTABLISHED — verify)",
+    minor_consent_services=("reproductive", "sti", "substance_use", "behavioral_health"),
+    minor_parent_access_restricted=True,
+    minor_consent_citation="Va. Code §32.1-327 (ESTABLISHED — verify)",
+    confidence="primary_source",
 )
