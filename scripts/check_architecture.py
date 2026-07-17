@@ -59,6 +59,7 @@ LOCAL_MODULES = {
     "consolidation", "jurisdictions", "security_attestation",
     "advertising_filing", "legal_hold", "credentials", "conflicts",
     "discovery_templates", "clinical_attestation", "hipaa_governance",
+    "controlled_substances",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml
