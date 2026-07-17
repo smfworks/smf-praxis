@@ -182,7 +182,13 @@ VERTICAL_TEMPLATES: dict[str, dict] = {
             "never propose deletion of any record in that matter's scope."
         ),
         "complianceMode": "enforced",
-        "riskPolicy": dict(_REGULATED_RISK),
+        "riskPolicy": {
+            "dualApprovalRisks": ["send", "destructive"],
+            "autonomousRisks": ["read", "draft"],
+            "egressCheck": True,
+            "injectionCheck": True,
+            "approvalTtlSeconds": 1800,
+        },
     },
 }
 
