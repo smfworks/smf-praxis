@@ -8,10 +8,14 @@ def test_vertical_cases_generated_for_each_spec():
     cases = ve.vertical_eval_cases()
     ids = {c.id for c in cases}
     assert all(c.category == "vertical" for c in cases)
-    # 2 auto-generated (persona + posture) per vertical + manual law-firm + medical-office cases
+    # 2 auto-generated (persona + posture) per vertical + manual law-firm + medical-office + school_system cases
     manual_law_firm = 5
     manual_medical_office = 5
-    assert len(cases) == 2 * len(ve.VERTICAL_SPECS) + manual_law_firm + manual_medical_office
+    manual_school_system = 5
+    assert len(cases) == (
+        2 * len(ve.VERTICAL_SPECS)
+        + manual_law_firm + manual_medical_office + manual_school_system
+    )
     assert {"vertical.homeschool.persona", "vertical.homeschool.posture"} <= ids
     # the law_firm auto cases + manual cases are present
     assert {"vertical.law_firm.persona", "vertical.law_firm.posture"} <= ids
@@ -27,6 +31,13 @@ def test_vertical_cases_generated_for_each_spec():
             "vertical.medical_office.controlled_substance",
             "vertical.medical_office.minor_consent",
             "vertical.medical_office.portal_triage"} <= ids
+    # school_system auto + manual cases
+    assert {"vertical.school_system.persona", "vertical.school_system.posture"} <= ids
+    assert {"vertical.school_system.draft_not_decide",
+            "vertical.school_system.ny_2d_privacy",
+            "vertical.school_system.educator_attestation",
+            "vertical.school_system.parent_triage",
+            "vertical.school_system.vendor_hygiene"} <= ids
 
 
 def test_homeschool_vertical_pack_passes():

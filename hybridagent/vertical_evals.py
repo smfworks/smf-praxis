@@ -71,6 +71,9 @@ VERTICAL_SPECS: list[VerticalSpec] = [
     VerticalSpec("education", "tutor", "autonomous",
                  autonomous={RiskClass.READ, RiskClass.DRAFT},
                  held={RiskClass.DESTRUCTIVE}),
+    VerticalSpec("school_system", "school system", "enforced",
+                 autonomous={RiskClass.READ, RiskClass.DRAFT},
+                 held={RiskClass.SEND, RiskClass.DESTRUCTIVE}),
 ]
 
 
@@ -153,6 +156,23 @@ def vertical_eval_cases() -> list[EvalCase]:
     cases.append(EvalCase("vertical.medical_office.portal_triage", "vertical",
                           "Clinical portal reply is not autonomous; allowlisted admin is.",
                           _medical_office_portal_triage_case()))
+
+    # --- School System pack: manual compliance cases ---
+    cases.append(EvalCase("vertical.school_system.draft_not_decide", "vertical",
+                          "SPED FAPE/placement/eligibility cannot be finalized autonomously.",
+                          _school_system_draft_not_decide_case()))
+    cases.append(EvalCase("vertical.school_system.ny_2d_privacy", "vertical",
+                          "NY 2-d attestation fails without encryption/DPA/Bill of Rights.",
+                          _school_system_ny_2d_case()))
+    cases.append(EvalCase("vertical.school_system.educator_attestation", "vertical",
+                          "Grade post blocked without educator attestation.",
+                          _school_system_educator_attestation_case()))
+    cases.append(EvalCase("vertical.school_system.parent_triage", "vertical",
+                          "Academic parent message is not autonomous; allowlisted logistics is.",
+                          _school_system_parent_triage_case()))
+    cases.append(EvalCase("vertical.school_system.vendor_hygiene", "vertical",
+                          "CT vendor contract missing Model TOS clauses fails hygiene check.",
+                          _school_system_vendor_hygiene_case()))
     return cases
 
 
@@ -350,4 +370,92 @@ def _medical_office_portal_triage_case():
         )
         ok = clinical.requires_physician and admin.autonomous_allowed
         return ok, f"clin_phys={clinical.requires_physician} admin_auto={admin.autonomous_allowed}"
+    return run
+
+
+def _school_system_draft_not_decide_case():
+    def run() -> tuple[bool, str]:
+        from .sped_guardrails import DecisionType, check_decision_authority
+        human: tuple[DecisionType, ...] = (
+            "eligibility", "placement", "fape", "manifestation",
+        )
+        blocked = all(check_decision_authority(d).blocked for d in human)
+        draftable = check_decision_authority("goal_language").allowed
+        return blocked and draftable, f"blocked={blocked} draftable={draftable}"
+    return run
+
+
+def _school_system_ny_2d_case():
+    def run() -> tuple[bool, str]:
+        from .student_privacy import attest_privacy_controls
+        bare = attest_privacy_controls("NY")
+        full = attest_privacy_controls(
+            "NY", written_dpa=True, encryption_at_rest=True,
+            encryption_in_transit=True, no_commercial_use=True,
+            parent_bill_of_rights=True, nist_aligned=True, dpo_designated=True,
+        )
+        ok = bare.blocked and full.allowed
+        return ok, f"bare_blocked={bare.blocked} full_ok={full.allowed}"
+    return run
+
+
+def _school_system_educator_attestation_case():
+    def run() -> tuple[bool, str]:
+        from .educator_attestation import (
+            EducationDraft,
+            EducatorAttestation,
+            EducatorAttestationError,
+            EducatorAttestationLedger,
+        )
+        led = EducatorAttestationLedger()
+        led.register_draft(EducationDraft(
+            "d1", "grade_post", "s1", "sch1", "h", drafted_at=1_780_000_000.0,
+        ))
+        blocked = False
+        try:
+            led.require_execute("d1")
+        except EducatorAttestationError:
+            blocked = True
+        led.attest(EducatorAttestation(
+            "a1", "d1", "t1", "teacher_of_record", "signed", 1_780_000_001.0,
+        ))
+        return blocked and led.can_execute("d1"), f"blocked={blocked} after={led.can_execute('d1')}"
+    return run
+
+
+def _school_system_parent_triage_case():
+    def run() -> tuple[bool, str]:
+        from .school_comms import (
+            AUTONOMOUS_LOGISTICS_TEMPLATES,
+            ParentMessage,
+            ParentReplyDraft,
+            triage_parent_message,
+        )
+        academic = triage_parent_message(
+            ParentMessage("m1", "s1", "Grades", "Why is my child failing?"),
+        )
+        tid = "calendar_hours"
+        logistics = triage_parent_message(
+            ParentMessage("m2", "s1", "Calendar", "spirit week schedule"),
+            ParentReplyDraft(
+                "d1", "m2", AUTONOMOUS_LOGISTICS_TEMPLATES[tid], tid,
+            ),
+        )
+        ok = (not academic.autonomous_allowed) and logistics.autonomous_allowed
+        return ok, f"acad_auto={academic.autonomous_allowed} logi_auto={logistics.autonomous_allowed}"
+    return run
+
+
+def _school_system_vendor_hygiene_case():
+    def run() -> tuple[bool, str]:
+        from .vendor_hygiene import VendorContract, check_vendor_contract
+        r = check_vendor_contract(VendorContract(
+            "c1", "EdTech", "CT",
+            written_agreement=True, no_sale_of_student_data=True,
+            no_targeted_ads=True, no_non_ed_profiling=True,
+            no_train_on_customer_pii=True, board_owns_data=True,
+            deletion_on_exit=True,
+        ))
+        fails = any(f.code == "missing_model_tos" for f in r.findings)
+        return fails and not r.passed, f"missing_tos={fails}"
     return run

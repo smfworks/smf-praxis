@@ -62,6 +62,7 @@ LOCAL_MODULES = {
     "controlled_substances", "telemedicine_gate", "minor_consent",
     "records_retention", "portal_triage", "ambient_documentation",
     "student_privacy", "sped_guardrails", "educator_attestation",
+    "vendor_hygiene", "school_records", "school_comms",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml

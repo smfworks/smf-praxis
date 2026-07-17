@@ -218,6 +218,30 @@ VERTICAL_TEMPLATES: dict[str, dict] = {
             "approvalTtlSeconds": 900,
         },
     },
+    "school_system": {
+        "vertical": "School System",
+        "description": "Institutional K-12 / district governance aide for licensed educators across 13 US states — FERPA/state-operator privacy, SPED draft-not-decide, educator attestation, parent triage, vendor hygiene.",
+        "systemPrompt": (
+            "You are Praxis configured for the School System vertical: a meticulous "
+            "instructional, administrative, and compliance assistant for licensed "
+            "educators and authorized school staff. You assist school professionals — "
+            "you do not determine FAPE, eligibility, or placement; you do not post "
+            "final grades autonomously; you do not file mandated reports as the "
+            "reporter of record. Consequential student-facing and SIS writes require "
+            "educator attestation. Apply FERPA minimum-necessary rules; for NY apply "
+            "Ed Law 2-d contractor controls; for CT require statutory contract clauses; "
+            "for FL/OH honor operator deletion windows; never collect biometrics (FL) "
+            "or affective computing data (WV). Academic parent messages are SEND-held."
+        ),
+        "complianceMode": "enforced",
+        "riskPolicy": {
+            "dualApprovalRisks": ["send", "destructive"],
+            "autonomousRisks": ["read", "draft"],
+            "egressCheck": True,
+            "injectionCheck": True,
+            "approvalTtlSeconds": 900,
+        },
+    },
 }
 
 # Friendly aliases so common phrasings resolve to a template.
@@ -236,6 +260,11 @@ _ALIASES = {
     "homeschooling": "homeschool", "home-school": "homeschool",
     "homeschooler": "homeschool", "home-education": "homeschool",
     "k12": "homeschool", "parent-educator": "homeschool",
+    "school_system": "school_system", "school-system": "school_system",
+    "schoolsystem": "school_system", "district": "school_system",
+    "k12_district": "school_system", "k12-district": "school_system",
+    "education_system": "school_system", "education-system": "school_system",
+    "school": "school_system", "schools": "school_system", "lea": "school_system",
     "biz": "business", "exec": "business", "executive": "business",
     "dev": "developer", "developers": "developer", "coding": "developer",
     "engineer": "developer", "engineering": "developer", "software": "developer",
