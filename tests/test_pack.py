@@ -404,3 +404,91 @@ def test_law_firm_theme_exposed():
     assert p is not None
     assert p.theme.get("accent") == "#1e3a8a"
     assert p.theme.get("panel") == "#0f172a"
+
+
+# ======================================================================
+# Law Firm pack — Slice 2: the four skills (retrieval + body content)
+# Each skill wraps a v0.28.14 compliance module; the body must reference
+# the correct module function so the skill grounds the agent in the right
+# tool, not a hallucinated one.
+# ======================================================================
+def _law_firm_skills(tmp_path, monkeypatch):
+    """Install the law_firm pack's skills into a fresh store, return the library."""
+    _home(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRAXIS_EMBED", "mock")
+    from hybridagent.persistence import Store
+    from hybridagent.skills import SkillLibrary
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    store = Store.open(tmp_path / "lf.db")
+    assert pack.install_skills(p, store) == 4
+    return SkillLibrary(store=store)
+
+
+def test_law_firm_conflict_check_skill_retrievable(tmp_path, monkeypatch):
+    lib = _law_firm_skills(tmp_path, monkeypatch)
+    hits = lib.retrieve("opening a new matter, run a conflict of interest screen", k=2)
+    assert hits, "conflict-check skill should be retrievable on its trigger"
+    assert any(h.name == "conflict-check" for h in hits)
+    sk = next(h for h in hits if h.name == "conflict-check")
+    # the body must reference the conflict_check tool + authorized_by (break-glass)
+    assert "conflict_check" in sk.body
+    assert "authorized_by" in sk.body
+
+
+def test_law_firm_ad_filing_gate_skill_retrievable(tmp_path, monkeypatch):
+    lib = _law_firm_skills(tmp_path, monkeypatch)
+    hits = lib.retrieve("drafting attorney advertising in NY, advertising filing", k=2)
+    assert hits
+    assert any(h.name == "ad-filing-gate" for h in hits)
+    sk = next(h for h in hits if h.name == "ad-filing-gate")
+    # the body must reference AdvertisingFiling + validate_before_send + the label/disclaimers
+    assert "AdvertisingFiling" in sk.body
+    assert "validate_before_send" in sk.body
+    assert "Attorney Advertising" in sk.body
+    assert "Prior results do not guarantee" in sk.body
+
+
+def test_law_firm_matter_hold_skill_retrievable(tmp_path, monkeypatch):
+    lib = _law_firm_skills(tmp_path, monkeypatch)
+    hits = lib.retrieve("litigation hold, preservation duty", k=2)
+    assert hits
+    assert any(h.name == "matter-hold" for h in hits)
+    sk = next(h for h in hits if h.name == "matter-hold")
+    # the body must reference issue/acknowledge/release + scope/custodian
+    assert "issue" in sk.body
+    assert "acknowledge" in sk.body
+    assert "release" in sk.body
+    assert "custodian" in sk.body
+    assert "scope" in sk.body
+
+
+def test_law_firm_ce_status_skill_retrievable(tmp_path, monkeypatch):
+    lib = _law_firm_skills(tmp_path, monkeypatch)
+    hits = lib.retrieve("check attorney CLE compliance, licensure, PDH hours", k=2)
+    assert hits
+    assert any(h.name == "ce-status" for h in hits)
+    sk = next(h for h in hits if h.name == "ce-status")
+    # the body must reference CredentialLedger + compliance_status + the MA no-requirement case
+    assert "CredentialLedger" in sk.body
+    assert "compliance_status" in sk.body
+    assert "no_requirement" in sk.body  # the MA exception
+
+
+def test_law_firm_skills_carry_pack_provenance(tmp_path, monkeypatch):
+    lib = _law_firm_skills(tmp_path, monkeypatch)
+    hits = lib.retrieve("conflict of interest", k=4)
+    for h in hits:
+        assert h.provenance == "pack:law_firm", (
+            f"skill {h.name} provenance should be pack:law_firm")
+
+
+def test_law_firm_install_skills_count(tmp_path, monkeypatch):
+    """install_skills returns 4 (one per law-firm skill)."""
+    _home(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRAXIS_EMBED", "mock")
+    from hybridagent.persistence import Store
+    p = pack.load_pack("law_firm")
+    assert p is not None
+    store = Store.open(tmp_path / "lf2.db")
+    assert pack.install_skills(p, store) == 4
