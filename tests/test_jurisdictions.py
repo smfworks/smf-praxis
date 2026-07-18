@@ -11,11 +11,14 @@ from __future__ import annotations
 import pytest
 
 from hybridagent.jurisdictions import (
-    get_forensic_profile, get_legal_profile,
-    registered_states, forensic_summary, legal_summary,
-    ForensicProfile, LegalProfile,
+    ForensicProfile,
+    LegalProfile,
+    forensic_summary,
+    get_forensic_profile,
+    get_legal_profile,
+    legal_summary,
+    registered_states,
 )
-
 
 # ---------------------------------------------------------------------------
 # Registry completeness — all 13 states present with both profiles

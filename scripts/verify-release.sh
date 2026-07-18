@@ -18,10 +18,8 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 echo "==> version"
-"$PYTHON_BIN" - <<'PY'
-from hybridagent import __version__
-print("hybridagent.__version__ =", __version__)
-PY
+EXPECTED_VERSION="$("$PYTHON_BIN" -c 'from hybridagent import __version__; print(__version__)')"
+echo "hybridagent.__version__ = $EXPECTED_VERSION"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -44,7 +42,8 @@ import glob, sys, zipfile
 whl = glob.glob("dist/*.whl")[0]
 web = [n for n in zipfile.ZipFile(whl).namelist() if "/web/" in n]
 print(f"dashboard assets in wheel: {len(web)}")
-need = ("shell.js", "shell.css", "friendliness.js", "friendliness.css", "cron.js", "cron.css")
+need = ("shell.js", "shell.css", "friendliness.js", "friendliness.css", "cron.js", "cron.css",
+        "homeschool.js", "homeschool.css")
 missing = [n for n in need if not any(n in x for x in web)]
 if missing:
     print("MISSING", missing)
@@ -59,17 +58,27 @@ echo "==> clean venv install from wheel"
 INSTALL_PY="$TMP/install-venv/bin/python"
 "$INSTALL_PY" -m pip install -q --upgrade pip
 "$INSTALL_PY" -m pip install -q dist/praxis_agent-*.whl
-"$TMP/install-venv/bin/praxis" --version
+CLI_VERSION="$("$TMP/install-venv/bin/praxis" --version)"
+[[ "$CLI_VERSION" == "praxis $EXPECTED_VERSION" ]] || {
+  echo "installed CLI version mismatch: $CLI_VERSION != praxis $EXPECTED_VERSION" >&2
+  exit 1
+}
+echo "$CLI_VERSION"
 (
   cd "$TMP"
-  "$INSTALL_PY" - "$TMP/install-venv" "$ROOT" <<'PY'
+  "$INSTALL_PY" - "$TMP/install-venv" "$ROOT" "$EXPECTED_VERSION" <<'PY'
 from importlib.resources import files
+from importlib.metadata import version
+import json
 from pathlib import Path
 import sys
 
 venv = Path(sys.argv[1]).resolve()
 checkout = Path(sys.argv[2]).resolve()
+expected_version = sys.argv[3]
 import hybridagent
+assert hybridagent.__version__ == expected_version
+assert version("praxis-agent") == expected_version
 package_file = Path(hybridagent.__file__).resolve()
 assert package_file.is_relative_to(venv), (package_file, venv)
 assert not package_file.is_relative_to(checkout), (package_file, checkout)
@@ -77,10 +86,26 @@ print("installed package path ok:", package_file)
 
 web = Path(files("hybridagent") / "web")
 assert web.is_dir(), web
-for name in ("shell.js", "shell.css", "friendliness.js", "cron.js", "cron.css"):
+for name in ("shell.js", "shell.css", "friendliness.js", "cron.js", "cron.css",
+             "homeschool.js", "homeschool.css"):
     p = web / name
     assert p.is_file(), p
 print("package data web/ ok:", sorted(p.name for p in web.iterdir() if p.suffix in {".js", ".css"})[:8], "...")
+
+homeschool = Path(files("hybridagent") / "packs" / "homeschool")
+manifest_path = homeschool / "pack.json"
+knowledge_path = homeschool / "knowledge.md"
+assert manifest_path.is_file(), manifest_path
+assert knowledge_path.is_file(), knowledge_path
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+assert manifest["name"] == "homeschool"
+assert manifest["version"] == "1.0.0"
+assert manifest["complianceMode"] == "enforced"
+assert len(knowledge_path.read_text(encoding="utf-8")) > 1000
+from hybridagent.pack import load_pack
+installed_pack = load_pack("homeschool")
+assert installed_pack is not None and installed_pack.name == "homeschool"
+print("homeschool pack manifest + knowledge assets ok")
 
 from hybridagent.jobs import list_jobs
 assert {j["id"] for j in list_jobs()} == {"research", "draft", "schedule"}

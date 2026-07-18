@@ -8,15 +8,22 @@ def test_vertical_cases_generated_for_each_spec():
     cases = ve.vertical_eval_cases()
     ids = {c.id for c in cases}
     assert all(c.category == "vertical" for c in cases)
-    # 2 auto-generated (persona + posture) per vertical + manual law-firm + medical-office + school_system cases
+    # 2 auto-generated (persona + posture) per vertical + manual vertical cases
+    manual_homeschool = 5
     manual_law_firm = 5
     manual_medical_office = 5
     manual_school_system = 5
     assert len(cases) == (
         2 * len(ve.VERTICAL_SPECS)
-        + manual_law_firm + manual_medical_office + manual_school_system
+        + manual_homeschool + manual_law_firm
+        + manual_medical_office + manual_school_system
     )
     assert {"vertical.homeschool.persona", "vertical.homeschool.posture"} <= ids
+    assert {"vertical.homeschool.route_gate",
+            "vertical.homeschool.no_fabricated_attendance",
+            "vertical.homeschool.child_safe_tutor",
+            "vertical.homeschool.private_collaboration",
+            "vertical.homeschool.transcript_provenance"} <= ids
     # the law_firm auto cases + manual cases are present
     assert {"vertical.law_firm.persona", "vertical.law_firm.posture"} <= ids
     assert {"vertical.law_firm.upl_guardrail",

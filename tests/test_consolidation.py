@@ -5,9 +5,22 @@ last_consolidated_at columns) and the six new Store methods. No behavior
 change to the daemon or agent — this slice is storage-only and inert until
 Slice 3 wires the daemon tick.
 """
+import argparse
 import json
+import socket
 import time
+import urllib.parse
+import urllib.request
 
+from hybridagent import config as cfg
+from hybridagent.consolidation import (
+    ConsolidationReport,
+    MemoryConsolidator,
+    _strip_reasoning,
+)
+from hybridagent.daemon import Daemon
+from hybridagent.llm import LLMClient
+from hybridagent.memory import Memory
 from hybridagent.persistence import Store
 
 
@@ -90,8 +103,6 @@ def test_update_memory_metadata(tmp_path):
     s = Store(tmp_path / "t.db")
     mid = s.add_memory("durable", "Anthropic reports 62% code usage", "seed", "note")
     s.update_memory_metadata(mid, ["Anthropic", "Claude"], ["code-usage", "agents"])
-    rows = s.list_memory(tier="durable")
-    row = [r for r in rows if r["id"] == mid][0]
     # list_memory doesn't return entities/topics; read directly
     with s._lock:
         raw = s._conn.execute(
@@ -178,12 +189,6 @@ def test_mark_consolidated_is_idempotent_re_eligible(tmp_path):
 # ======================================================================
 # Slice 2 — MemoryConsolidator core (offline-testable, no daemon wiring)
 # ======================================================================
-import json as _json
-
-from hybridagent.consolidation import MemoryConsolidator, ConsolidationReport
-from hybridagent.memory import Memory
-
-
 class FakeLLM:
     """Returns canned JSON per call index. Matches LLMClient.complete()."""
     def __init__(self, metadata_resp=None, conn_resp=None, insight_resp=None):
@@ -222,12 +227,12 @@ def test_consolidation_happy_path_writes_insight_and_connections(tmp_path):
     mem = Memory(store=s)
 
     fake = FakeLLM(
-        metadata_resp=_json.dumps([
+        metadata_resp=json.dumps([
             {"id": ids[0], "entities": ["Anthropic", "Claude"], "topics": ["code-usage"]},
             {"id": ids[1], "entities": ["inference"], "topics": ["cost"]},
             {"id": ids[2], "entities": ["memory"], "topics": ["reliability"]},
         ]),
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[1], "relationship": "usage drives cost pressure"},
             {"from_id": ids[1], "to_id": ids[2], "relationship": "cost cut needs reliability fix"},
         ]),
@@ -279,7 +284,7 @@ def test_consolidation_malformed_metadata_json_does_not_block(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="this is not json at all",
-        conn_resp=_json.dumps([]),
+        conn_resp=json.dumps([]),
         insight_resp="A valid insight despite bad metadata upstream.",
     )
     c = MemoryConsolidator(mem, fake, s, min_items=3)
@@ -291,7 +296,7 @@ def test_consolidation_malformed_metadata_json_does_not_block(tmp_path):
 
 def test_consolidation_malformed_connections_json_still_writes_insight(tmp_path):
     s = Store(tmp_path / "t.db")
-    ids = _seed_window(s, 3)
+    _seed_window(s, 3)
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
@@ -331,7 +336,7 @@ def test_consolidation_rerates_salience_bounded_monotonic(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[1], "relationship": "linked"},
         ]),
         insight_resp="An insight connecting the first two items.",
@@ -353,7 +358,7 @@ def test_consolidation_rerate_disabled_skips_bump(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[1], "relationship": "rel"},
         ]),
         insight_resp="Insight.",
@@ -412,7 +417,7 @@ def test_consolidation_connection_to_self_rejected(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[0], "relationship": "self-link"},
             {"from_id": 99999, "to_id": ids[0], "relationship": "foreign id"},
             {"from_id": ids[0], "to_id": ids[1], "relationship": "valid link"},
@@ -430,7 +435,7 @@ def test_consolidation_respects_max_connections_cap(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[1], "relationship": f"rel {i}"}
             for i in range(10)
         ]),
@@ -450,7 +455,6 @@ def test_consolidation_json_parser_strips_fences_and_prose(tmp_path):
     # trailing prose
     assert parse('Here you go:\n[{"a": 1}]\nThat is all.') == [{"a": 1}]
     # no array
-    import pytest as _pt
     try:
         parse("no json here")
         assert False, "should have raised"
@@ -472,11 +476,6 @@ def test_consolidation_report_as_dict(tmp_path):
 # ======================================================================
 # Slice 3 — Daemon wiring (gated off by default, fires when enabled)
 # ======================================================================
-from hybridagent import config as cfg
-from hybridagent.daemon import Daemon
-from hybridagent.llm import LLMClient
-
-
 class _FakeConsolidator:
     """Replaces MemoryConsolidator in the daemon to detect when the tick fires."""
     instances: list = []
@@ -781,11 +780,6 @@ def test_agent_extract_off_when_config_disabled(tmp_path, monkeypatch):
 # ======================================================================
 # Slice 5 — CLI + dashboard visibility
 # ======================================================================
-import socket
-import urllib.parse
-import urllib.request
-
-
 def _free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -928,9 +922,6 @@ def test_consolidation_status_shows_last_report_after_run(tmp_path, monkeypatch)
 
 
 # --- CLI smoke (subprocess-free: call the cmd function directly) ---
-import argparse
-
-
 def test_cli_consolidation_enable_disable_flips_config(tmp_path, monkeypatch):
     """`praxis consolidation enable` then `disable` flips the config flag.
     These don't need the daemon to be running."""
@@ -983,7 +974,7 @@ def test_consolidation_max_connections_zero_makes_none(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[1], "relationship": "should not be made"},
         ]),
         insight_resp="Insight with no connections due to max_connections=0.",
@@ -1002,7 +993,7 @@ def test_consolidation_max_connections_negative_makes_none(tmp_path):
     mem = Memory(store=s)
     fake = FakeLLM(
         metadata_resp="[]",
-        conn_resp=_json.dumps([
+        conn_resp=json.dumps([
             {"from_id": ids[0], "to_id": ids[1], "relationship": "r"},
         ]),
         insight_resp="Negative max connections insight.",
@@ -1018,8 +1009,6 @@ def test_consolidation_max_connections_negative_makes_none(tmp_path):
 # **Deconstruct...**" into `content`; consolidator wrote CoT as the insight.
 # Fix = prompt tightening + _strip_reasoning post-filter.
 # ======================================================================
-from hybridagent.consolidation import _strip_reasoning
-
 def test_strip_reasoning_removes_thinking_process_header():
     """The exact dogfood leak: 'Thinking Process:' header + reasoning."""
     cot = ("Thinking Process:\n\n1.  **Deconstruct the Input:**\n"

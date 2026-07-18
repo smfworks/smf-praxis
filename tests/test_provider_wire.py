@@ -153,7 +153,7 @@ def test_chat_falls_back_to_reasoning_when_content_null(base_url):
     # Drive a request whose stub returns the reasoning-model shape.
     # We can't easily vary the stub per-test without a fixture, so call
     # _chat_openai directly with a monkeypatched _post.
-    from hybridagent.providers import _chat_openai, _extract_text
+    from hybridagent.providers import _chat_openai
 
     reasoning_response = {
         "choices": [{"message": {
@@ -180,8 +180,8 @@ def test_chat_falls_back_to_reasoning_when_content_null(base_url):
 
 def test_chat_uses_content_when_present(base_url):
     """Normal models return content; the reasoning fallback must not interfere."""
-    from hybridagent.providers import _chat_openai
     import hybridagent.providers as p
+    from hybridagent.providers import _chat_openai
     normal_response = {
         "choices": [{"message": {
             "role": "assistant", "content": "pong", "reasoning": "thinking...",
@@ -200,8 +200,8 @@ def test_chat_uses_content_when_present(base_url):
 
 def test_chat_empty_when_both_content_and_reasoning_absent(base_url):
     """No content and no reasoning -> empty string, not a crash."""
-    from hybridagent.providers import _chat_openai
     import hybridagent.providers as p
+    from hybridagent.providers import _chat_openai
     empty_response = {
         "choices": [{"message": {"role": "assistant", "content": None}}],
         "usage": {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 5},

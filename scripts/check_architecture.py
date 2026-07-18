@@ -63,6 +63,11 @@ LOCAL_MODULES = {
     "records_retention", "portal_triage", "ambient_documentation",
     "student_privacy", "sped_guardrails", "educator_attestation",
     "vendor_hygiene", "school_records", "school_comms",
+    "homeschool_jurisdictions", "homeschool_route", "homeschool_compliance",
+    "household_education_privacy", "homeschool_learning_plan", "home_tutor",
+    "homeschool_portfolio", "homeschool_assessment", "homeschool_support",
+    "homeschool_collaboration", "homeschool_transcript", "homeschool_funding",
+    "homeschool_validation",
 }
 
 # Third-party imports allowed behind optional extras (must match pyproject.toml

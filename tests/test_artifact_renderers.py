@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import builtins
+import datetime
 import io
 import zipfile
 from dataclasses import replace
@@ -247,6 +248,24 @@ def test_all_optional_renderers_are_deterministic_and_semantically_valid() -> No
             assert all(item.date_time == (1980, 1, 1, 0, 0, 0) for item in archive.infolist())
             assert all(not name.startswith("/") and ".." not in name.split("/")
                        for name in archive.namelist())
+
+
+def test_xlsx_determinism_does_not_depend_on_openpyxl_save_clock(monkeypatch) -> None:
+    pytest.importorskip("openpyxl")
+    original_datetime = datetime.datetime
+
+    class MovingDateTime(original_datetime):
+        tick = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls.tick += 1
+            return cls(2026, 1, 1, 0, 0, cls.tick, tzinfo=tz)
+
+    monkeypatch.setattr("openpyxl.writer.excel.datetime.datetime", MovingDateTime)
+    artifact = document()
+    assets = {"asset-1": _png()}
+    assert render_xlsx(artifact, assets) == render_xlsx(artifact, assets)
 
 
 def test_pdf_pagination_is_stable_and_footer_is_present() -> None:

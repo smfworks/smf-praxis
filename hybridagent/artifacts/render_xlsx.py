@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 from datetime import datetime
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from hybridagent.artifacts.models import ArtifactDocument, FigureBlock, TableBlock
 from hybridagent.artifacts.render_common import (
@@ -42,6 +43,7 @@ def render_xlsx(
     from openpyxl import Workbook  # type: ignore[import-untyped]
     from openpyxl.drawing.image import Image  # type: ignore[import-untyped]
     from openpyxl.styles import Alignment, Font, PatternFill  # type: ignore[import-untyped]
+    from openpyxl.writer.excel import ExcelWriter  # type: ignore[import-untyped]
 
     resolved = checked_assets(document, assets)
     workbook = Workbook()
@@ -157,5 +159,9 @@ def render_xlsx(
             width = min(60, max(12, max(len(str(cell.value or "")) for cell in column) + 2))
             sheet.column_dimensions[letter].width = width
     output = io.BytesIO()
-    workbook.save(output)
+    archive = ZipFile(output, "w", ZIP_DEFLATED, allowZip64=True)
+    # openpyxl's public save_workbook() overwrites `modified` with wall-clock
+    # time immediately before serialization. Use its writer directly after
+    # setting fixed core properties so identical inputs remain byte-identical.
+    ExcelWriter(workbook, archive).save()
     return normalize_zip_package(output.getvalue())

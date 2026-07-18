@@ -15,6 +15,7 @@ worker that:
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import os
 import re
@@ -449,6 +450,7 @@ pre.logs { white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, mo
 <link rel="stylesheet" href="/web/memory.css" />
 <link rel="stylesheet" href="/web/consolidation.css" />
 <link rel="stylesheet" href="/web/law_firm.css" />
+<link rel="stylesheet" href="/web/homeschool.css" />
 <link rel="stylesheet" href="/web/knowledge.css" />
 <link rel="stylesheet" href="/web/palette.css" />
 <link rel="stylesheet" href="/web/settings.css" />
@@ -641,6 +643,7 @@ document.addEventListener("keydown", function (e) {
 <script src="/web/memory.js" defer></script>
 <script src="/web/consolidation.js" defer></script>
 <script src="/web/law_firm.js" defer></script>
+<script src="/web/homeschool.js" defer></script>
 <script src="/web/knowledge.js" defer></script>
 <script src="/web/palette.js" defer></script>
 <script src="/web/settings.js" defer></script>
@@ -818,6 +821,10 @@ if ('serviceWorker' in navigator) {
         <div class="rail-section" id="law-firm-section" hidden>
           <h2>Law Firm Compliance</h2>
           <div id="law-firm-mount"><div class="empty">Law Firm pack not active.</div></div>
+        </div>
+        <div class="rail-section" id="homeschool-section" hidden>
+          <h2>Homeschool Command Deck</h2>
+          <div id="homeschool-mount"><div class="empty">Homeschool pack not active.</div></div>
         </div>
         <div class="rail-section">
           <h2>Knowledge</h2>
@@ -1991,19 +1998,92 @@ class _StatusHandler(BaseHTTPRequestHandler):
         return self.rfile.read(min(length, max_bytes))
 
     def _require_auth(self) -> bool:
-        """Non-loopback clients must present the shared token when configured."""
+        """Require loopback Host integrity or an explicit remote shared token."""
         from . import auth_gate
         if self._is_loopback():
+            if not self._request_host_is_loopback():
+                self._json_response({"error": "untrusted host"}, status=403)
+                return False
             return True
         if not auth_gate.configured_token():
-            return True
+            self._json_response(
+                {"error": "unauthorized", "auth_required": True,
+                 "hint": "Configure a shared token before remote access"},
+                status=401)
+            return False
         if auth_gate.token_matches(auth_gate.extract_token(self.headers)):
             return True
         self._json_response(
             {"error": "unauthorized", "auth_required": True,
-             "hint": "Set Authorization: Bearer <token> or X-Praxis-Token"},
+             "hint": "Set Authorization: Bearer *** or X-Praxis-Token"},
             status=401)
         return False
+
+    def _request_host_is_loopback(self) -> bool:
+        """Reject DNS-rebinding Host values for unauthenticated loopback access."""
+        host_header = self.headers.get("Host", "")
+        if (not host_header or host_header != host_header.strip()
+                or any(char.isspace() for char in host_header)
+                or any(char in host_header for char in "/?#@%")):
+            return False
+        if host_header.startswith("["):
+            closing = host_header.find("]")
+            if closing < 0:
+                return False
+            hostname = host_header[1:closing]
+            suffix = host_header[closing + 1:]
+            if suffix and not suffix.startswith(":"):
+                return False
+            port = suffix[1:] if suffix else ""
+        else:
+            if "[" in host_header or "]" in host_header or host_header.count(":") > 1:
+                return False
+            hostname, separator, port = host_header.partition(":")
+            if separator and not port:
+                return False
+        if port and (not port.isdigit() or not 1 <= int(port) <= 65535):
+            return False
+        if not hostname:
+            return False
+        normalized = hostname.lower()
+        if normalized == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(normalized).is_loopback
+        except ValueError:
+            return False
+
+    def _require_same_origin_json(self, *, max_bytes: int = 64 * 1024) -> bool:
+        """Gate browser-facing JSON mutations against simple localhost CSRF.
+
+        ``application/json`` forces a cross-origin browser request through CORS
+        preflight, which this server does not grant. When a browser supplies an
+        Origin header, it must exactly match the request Host. CLI clients
+        without Origin remain supported.
+        """
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._json_response({"error": "application/json required"}, status=415)
+            return False
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            self._json_response({"error": "valid Content-Length required"}, status=400)
+            return False
+        if length < 0:
+            self._json_response({"error": "valid Content-Length required"}, status=400)
+            return False
+        if length > max_bytes:
+            self._json_response({"error": "request body too large"}, status=413)
+            return False
+        origin = self.headers.get("Origin", "").strip()
+        if origin:
+            parsed = split_url(origin)
+            host = self.headers.get("Host", "").strip().lower()
+            if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != host:
+                self._json_response({"error": "cross-origin mutation denied"}, status=403)
+                return False
+        return True
 
     def _require_v1_auth(self, *, mutation: bool = False) -> bool:
         """Accept a professional session or the legacy deployment token."""
@@ -2023,7 +2103,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
             if session is not None:
                 self.authenticated_session = session
                 return True
-        if not cookie_token and (self._is_loopback() or not auth_gate.configured_token()):
+        if not cookie_token and self._is_loopback() and self._request_host_is_loopback():
             return True
         if (auth_gate.configured_token()
                 and auth_gate.token_matches(auth_gate.extract_token(self.headers))):
@@ -2419,6 +2499,16 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.board_delete(
                     payload.get("card_id", "")))
                 return
+            if self.path == "/api/homeschool/context":
+                if not self._require_same_origin_json():
+                    return
+                hs_payload = json.loads(self._read_body(max_bytes=64 * 1024).decode() or "{}")
+                if not isinstance(hs_payload, dict):
+                    self._json_response({"error": "JSON object required"}, status=400)
+                    return
+                hs_result = self.daemon.homeschool_set_context(hs_payload)
+                self._json_response(hs_result, status=400 if hs_result.get("blocked") else 200)
+                return
             if self.path == "/api/chat/agent":
                 self._handle_chat_agent()
                 return
@@ -2732,6 +2822,13 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
             elif self.path == "/api/law_firm":
                 body = json.dumps(self.daemon.law_firm_compliance(),
+                                  default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/api/homeschool":
+                if not self._require_auth():
+                    return
+                body = json.dumps(self.daemon.homeschool_status(),
                                   default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -3370,6 +3467,20 @@ class _StatusHandler(BaseHTTPRequestHandler):
         pass
 
 
+@dataclass(frozen=True)
+class _HomeschoolContext:
+    state: str = "FL"
+    route: str = ""
+    school_year_start: str = ""
+    oversight_entity: str = ""
+    school_of_record: str = ""
+    commencement: str = "not_yet_started"
+    materials_received_on: str = ""
+    learner_grades: tuple[int, ...] = ()
+    reporting_dates: tuple[str, ...] = ()
+    assessment_due_date: str = ""
+
+
 class Daemon:
     """Long-running Praxis worker.
 
@@ -3422,6 +3533,8 @@ class Daemon:
         # provides the cross-process transaction boundary.
         self._api_idempotency_lock = threading.Lock()
         self._approval_lock = threading.Lock()
+        self._homeschool_lock = threading.RLock()
+        self._homeschool_context = _HomeschoolContext()
         self._task_approvals_initialized = False
         self.api_cursor_secret = uuid.uuid4().bytes
         # Open SSE subscriber queues, one per /events connection. Guarded by
@@ -4415,6 +4528,219 @@ class Daemon:
             "ad_filings": self._lf_ad_filings(),
             "security_attestations": self._lf_security_attestations(),
         }
+
+    # -------------------------------------------------- homeschool pack surfaces
+    def homeschool_status(self) -> dict:
+        """Return a privacy-minimal household Command Deck model.
+
+        The dashboard exposes profile metadata and parent-confirmed calendar
+        tasks only. It never returns child names, work, health, financial data,
+        or unrestricted collaborator records.
+        """
+        from . import pack as _pack
+        from .homeschool_jurisdictions import (
+            get_homeschool_profile,
+            profile_for_route,
+            registered_homeschool_states,
+        )
+        ap = _pack.active()
+        if ap is None or ap.vertical.lower() != "homeschool":
+            return {"active": False, "pack": None}
+        with self._homeschool_lock:
+            context = self._homeschool_context
+        state = context.state
+        route = context.route
+        school_year_start = context.school_year_start
+        commencement = context.commencement
+        materials_received_on = context.materials_received_on
+        learner_grades = context.learner_grades
+        profile = get_homeschool_profile(state)
+        assert profile is not None
+        if route:
+            profile = profile_for_route(state, route) or profile
+        calendar: dict[str, Any] = {
+            "confirmed": False, "tasks": [], "warnings": [],
+            "school_year_start": school_year_start,
+            "commencement": commencement,
+            "materials_received_on": materials_received_on,
+            "reporting_dates": list(context.reporting_dates),
+            "assessment_due_date": context.assessment_due_date,
+        }
+        if route and school_year_start and commencement != "not_yet_started":
+            from .homeschool_compliance import build_compliance_calendar
+            from .homeschool_route import RouteSelection
+            selection = RouteSelection(
+                state, route, True, school_year_start,
+                school_of_record=context.school_of_record or "parent",
+                oversight_entity=context.oversight_entity,
+            )
+            built = build_compliance_calendar(
+                selection, school_year_start=school_year_start,
+                learner_grades=learner_grades,
+                commencement=commencement,
+                materials_received_on=materials_received_on,
+                reporting_dates=context.reporting_dates,
+                assessment_due_date=context.assessment_due_date,
+            )
+            calendar = {
+                "confirmed": True,
+                "school_year_start": school_year_start,
+                "commencement": commencement,
+                "materials_received_on": materials_received_on,
+                "reporting_dates": list(context.reporting_dates),
+                "assessment_due_date": context.assessment_due_date,
+                "source_verified_on": built.source_verified_on,
+                "warnings": list(built.warnings),
+                "tasks": [asdict(task) for task in built.tasks],
+            }
+        return {
+            "active": True,
+            "pack": {"name": ap.name, "vertical": ap.vertical, "theme": ap.theme},
+            "states": list(registered_homeschool_states()),
+            "profile": {
+                "state": profile.state,
+                "name": profile.state_name,
+                "routes": list(profile.routes),
+                "default_route": profile.default_route,
+                "required_subjects": list(profile.required_subjects),
+                "instruction_days": profile.instruction_days,
+                "portfolio_required": profile.portfolio_required,
+                "assessment_grades": list(profile.assessment_grades),
+                "approval_required": profile.approval_required,
+                "source_citation": profile.source_citation,
+                "source_url": profile.source_url,
+                "confidence": profile.confidence,
+                "verified_on": profile.verified_on,
+            },
+            "route": route,
+            "school_of_record": context.school_of_record,
+            "calendar": calendar,
+            "privacy": {
+                "parent_owned": True,
+                "sibling_isolation": True,
+                "external_disclosures_held": True,
+                "model_training": False,
+                "profiling": False,
+            },
+            "surfaces": [
+                "Today", "Compliance", "Portfolio", "Progress", "High School",
+                "People", "Privacy", "Funding",
+            ],
+        }
+
+    def _set_homeschool_context_atomically(self, candidate: _HomeschoolContext) -> dict:
+        with self._homeschool_lock:
+            previous = self._homeschool_context
+            committed = False
+            try:
+                self._homeschool_context = candidate
+                result = self.homeschool_status()
+                committed = True
+                return result
+            finally:
+                if not committed:
+                    self._homeschool_context = previous
+
+    def homeschool_set_context(self, payload: dict[str, Any]) -> dict:
+        """Set an in-process parent-selected state/route for the Command Deck.
+
+        This does not file, attest, or persist a legal conclusion. A route is
+        accepted only when ``parent_confirmed`` is literally true.
+        """
+        from datetime import date
+
+        from .homeschool_jurisdictions import get_homeschool_profile
+        from .homeschool_route import RouteSelection, evaluate_route
+        state = str(payload.get("state") or "").strip().upper()
+        profile = get_homeschool_profile(state)
+        if profile is None:
+            return {"error": "unsupported homeschool state", "blocked": True}
+        route = str(payload.get("route") or "").strip()
+        if not route:
+            return self._set_homeschool_context_atomically(_HomeschoolContext(state=state))
+        start = str(payload.get("school_year_start") or "").strip()
+        try:
+            date.fromisoformat(start)
+        except ValueError:
+            return {"error": "school_year_start must be YYYY-MM-DD", "blocked": True}
+        commencement = str(payload.get("commencement") or "").strip()
+        if commencement not in {
+                "not_yet_started", "annual_continuation", "initial_start", "midyear_start"}:
+            return {
+                "error": "commencement must explicitly identify not-yet-started, first-year, midyear, or annual-continuation status",
+                "blocked": True,
+            }
+        materials_received_on = str(payload.get("materials_received_on") or "").strip()
+        try:
+            if materials_received_on:
+                date.fromisoformat(materials_received_on)
+        except ValueError:
+            return {"error": "materials_received_on must be YYYY-MM-DD", "blocked": True}
+        if (state == "NY" and commencement in {"initial_start", "midyear_start"}
+                and not materials_received_on):
+            return {
+                "error": "New York initial/midyear calendars require materials_received_on",
+                "blocked": True,
+            }
+        raw_grades = payload.get("learner_grades", ())
+        if not isinstance(raw_grades, (list, tuple)) or len(raw_grades) > 32:
+            return {"error": "learner_grades must be a bounded list", "blocked": True}
+        if any(not isinstance(grade, int) or isinstance(grade, bool) or not 0 <= grade <= 12
+               for grade in raw_grades):
+            return {"error": "learner grades must be integers in [0, 12]", "blocked": True}
+        learner_grades = tuple(raw_grades)
+        raw_reporting_dates = payload.get("reporting_dates", ())
+        if (not isinstance(raw_reporting_dates, (list, tuple))
+                or len(raw_reporting_dates) > 12
+                or any(not isinstance(value, str) for value in raw_reporting_dates)):
+            return {"error": "reporting_dates must be a bounded ISO-date list", "blocked": True}
+        reporting_dates = tuple(value.strip() for value in raw_reporting_dates)
+        try:
+            for value in reporting_dates:
+                date.fromisoformat(value)
+        except ValueError:
+            return {"error": "reporting_dates must contain YYYY-MM-DD values", "blocked": True}
+        assessment_due_date = str(payload.get("assessment_due_date") or "").strip()
+        try:
+            if assessment_due_date:
+                date.fromisoformat(assessment_due_date)
+        except ValueError:
+            return {"error": "assessment_due_date must be YYYY-MM-DD", "blocked": True}
+        selection = RouteSelection(
+            state=state, route=route,
+            confirmed_by_parent=payload.get("parent_confirmed") is True,
+            effective_date=start,
+            district_enrolled=payload.get("district_enrolled") is True,
+            school_of_record=str(payload.get("school_of_record") or "parent"),
+            oversight_entity=str(payload.get("oversight_entity") or ""),
+        )
+        decision = evaluate_route(selection)
+        if not decision.allowed:
+            return {
+                "error": "route confirmation blocked", "blocked": True,
+                "findings": [asdict(finding) for finding in decision.findings],
+                "available_routes": list(profile.routes),
+            }
+        canonical = decision.selection
+        try:
+            result = self._set_homeschool_context_atomically(
+                _HomeschoolContext(
+                    state=canonical.state,
+                    route=canonical.route,
+                    school_year_start=start,
+                    oversight_entity=canonical.oversight_entity,
+                    school_of_record=canonical.school_of_record,
+                    commencement=commencement,
+                    materials_received_on=materials_received_on,
+                    learner_grades=learner_grades,
+                    reporting_dates=reporting_dates,
+                    assessment_due_date=assessment_due_date,
+                )
+            )
+        except ValueError as exc:
+            return {"error": str(exc), "blocked": True}
+        result["route_findings"] = [asdict(finding) for finding in decision.findings]
+        return result
 
     def _lf_matter_holds(self) -> dict:
         """Matter-hold summary: count of active holds + per-matter status."""

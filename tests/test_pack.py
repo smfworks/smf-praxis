@@ -174,7 +174,8 @@ def test_homeschool_template_aliases_and_posture():
     for alias in ("homeschooling", "home-school", "k12", "parent-educator"):
         assert vt.get_template(alias)["vertical"] == "Homeschool"
     t = vt.get_template("homeschool")
-    assert t["complianceMode"] == "autonomous"
+    assert t is not None
+    assert t["complianceMode"] == "enforced"
     assert set(t["riskPolicy"]["dualApprovalRisks"]) == {"send", "destructive"}
     assert set(t["riskPolicy"]["autonomousRisks"]) == {"read", "draft"}
 
@@ -185,7 +186,7 @@ def test_bundled_homeschool_pack_discoverable(tmp_path, monkeypatch):
     assert "homeschool" in packs
     hs = packs["homeschool"]
     assert hs.vertical == "Homeschool"
-    assert hs.compliance_mode == "autonomous"
+    assert hs.compliance_mode == "enforced"
     assert "homeschool" in hs.system_prompt.lower()
 
 
@@ -193,7 +194,7 @@ def test_create_from_homeschool_template_seeds_pack(tmp_path, monkeypatch):
     _home(tmp_path, monkeypatch)
     pack.create_pack("family", vertical="homeschooling")
     p = pack.load_pack("family")
-    assert p is not None and p.compliance_mode == "autonomous"
+    assert p is not None and p.compliance_mode == "enforced"
     assert p.risk_policy["autonomousRisks"] == ["read", "draft"]
 
 
@@ -394,12 +395,9 @@ def test_law_firm_activate_sets_pointer_and_compliance(tmp_path, monkeypatch):
 
 
 def test_law_firm_theme_exposed():
-    from hybridagent.vertical_templates import get_template
     # the pack theme is on the pack, not the template; check via load_pack
-    import hybridagent.config as cfg
-    import os, pathlib
     # use the bundled pack dir directly (no home override needed for read)
-    from hybridagent.pack import bundled_packs_dir, _load_dir
+    from hybridagent.pack import _load_dir, bundled_packs_dir
     p = _load_dir(bundled_packs_dir() / "law_firm")
     assert p is not None
     assert p.theme.get("accent") == "#1e3a8a"
@@ -501,7 +499,10 @@ def test_law_firm_endpoint_inactive_when_no_pack(tmp_path, monkeypatch):
     """Without law_firm active, /api/law_firm returns active: False (the JS
     hides the section)."""
     _home(tmp_path, monkeypatch)
-    import json as _json, urllib.request, time
+    import json as _json
+    import time
+    import urllib.request
+
     from hybridagent.daemon import Daemon
     from hybridagent.llm import LLMClient
     d = Daemon(llm=LLMClient(mode="mock"), status_port=0)
@@ -521,7 +522,10 @@ def test_law_firm_endpoint_inactive_when_no_pack(tmp_path, monkeypatch):
 def test_law_firm_endpoint_active_returns_four_surfaces(tmp_path, monkeypatch):
     """With law_firm active, /api/law_firm returns the four compliance surfaces."""
     _home(tmp_path, monkeypatch)
-    import json as _json, urllib.request, time
+    import json as _json
+    import time
+    import urllib.request
+
     from hybridagent.daemon import Daemon
     from hybridagent.llm import LLMClient
     pack.activate("law_firm")
@@ -554,7 +558,9 @@ def test_law_firm_dashboard_assets_served(tmp_path, monkeypatch):
     """The dashboard serves law_firm.js and law_firm.css, and the HTML embeds
     the law-firm mount + asset links."""
     _home(tmp_path, monkeypatch)
-    import urllib.request, time
+    import time
+    import urllib.request
+
     from hybridagent.daemon import Daemon
     from hybridagent.llm import LLMClient
     d = Daemon(llm=LLMClient(mode="mock"), status_port=0)
@@ -584,7 +590,10 @@ def test_law_firm_security_attestation_surface_fails_ma_without_wisp(tmp_path, m
     """The security attestation surface reports MA as FAIL when no WISP is
     configured (the default controls state)."""
     _home(tmp_path, monkeypatch)
-    import json as _json, urllib.request, time
+    import json as _json
+    import time
+    import urllib.request
+
     from hybridagent.daemon import Daemon
     from hybridagent.llm import LLMClient
     pack.activate("law_firm")
