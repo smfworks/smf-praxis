@@ -7,14 +7,13 @@ vertical repos (smf-praxis-legal, -medical, -education, -homeschool, -forensic).
 """
 
 from hybridagent import vertical_evals as ve
+from hybridagent.broker import RiskClass
 from hybridagent.evals import run_evals
 from hybridagent.verticals.registry import (
     VerticalSpec,
     clear_registry,
-    register_vertical_eval_cases,
     register_vertical_spec,
 )
-from hybridagent.broker import RiskClass
 
 
 def test_base_has_zero_vertical_specs():
