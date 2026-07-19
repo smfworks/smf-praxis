@@ -190,6 +190,14 @@ def check_core_deps_free() -> list[str]:
                 elif isinstance(node, ast.ImportFrom):
                     if not node.module:
                         continue
+                    # Relative imports (from .X / from ..X) are by definition
+                    # intra-package, never third-party. The AST stores the
+                    # leading-dot count in `node.level`; `node.module` has the
+                    # dots stripped, so without this guard a multi-segment
+                    # relative import like `from .verticals.registry import X`
+                    # gets mis-flagged as a third-party `verticals` import.
+                    if node.level and node.level > 0:
+                        continue
                     mod = node.module.split(".")[0]
                     if (mod in STDLIB or mod in LOCAL_MODULES
                             or mod in ALLOWED_EXTRAS):
