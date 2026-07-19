@@ -1,62 +1,62 @@
-"""Tests for per-vertical eval packs (p09): generation, homeschool coverage, posture."""
+"""Tests for per-vertical eval packs (p09): registry-driven generation.
+
+Post vertical-extraction cutover: the base ships an empty vertical registry.
+These tests verify the base's registry mechanism works correctly with zero
+verticals installed. Vertical-specific eval-case tests live in the private
+vertical repos (smf-praxis-legal, -medical, -education, -homeschool, -forensic).
+"""
 
 from hybridagent import vertical_evals as ve
 from hybridagent.evals import run_evals
+from hybridagent.verticals.registry import (
+    VerticalSpec,
+    clear_registry,
+    register_vertical_eval_cases,
+    register_vertical_spec,
+)
+from hybridagent.broker import RiskClass
 
 
-def test_vertical_cases_generated_for_each_spec():
+def test_base_has_zero_vertical_specs():
+    """Base ships with an empty vertical registry (no verticals installed)."""
+    clear_registry()
+    # Re-trigger the bridge import attempt (will fail in trimmed base)
+    import importlib
+    importlib.reload(ve)
     cases = ve.vertical_eval_cases()
-    ids = {c.id for c in cases}
-    assert all(c.category == "vertical" for c in cases)
-    # 2 auto-generated (persona + posture) per vertical + manual vertical cases
-    manual_homeschool = 5
-    manual_law_firm = 5
-    manual_medical_office = 5
-    manual_school_system = 5
-    assert len(cases) == (
-        2 * len(ve.VERTICAL_SPECS)
-        + manual_homeschool + manual_law_firm
-        + manual_medical_office + manual_school_system
+    assert len(cases) == 0, f"base alone should produce 0 vertical cases, got {len(cases)}"
+    assert len(ve.VERTICAL_SPECS) == 0, f"base alone should have 0 specs, got {len(ve.VERTICAL_SPECS)}"
+
+
+def test_registry_mechanism_works():
+    """Registering a fake vertical spec produces persona + posture cases."""
+    clear_registry()
+    spec = VerticalSpec(
+        name="test_vert",
+        persona_keyword="test",
+        compliance_mode="enforced",
+        autonomous={RiskClass.READ, RiskClass.DRAFT},
+        held={RiskClass.SEND, RiskClass.DESTRUCTIVE},
     )
-    assert {"vertical.homeschool.persona", "vertical.homeschool.posture"} <= ids
-    assert {"vertical.homeschool.route_gate",
-            "vertical.homeschool.no_fabricated_attendance",
-            "vertical.homeschool.child_safe_tutor",
-            "vertical.homeschool.private_collaboration",
-            "vertical.homeschool.transcript_provenance"} <= ids
-    # the law_firm auto cases + manual cases are present
-    assert {"vertical.law_firm.persona", "vertical.law_firm.posture"} <= ids
-    assert {"vertical.law_firm.upl_guardrail",
-            "vertical.law_firm.ny_ad_filing_gate",
-            "vertical.law_firm.ma_wisp_attestation",
-            "vertical.law_firm.conflict_check",
-            "vertical.law_firm.cle_status"} <= ids
-    # medical_office auto + manual cases
-    assert {"vertical.medical_office.persona", "vertical.medical_office.posture"} <= ids
-    assert {"vertical.medical_office.never_write_chart",
-            "vertical.medical_office.telemedicine_gate",
-            "vertical.medical_office.controlled_substance",
-            "vertical.medical_office.minor_consent",
-            "vertical.medical_office.portal_triage"} <= ids
-    # school_system auto + manual cases
-    assert {"vertical.school_system.persona", "vertical.school_system.posture"} <= ids
-    assert {"vertical.school_system.draft_not_decide",
-            "vertical.school_system.ny_2d_privacy",
-            "vertical.school_system.educator_attestation",
-            "vertical.school_system.parent_triage",
-            "vertical.school_system.vendor_hygiene"} <= ids
+    register_vertical_spec(spec)
+    import importlib
+    importlib.reload(ve)
+    cases = ve.vertical_eval_cases()
+    assert len(cases) == 2, f"expected 2 generic cases for 1 spec, got {len(cases)}"
+    ids = {c.id for c in cases}
+    assert {"vertical.test_vert.persona", "vertical.test_vert.posture"} == ids
+    clear_registry()
+    importlib.reload(ve)
 
 
-def test_homeschool_vertical_pack_passes():
-    report = run_evals(category="vertical")
-    by_id = {r.case_id: r for r in report.results}
-    assert by_id["vertical.homeschool.persona"].passed, by_id["vertical.homeschool.persona"].detail
-    assert by_id["vertical.homeschool.posture"].passed, by_id["vertical.homeschool.posture"].detail
-    assert report.passed
-
-
-def test_vertical_category_included_in_full_suite():
+def test_vertical_category_empty_in_base():
+    """Full eval suite in base has no vertical category (0 vertical cases)."""
+    clear_registry()
+    import importlib
+    importlib.reload(ve)
     report = run_evals()
     cats = report.by_category()
-    assert "vertical" in cats
-    assert cats["vertical"]["pass"] == cats["vertical"]["total"]
+    # vertical category should be absent or 0
+    vert = cats.get("vertical", {})
+    assert vert.get("total", 0) == 0, f"base should have 0 vertical evals, got {vert}"
+    assert report.passed, "base eval suite should pass with no verticals"
