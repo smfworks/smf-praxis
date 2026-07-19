@@ -35,9 +35,18 @@ valid.
 | Source | Location | Wins |
 |---|---|---|
 | User packs | `~/.praxis/packs/<name>/pack.json` | override bundled |
+| Vertical packages | `pip install praxis-<vertical>` (private, commercial) | registers via plugin registry |
 | Bundled packs | `hybridagent/packs/<name>/pack.json` (ship in wheel) | fallback |
 
-Today bundled: **general** (safe default) and **homeschool** (full reference pack).
+Today bundled in the open-core base: **general** (safe default).
+
+Vertical packs (law_firm, medical_office, school_system, homeschool,
+forensic_engineering) have been extracted into private commercial packages:
+`praxis-legal`, `praxis-medical`, `praxis-education`, `praxis-homeschool`,
+`praxis-forensic`. Install the package to activate that vertical — it
+auto-registers its `VerticalSpec`, eval cases, and dashboard routes with
+the base's plugin registry (`hybridagent.verticals.registry`). See the
+private repos (`smfworks/smf-praxis-<vertical>`) for details.
 
 ---
 
