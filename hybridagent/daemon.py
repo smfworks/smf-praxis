@@ -2499,15 +2499,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self._json_response(self.daemon.board_delete(
                     payload.get("card_id", "")))
                 return
-            if self.path == "/api/homeschool/context":
-                if not self._require_same_origin_json():
-                    return
-                hs_payload = json.loads(self._read_body(max_bytes=64 * 1024).decode() or "{}")
-                if not isinstance(hs_payload, dict):
-                    self._json_response({"error": "JSON object required"}, status=400)
-                    return
-                hs_result = self.daemon.homeschool_set_context(hs_payload)
-                self._json_response(hs_result, status=400 if hs_result.get("blocked") else 200)
+            if self._dispatch_vertical_route():
                 return
             if self.path == "/api/chat/agent":
                 self._handle_chat_agent()
@@ -2820,18 +2812,6 @@ class _StatusHandler(BaseHTTPRequestHandler):
                                   default=str).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-            elif self.path == "/api/law_firm":
-                body = json.dumps(self.daemon.law_firm_compliance(),
-                                  default=str).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-            elif self.path == "/api/homeschool":
-                if not self._require_auth():
-                    return
-                body = json.dumps(self.daemon.homeschool_status(),
-                                  default=str).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
             elif self.path.startswith("/api/search"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
@@ -2849,6 +2829,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             else:
+                if self._dispatch_vertical_route():
+                    return
                 body = b"not found"
                 self.send_response(404)
         except Exception as exc:
@@ -2860,17 +2842,38 @@ class _StatusHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _dispatch_vertical_route(self) -> bool:
+        """Offer the request to installed vertical route registrars."""
+        from .verticals.registry import (
+            iter_vertical_routes,
+            load_installed_verticals,
+        )
+
+        load_installed_verticals()
+        return any(registrar(self) for registrar in iter_vertical_routes())
+
     def _is_loopback(self) -> bool:
         host = self.client_address[0] if self.client_address else ""
         return (host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
                 or host.startswith("127."))
 
     def _serve_static(self, rel: str) -> None:
-        """Serve a static asset from the package ``web/`` bundle (modular shell)."""
+        """Serve a static asset from the base or an installed vertical bundle."""
         rel = rel.split("?", 1)[0]
-        base = Path(__file__).resolve().parent / "web"
-        target = (base / rel).resolve()
-        if base not in target.parents or not target.is_file():
+        from .verticals.registry import (
+            iter_vertical_web_roots,
+            load_installed_verticals,
+        )
+
+        load_installed_verticals()
+        roots = [Path(__file__).resolve().parent / "web", *iter_vertical_web_roots()]
+        target = None
+        for base in roots:
+            candidate = (base / rel).resolve()
+            if base in candidate.parents and candidate.is_file():
+                target = candidate
+                break
+        if target is None:
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b"not found")
@@ -4537,12 +4540,13 @@ class Daemon:
         tasks only. It never returns child names, work, health, financial data,
         or unrestricted collaborator records.
         """
-        from . import pack as _pack
-        from .homeschool_jurisdictions import (
+        from hybridagent_praxis_homeschool.modules.homeschool_jurisdictions import (
             get_homeschool_profile,
             profile_for_route,
             registered_homeschool_states,
         )
+
+        from . import pack as _pack
         ap = _pack.active()
         if ap is None or ap.vertical.lower() != "homeschool":
             return {"active": False, "pack": None}
@@ -4567,8 +4571,10 @@ class Daemon:
             "assessment_due_date": context.assessment_due_date,
         }
         if route and school_year_start and commencement != "not_yet_started":
-            from .homeschool_compliance import build_compliance_calendar
-            from .homeschool_route import RouteSelection
+            from hybridagent_praxis_homeschool.modules.homeschool_compliance import (
+                build_compliance_calendar,
+            )
+            from hybridagent_praxis_homeschool.modules.homeschool_route import RouteSelection
             selection = RouteSelection(
                 state, route, True, school_year_start,
                 school_of_record=context.school_of_record or "parent",
@@ -4649,8 +4655,13 @@ class Daemon:
         """
         from datetime import date
 
-        from .homeschool_jurisdictions import get_homeschool_profile
-        from .homeschool_route import RouteSelection, evaluate_route
+        from hybridagent_praxis_homeschool.modules.homeschool_jurisdictions import (
+            get_homeschool_profile,
+        )
+        from hybridagent_praxis_homeschool.modules.homeschool_route import (
+            RouteSelection,
+            evaluate_route,
+        )
         state = str(payload.get("state") or "").strip().upper()
         profile = get_homeschool_profile(state)
         if profile is None:
@@ -4745,7 +4756,7 @@ class Daemon:
     def _lf_matter_holds(self) -> dict:
         """Matter-hold summary: count of active holds + per-matter status."""
         try:
-            from .legal_hold import LegalHoldLedger
+            from hybridagent_praxis_legal.modules.legal_hold import LegalHoldLedger
             ledger = getattr(self, "_lf_hold_ledger", None) or LegalHoldLedger()
             self._lf_hold_ledger = ledger
             holds = ledger.all_holds()
@@ -4766,11 +4777,11 @@ class Daemon:
     def _lf_credentials(self) -> dict:
         """Credential compliance summary: per-credential status counts."""
         try:
-            from .credentials import CredentialLedger
+            from hybridagent_praxis_legal.modules.credentials import CredentialLedger
             ledger = getattr(self, "_lf_cred_ledger", None) or CredentialLedger()
             self._lf_cred_ledger = ledger
             creds = ledger.all_credentials()
-            from .credentials import compliance_status
+            from hybridagent_praxis_legal.modules.credentials import compliance_status
             statuses = [compliance_status(c) for c in creds]
             return {
                 "total": len(creds),
@@ -4793,7 +4804,11 @@ class Daemon:
     def _lf_ad_filings(self) -> dict:
         """Ad-filing tracker: filings per jurisdiction + compliant count."""
         try:
-            from .advertising_filing import FilingLedger, can_send, filing_required
+            from hybridagent_praxis_legal.modules.advertising_filing import (
+                FilingLedger,
+                can_send,
+                filing_required,
+            )
             ledger = getattr(self, "_lf_filing_ledger", None) or FilingLedger()
             self._lf_filing_ledger = ledger
             all_filings = ledger.all_filings()
@@ -4814,7 +4829,10 @@ class Daemon:
     def _lf_security_attestations(self) -> dict:
         """Security attestation summary: per-jurisdiction pass/fail."""
         try:
-            from .security_attestation import SecurityControls, attest
+            from hybridagent_praxis_legal.modules.security_attestation import (
+                SecurityControls,
+                attest,
+            )
             # the firm's asserted controls (defaults to unconfigured until set)
             controls = getattr(self, "_lf_security_controls", None) or SecurityControls()
             self._lf_security_controls = controls

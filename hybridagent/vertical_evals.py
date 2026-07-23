@@ -41,6 +41,7 @@ Extending to a new domain (human + agent steps):
 """
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -54,6 +55,7 @@ from .verticals.registry import (
 from .verticals.registry import (
     iter_vertical_eval_factories,
     iter_vertical_specs,
+    load_installed_verticals,
     register_vertical_spec,
 )
 
@@ -62,9 +64,10 @@ from .verticals.registry import (
 # private distributions, this import is removed and the base ships with an
 # empty registry. The try/except makes the extraction cutover non-breaking:
 # base imports clean either way.
-_builtin_bridge: object  # None when verticals are extracted into private dists
 try:  # pragma: no cover - exercised by tests/test_vertical_evals.py
-    from .verticals import _builtin as _builtin_bridge  # type: ignore[assignment] # noqa: F401
+    _builtin_bridge: object | None = importlib.import_module(
+        f"{__package__}.verticals._builtin"
+    )
 except ImportError:  # verticals extracted into private distributions
     _builtin_bridge = None
 
@@ -115,13 +118,19 @@ VERTICAL_SPECS: list[VerticalSpec] = _mirror_specs()
 
 
 def _pack_for(name: str) -> VerticalPack:
+    from .pack import load_pack
+
+    installed = load_pack(name)
+    if installed is not None:
+        return installed
     from . import vertical_templates as vt
     t = vt.get_template(name) or {}
     return VerticalPack.from_manifest({**t, "name": name})
 
 
 def _policy(pk: VerticalPack) -> GovernancePolicy:
-    policy = GovernancePolicy(allowed_tools={t.name for t in _PROBES.values()})
+    allowed = {t.name for t in _PROBES.values()} | set(pk.tools)
+    policy = GovernancePolicy(allowed_tools=allowed)
     apply_to_policy(pk, policy)
     return policy
 
@@ -139,19 +148,42 @@ def _persona_case(spec: _RegistryVerticalSpec):
 
 def _posture_case(spec: _RegistryVerticalSpec):
     def run() -> tuple[bool, str]:
-        broker = GovernanceBroker(_policy(_pack_for(spec.name)))
+        pk = _pack_for(spec.name)
+        broker = GovernanceBroker(_policy(pk))
         for rc in spec.autonomous:
-            if broker.authorize("a", _PROBES[rc].name, rc, {}).verdict is not Verdict.ALLOW:
+            tool_name = pk.tools[0] if pk.tools else _PROBES[rc].name
+            if broker.authorize("a", tool_name, rc, {}).verdict is not Verdict.ALLOW:
                 return False, f"{rc.value} should be autonomous"
         for rc in spec.held:
-            if broker.authorize("a", _PROBES[rc].name, rc, {}).verdict is Verdict.ALLOW:
+            tool_name = pk.tools[0] if pk.tools else _PROBES[rc].name
+            if broker.authorize("a", tool_name, rc, {}).verdict is Verdict.ALLOW:
                 return False, f"{rc.value} should be held"
         return True, f"auto={sorted(r.value for r in spec.autonomous)}"
     return run
 
 
+def _registration_failure_case(name: str, detail: str) -> EvalCase:
+    def run() -> tuple[bool, str]:
+        return False, detail
+
+    return EvalCase(
+        f"vertical.{name}.registration",
+        "vertical",
+        f"Installed vertical {name!r} registers successfully.",
+        run,
+    )
+
+
 def vertical_eval_cases() -> list[EvalCase]:
     cases: list[EvalCase] = []
+    load_errors = load_installed_verticals()
+
+    # Keep the backwards-compatible module attribute synchronized after lazy
+    # entry-point discovery.
+    VERTICAL_SPECS[:] = _mirror_specs()
+
+    for name, detail in sorted(load_errors.items()):
+        cases.append(_registration_failure_case(name, detail))
     # Generic persona + posture cases for every registered spec.
     for spec in iter_vertical_specs():
         cases.append(EvalCase(f"vertical.{spec.name}.persona", "vertical",

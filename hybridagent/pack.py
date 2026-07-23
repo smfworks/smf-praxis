@@ -100,6 +100,22 @@ def bundled_packs_dir() -> Path:
     return Path(__file__).resolve().parent / "packs"
 
 
+def installed_packs_dirs() -> list[Path]:
+    """Pack roots exported by installed vertical distributions.
+
+    Loading is lazy and idempotent. The base has no hard dependency on any
+    vertical package; distributions opt in through ``praxis.verticals`` entry
+    points and register their packaged ``packs/`` directory.
+    """
+    from .verticals.registry import (
+        iter_vertical_pack_roots,
+        load_installed_verticals,
+    )
+
+    load_installed_verticals()
+    return list(iter_vertical_pack_roots())
+
+
 def _load_dir(d: Path) -> "VerticalPack | None":
     mf = d / MANIFEST
     if not mf.is_file():
@@ -114,9 +130,13 @@ def _load_dir(d: Path) -> "VerticalPack | None":
 
 
 def list_packs() -> "dict[str, VerticalPack]":
-    """All discoverable packs by name (user packs override bundled)."""
+    """All discoverable packs by name.
+
+    Precedence is bundled base < installed distribution < user pack.
+    """
     found: dict[str, VerticalPack] = {}
-    for base in (bundled_packs_dir(), packs_dir()):
+    roots = [bundled_packs_dir(), *installed_packs_dirs(), packs_dir()]
+    for base in roots:
         if not base.is_dir():
             continue
         for d in sorted(base.iterdir()):
@@ -128,11 +148,17 @@ def list_packs() -> "dict[str, VerticalPack]":
 
 
 def load_pack(name_or_path: str) -> "VerticalPack | None":
-    """Load a pack by name (user dir, then bundled) or by directory path."""
+    """Load a pack by name or directory path.
+
+    User packs override installed-distribution packs, which override bundled
+    base packs.
+    """
     p = Path(name_or_path)
-    if p.is_dir():
+    explicit_path = p.is_absolute() or len(p.parts) > 1 or name_or_path.startswith(".")
+    if explicit_path and p.is_dir():
         return _load_dir(p)
-    for base in (packs_dir(), bundled_packs_dir()):
+    roots = [packs_dir(), *reversed(installed_packs_dirs()), bundled_packs_dir()]
+    for base in roots:
         cand = base / name_or_path
         if cand.is_dir():
             return _load_dir(cand)

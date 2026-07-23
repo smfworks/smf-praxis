@@ -9,6 +9,7 @@ vertical repos (smf-praxis-legal, -medical, -education, -homeschool, -forensic).
 from hybridagent import vertical_evals as ve
 from hybridagent.broker import RiskClass
 from hybridagent.evals import run_evals
+from hybridagent.verticals import registry as vertical_registry
 from hybridagent.verticals.registry import (
     VerticalSpec,
     clear_registry,
@@ -16,9 +17,10 @@ from hybridagent.verticals.registry import (
 )
 
 
-def test_base_has_zero_vertical_specs():
+def test_base_has_zero_vertical_specs(monkeypatch):
     """Base ships with an empty vertical registry (no verticals installed)."""
     clear_registry()
+    monkeypatch.setattr(vertical_registry, "_installed_entry_points", lambda: [])
     # Re-trigger the bridge import attempt (will fail in trimmed base)
     import importlib
     importlib.reload(ve)
@@ -27,9 +29,10 @@ def test_base_has_zero_vertical_specs():
     assert len(ve.VERTICAL_SPECS) == 0, f"base alone should have 0 specs, got {len(ve.VERTICAL_SPECS)}"
 
 
-def test_registry_mechanism_works():
+def test_registry_mechanism_works(monkeypatch):
     """Registering a fake vertical spec produces persona + posture cases."""
     clear_registry()
+    monkeypatch.setattr(vertical_registry, "_installed_entry_points", lambda: [])
     spec = VerticalSpec(
         name="test_vert",
         persona_keyword="test",
@@ -48,9 +51,10 @@ def test_registry_mechanism_works():
     importlib.reload(ve)
 
 
-def test_vertical_category_empty_in_base():
+def test_vertical_category_empty_in_base(monkeypatch):
     """Full eval suite in base has no vertical category (0 vertical cases)."""
     clear_registry()
+    monkeypatch.setattr(vertical_registry, "_installed_entry_points", lambda: [])
     import importlib
     importlib.reload(ve)
     report = run_evals()
