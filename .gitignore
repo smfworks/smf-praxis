@@ -26,3 +26,6 @@ mutation-session.sqlite.*
 
 # Hypothesis example database (property-test cache)
 .hypothesis/
+
+# Hermes release-gate state (session-local, must not be committed)
+.hermes/

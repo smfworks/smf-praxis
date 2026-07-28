@@ -5,6 +5,51 @@ current workflow does not publish to PyPI. The version is single-sourced from
 `hybridagent/__init__.py` (`__version__`) and read into package metadata through
 `[tool.setuptools.dynamic]` in `pyproject.toml`.
 
+## Three-reviewer exact-SHA review gate
+
+Before pushing a tag, the candidate SHA must pass review by three independent
+reviewers, each scoped to a different domain:
+
+1. **Legal / Privacy** — tenant isolation, data policy, authority policy,
+   13-state compliance, PII, DNS-rebinding protection.
+2. **Learning / Safety** — eval correctness (40/40, 36/36 vertical),
+   child-safe tutoring, no fabricated evidence, safety guardrails.
+3. **Release / Integration** — test suite green, Ruff, mypy, coverage ≥80%,
+   architecture 4/4, wheel/sdist + Twine, clean-wheel install, version bump.
+
+The `scripts/release-gate.py` CLI automates this process:
+
+```bash
+# 1. Create a gate for the candidate SHA
+python3 scripts/release-gate.py dispatch <sha>
+
+# 2. Dispatch the three reviewers (via delegate_task)
+#    The dispatch command prints the exact delegate_task invocation.
+
+# 3. Record each reviewer's JSON verdict as it returns
+python3 scripts/release-gate.py record <sha> legal --verdict '<json>'
+python3 scripts/release-gate.py record <sha> learning --verdict '<json>'
+python3 scripts/release-gate.py record <sha> release --verdict '<json>'
+
+# 4. Check gate status
+python3 scripts/release-gate.py status <sha>
+
+# 5. Once all three PASS, unlock the gate
+python3 scripts/release-gate.py unlock <sha>
+```
+
+The gate enforces:
+- **Exact SHA binding** — the candidate SHA is frozen at dispatch; unlock
+  fails if HEAD has moved.
+- **Clean tree** — unlock fails if the working tree is not clean.
+- **Three independent PASS** — all three domains must pass; any BLOCKED
+  verdict blocks the gate.
+- **Signed attestation** — unlock writes a `.attestation.json` file with
+  a SHA-256 hash binding all fields, stored at
+  `.hermes/release-gates/<sha>.attestation.json`.
+
+Gate state persists across sessions in `.hermes/release-gates/`.
+
 ## Cut a release
 
 1. Bump `__version__` in `hybridagent/__init__.py` using semantic versioning.
