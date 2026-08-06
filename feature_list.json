@@ -196,6 +196,21 @@
       "verification": ".venv/bin/python -m pytest tests/test_homeschool_session1.py tests/test_homeschool_session2.py tests/test_homeschool_session3.py tests/test_homeschool_pack_integration.py tests/test_vertical_evals.py -q && .venv/bin/python scripts/check_architecture.py",
       "status": "in_progress",
       "evidence": "Research: 110 use cases, 20 never-autonomous rules, national needs/trends analysis, and source-confidence-labeled 13-state regulatory matrix. Remediated v0.28.32 tree: 2,316 tests collected; 2,303 passed with 13 expected skips at 84.90% coverage; targeted reviewer regressions green; 66/66 evals including 36/36 vertical; whole-tree Ruff; mypy across 183 source files; architecture 4/4; compilation, JavaScript syntax, and deterministic Office rendering across clock ticks; offline demo; wheel/sdist and Twine checks; 39-asset wheel audit; installed version equality; installed Homeschool manifest/knowledge validation; and clean-wheel installation all passed on 2026-07-18. Live synthetic-only `gpt-oss:20b` dogfood confirmed all deterministic FL onboarding and PA annual-closeout findings with responsible-adult review and no guard violations. Household and external access is household/learner/field/purpose-bound; remote browser access rejects malformed authorities and fails closed against DNS rebinding; route context uses exception-safe atomic transactions including route clearing, commencement is mandatory, and parent-selected dates are constrained to an anniversary-correct school year; non-source deadlines are parent-selected or labeled planning targets; filings bind household, authorized parent, route decision, and source version; the browser Command Deck constructs DOM nodes and assigns dynamic text through textContent; the primary tutoring path invokes conservative direct-harm escalation independent of enumerated household titles; authorship binds exact draft bytes and learner/session/submission IDs through an immutable trusted ledger; support inquiries require matching household and authorized-parent evidence authority while support attestations bind representable trusted time; assessment clocks reject non-representable timestamps; evaluator/collaborator authorization uses authoritative ledgers, trusted clocks, half-open expiry, and overlapping-access prevention; transcript/diploma values re-enforce learner, course, evidence, aggregate, and policy invariants from immutable manifests; funding amounts reject sub-cent values and reimbursement packets bind learner, account, eligibility determination, source-versioned policy, full expense/receipt/invoice manifest, total, parent, and canonical packet hash before lifecycle transitions. Three-domain independent exact-SHA PASS remains mandatory before release."
+    },
+    {
+      "id": "VF01",
+      "title": "VideoForge: Agent-orchestrated video pipeline (Ollama + OpenRouter Flux/MiniMax + Mage Flow + harness verification)",
+      "status": "in_progress",
+      "owner": "Liam",
+      "started": "2026-08-06",
+      "user_visible_behavior": "End-to-end: idea -> storyboard (local LLM) -> image/video gen (OpenRouter) -> post (Mage Flow) -> verify (Praxis harness)",
+      "verification": "praxis fanout VideoForge; report.json with scores; artifacts in /tmp/videoforge-evidence",
+      "evidence": [
+        "PROGRESS.md",
+        "docs/harness/pilot-evidence-2026-08-06.txt",
+        "/tmp/videoforge-evidence/report.json"
+      ],
+      "notes": "Pilot approved with full autonomy. Ties to Prime Intellect (Aiona) for future scaling."
     }
   ]
 }

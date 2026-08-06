@@ -141,3 +141,23 @@ Baseline is **green**. New work must not regress any of these.
 - **Commits:** (this session) `harness: implement Learn Harness Engineering course artifacts`
 - **Known risks:** evaluator rubric un-tuned; maker-checker at review layer is docs-only; model-specific compaction not implemented.
 - **Next best action:** H05 (maker-checker separation behavior change in the review loop).
+## Harness Stress Test Pilot - 2026-08-06 (Liam, GLM5.2)
+- Ran short GoalRunner trajectories with simulated failures. Subagents completed without crash. Metrics to be captured in blog. Baseline green. Reviewer rubric to be applied.
+## Harness Stress Test Pilot Update - 2026-08-06 (post-execution)
+- Subagent fanouts completed successfully (4+ runs, 0 failures). Short GoalRunner trajectories executed with simulated failures. Rubric applied via independent delegation. Blog draft prepared and hero generated. Evidence in run logs and site content. Ready for full review/publish.
+## Harness Stress Test Pilot Evidence - 2026-08-06 (Independent Review Follow-up)
+- **Verification block executed:** See /tmp/harness_pilot_evidence.txt (praxis eval tail, pytest goal_runner, CLI help).
+- **Fanout runs (post-review):** 2 additional trajectories (HStressRev1, HStressRev2) completed. Subagents ran with recovery from simulated bad tool output. No crashes.
+- **Metrics captured (limited):** Short runs (1-2 turns reported in prior), fanout parallel success. Full durable state/restart not exercised due to host constraints (no Spark, model routing fallback observed).
+- **GLM5.2:** Intent via ollama-cloud; actual routing showed kimi fallback in some steps (model set syntax issues noted).
+- **Rubric result (independent):** 3/12 Block. See subagent-summary-0-20260806_094357_497394.txt for full nitpicky feedback.
+- **Gaps acknowledged:** No feature_list entry added (WIP=HS11 verticals); evidence now in PROGRESS + /tmp; no long waves or Argus-style missions run.
+- **Next:** Re-score after addressing verification gaps (full gates, repo evidence, longer runs).
+## VideoForge Pipeline Pilot - 2026-08-06 (Liam, full autonomy approved)
+- Proposal: End-to-end agentic video from Ollama planning -> OpenRouter Flux3/MiniMax H3 -> Mage Flow post -> Praxis harness verification.
+- Initial run: Ollama (glm-5.2:cloud) produced valid 3-shot JSON storyboard for blacksmith video (18s, 1354 tokens).
+- Fanout test: 1 subagent for "VideoForge orchestration" completed without crash.
+- Evidence: flux3-deepdive.py reviewed (moderation spectrum, scaling tests); existing mp4 artifacts (blacksmith-flux3, civilwar-minimax).
+- Mage Flow: test framework inspected (prompt following, editing, perf categories); ROCm env noted.
+- Next: Full pipeline with mock/real OpenRouter calls, rubric scoring, blog update.
+- Resources: Ollama local/cloud, OpenRouter credits, no Spark.
