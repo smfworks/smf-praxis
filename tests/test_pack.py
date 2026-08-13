@@ -20,6 +20,18 @@ def test_bundled_general_pack_discoverable(tmp_path, monkeypatch):
     assert packs["general"].compliance_mode == "enforced"
 
 
+def test_bundled_packs_are_open_core_only():
+    """The wheel ships only the general pack after the 0.29.0 extraction."""
+    names = {p.name for p in pack.bundled_packs_dir().iterdir() if p.is_dir()}
+    assert names == {"general"}
+
+
+def test_activate_extracted_pack_name_fails_closed(tmp_path, monkeypatch):
+    _home(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="unknown pack 'homeschool'"):
+        pack.activate("homeschool")
+
+
 def test_create_and_load_roundtrip(tmp_path, monkeypatch):
     _home(tmp_path, monkeypatch)
     pack.create_pack("legal", vertical="Legal", description="legal helper")

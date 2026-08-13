@@ -7,7 +7,7 @@
 
 - [ ] **Build passes.** `python3 -m build` produces a wheel (or `pip install -e .` succeeds).
 - [ ] **Tests pass.** `python3 -m pytest --ignore=tests/test_fuzz_parsers.py -q` — green, no new failures vs. baseline in PROGRESS.md.
-- [ ] **Evals pass.** `python3 -m hybridagent.cli eval` — 40/40.
+- [ ] **Evals pass.** `python3 -m hybridagent.cli eval` — 30/30 on a clean base install (vertical packages add their own cases).
 - [ ] **Lint + types clean.** `python3 -m ruff check hybridagent/` and `python3 -m mypy hybridagent --ignore-missing-imports` both clean.
 - [ ] **Progress recorded.** `PROGRESS.md` updated with this session's work; `feature_list.json` reflects actual state (no false `passing`).
 - [ ] **No stale artifacts.** No debug `print`/`console.log`/`debugger`/TODO markers left in committed code. No temp files (`/tmp/debug-*.log`, `.coverage` is gitignored). Commented-out code removed.

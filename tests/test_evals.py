@@ -11,6 +11,17 @@ def test_builtin_evals_all_pass():
     assert report.passed, report.render()
 
 
+def test_open_core_base_eval_count_is_thirty():
+    """Isolated base install: 30 capability/safety cases, zero verticals."""
+    from hybridagent.verticals.registry import clear_registry
+
+    clear_registry()
+    report = run_evals(cases=list(BUILTIN_EVALS))
+    assert report.total == 30, report.render()
+    assert report.passed, report.render()
+    assert "vertical" not in report.by_category()
+
+
 def test_eval_categories_present():
     cats = {c.category for c in BUILTIN_EVALS}
     assert {"tool_use", "approval", "safety", "schema"} <= cats

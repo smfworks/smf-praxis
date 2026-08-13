@@ -19,7 +19,7 @@ Architecture (post vertical-extraction refactor):
   * The open-core base ships an **empty** vertical registry
     (``hybridagent.verticals.registry``). With no verticals registered,
     ``vertical_eval_cases()`` returns an empty list and ``praxis eval`` runs
-    only the 40 base capability/safety evals.
+    only the 30 base capability/safety evals.
   * Vertical packs register themselves by populating the registry — either
     via the built-in bridge module ``hybridagent.verticals._builtin`` (used
     while the vertical packs still live inside the base distribution) or via

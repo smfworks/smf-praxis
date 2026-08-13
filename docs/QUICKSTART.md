@@ -40,18 +40,23 @@ praxis daemon submit --goal "Draft a follow-up email to the team"
 Reads/drafts run automatically; **send/destructive actions are held** for your
 approval on the dashboard. Approve to release — that's the whole point.
 
-## 5. Try a vertical pack (1 min)
+## 5. Try a pack (1 min)
+
+The open-core wheel ships the `general` pack. Commercial verticals
+(legal, medical, education, homeschool, forensic) live in private repos and
+register via the `praxis.verticals` entry point.
 
 ```bash
-praxis pack activate homeschool   # persona + policy + knowledge + lesson-plan skill
-praxis ask "How many instructional days do I plan for?"
-praxis pack deactivate            # back to defaults
+praxis pack list
+praxis pack templates
+praxis pack create mine --vertical general
+praxis pack install ./mine
 ```
 
 ## Verify it's healthy
 
 ```bash
-praxis eval        # expect "40/40 passed  OK"
+praxis eval        # expect "30/30 passed  OK" on a clean open-core install
 ```
 
 ## Optional: professional document output
@@ -64,7 +69,8 @@ Python workflow is documented in [`artifacts/README.md`](artifacts/README.md).
 ## What to poke at (and report back)
 
 - Approvals: does holding send/destructive feel right? ⏸️
-- Packs: activate `homeschool`, see if grounding + skill help your prompts. 📦
+- Packs: `praxis pack list` then install or create a pack. Extracted verticals
+  are not bundled. 📦
 - Notifications: set `agents.notify` to ping you on done/blocked. 📣
 - File a note on anything rough — that's what the trial is for.
 

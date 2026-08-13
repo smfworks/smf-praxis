@@ -14,7 +14,7 @@ is proactive *and* safe.
   deterministic mock LLM); richer features are opt‑in extras. Runs on **Linux,
   macOS, and Windows** (Python 3.10+), verified in CI on all three.
 - **Quality‑gated** — every capability is covered by an offline eval and the full
-  suite is a CI gate (currently **40/40**), plus a regression gate against a
+  suite is a CI gate (currently **30/30** on the open-core base), plus a regression gate against a
   baseline.
 
 The loop: **perceive → plan → govern → act/draft → reflect → consolidate**.
@@ -317,7 +317,7 @@ A fresh install is usable immediately — no hidden configuration:
   platforms and the Docker image + dashboard are smoke‑tested, with an 80%
   coverage gate on Linux (`.github/workflows/ci.yml`).
 
-### Eval categories (40/40)
+### Eval categories (30/30 open-core base)
 
 | Category | Cases | Covers |
 |---|---|---|
@@ -337,8 +337,11 @@ A fresh install is usable immediately — no hidden configuration:
 | mcp | 1 | external tool risk‑classified + held |
 | a2a | 1 | governed run + capability card |
 | voice | 1 | turn/realtime backends selectable |
+| reflexion | 1 | dead-end turn retried with self-reflection |
 | browser | 1 | navigate/read vs click/type risk |
-| vertical | 10 | per‑vertical packs ship the promised persona + governance posture |
+
+Installed vertical packages register additional `vertical.*` cases. The
+open-core base has **zero** vertical evals.
 
 ---
 

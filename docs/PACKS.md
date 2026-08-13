@@ -104,13 +104,14 @@ praxis pack list                       # installed packs (* = active)
 praxis pack templates                  # built-in domain templates
 praxis pack create mine --vertical legal   # scaffold from a template
 praxis pack install ./mine             # copy + activate an external pack dir
-praxis pack activate homeschool        # apply persona + policy + knowledge + skills
+praxis pack activate general           # bundled open-core pack
 praxis pack show                       # print the active manifest
 praxis pack deactivate                 # back to defaults
 ```
 
 `activate` prints what it wired, e.g.
-`activated 'homeschool' (compliance: autonomous); ingested 1 knowledge source(s); installed 1 skill(s)`.
+`activated 'general' (compliance: enforced)` (knowledge/skills only if the
+manifest lists them).
 
 ---
 
@@ -159,12 +160,21 @@ No-code path: `praxis pack create mine --vertical <t>` then edit `pack.json`.
 
 ---
 
-## 7. Worked example — homeschool
+## 7. Worked example — general (bundled) and extracted verticals
 
-`hybridagent/packs/homeschool/` ships: `pack.json` (persona, autonomous, knowledge +
-skill refs), `knowledge.md` (state recordkeeping, multi-grade, privacy). Template alias
-`homeschooling`/`k12`. Eval pack asserts autonomous read+draft, held send/destructive.
-Activate → persona prepended, attendance facts grounded, `lesson-plan` skill retrievable.
+`hybridagent/packs/general/` ships in the open-core wheel: `pack.json` (balanced
+persona, enforced compliance). `praxis pack activate general` prepends that
+persona.
+
+Regulated packs (law_firm, medical_office, school_system, homeschool,
+forensic_engineering) no longer live in this repository. Install the matching
+`praxis-<vertical>` package; it auto-registers tools, evals, and dashboard
+routes. To try a domain without a commercial package, scaffold from a template:
+
+```bash
+praxis pack create mine --vertical homeschool
+praxis pack activate mine
+```
 
 ---
 

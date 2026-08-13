@@ -12,8 +12,9 @@ reviewers, each scoped to a different domain:
 
 1. **Legal / Privacy** — tenant isolation, data policy, authority policy,
    13-state compliance, PII, DNS-rebinding protection.
-2. **Learning / Safety** — eval correctness (40/40, 36/36 vertical),
-   child-safe tutoring, no fabricated evidence, safety guardrails.
+2. **Learning / Safety** — eval correctness (30/30 on the open-core
+   base; installed vertical packages add their own cases), no
+   fabricated evidence, safety guardrails.
 3. **Release / Integration** — test suite green, Ruff, mypy, coverage ≥80%,
    architecture 4/4, wheel/sdist + Twine, clean-wheel install, version bump.
 
