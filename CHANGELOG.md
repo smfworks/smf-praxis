@@ -3,6 +3,11 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.4 — 2026-08-13
+
+- GET control-plane requires the same Host integrity + token rules as POST.
+- Login fail-closed when no token is configured. SSE no longer sets ACAO `*`.
+
 ## 0.30.3 — 2026-08-13
 
 - Windows CI: read operator docs as UTF-8 in `tests/test_open_core_docs.py`
