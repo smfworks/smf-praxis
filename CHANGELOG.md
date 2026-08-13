@@ -3,6 +3,11 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.2 — 2026-08-13
+
+- Recorded the AGENTS.md verification block against the honesty pass:
+  1429 passed / 22 skipped, evals 30/30, ruff, mypy, architecture 4/4, demo.
+
 ## 0.30.1 — 2026-08-13
 
 ### Changed

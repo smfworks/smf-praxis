@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/projects/grok46-hardening/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.30.1` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.30.2` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `harden/smf-praxis` (from tagged `v0.30.0` / `main`)
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
@@ -16,7 +16,7 @@
 - **Phase 11 status:** implemented in `0.28.32`, then extracted with the other regulated packs in `0.29.0`. Not in this tree.
 - **0.29.1:** fail-open security fixes, pack registration, vertical discovery.
 - **0.30.0:** three-reviewer exact-SHA release-gate CLI.
-- **0.30.1:** production-honesty pass — docs, harness state, release-gate prompts, and contract tests match the open-core tree.
+- **0.30.2 verification (this host, 2026-08-13):** pytest 1429 passed / 22 skipped; evals 30/30; ruff clean; mypy 149 files; architecture 4/4; demo completes with destructive DENIED; `praxis --version` = 0.30.2.
 - **Phase 6 status:** `0.28.7` — Active Memory Consolidation complete. 6 slices. Released as `v0.28.7`.
 - **Phase 7 status:** `0.28.14` — Forensic Engineering / Law Firm vertical build-out complete. Released as `v0.28.14`.
 - **Phase 8 status:** `0.28.19` — Law Firm pack complete. Released as `v0.28.19`.
