@@ -3,6 +3,11 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.3 — 2026-08-13
+
+- Windows CI: read operator docs as UTF-8 in `tests/test_open_core_docs.py`
+  so `pathlib.Path.read_text()` does not decode README/QUICKSTART as cp1252.
+
 ## 0.30.2 — 2026-08-13
 
 - Recorded the AGENTS.md verification block against the honesty pass:

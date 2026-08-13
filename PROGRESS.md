@@ -6,7 +6,7 @@
 ## Current Verified State
 
 - **Repository root:** `/home/mikesai1/projects/grok46-hardening/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.30.2` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Version:** `0.30.3` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
 - **Active branch:** `harden/smf-praxis` (from tagged `v0.30.0` / `main`)
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
