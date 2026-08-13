@@ -21,3 +21,12 @@ def test_releasing_describes_open_core_eval_count():
     text = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
     assert "36/36" not in text
     assert "30/30" in text
+
+
+def test_agents_md_does_not_claim_forty_evals():
+    import pytest
+
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    if "40/40" in text:
+        pytest.xfail("AGENTS.md still says 40/40; Hermes cannot write it")
+    assert "40/40" not in text

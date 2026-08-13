@@ -303,7 +303,7 @@ def test_auth_extract_x_header_and_status_dict(tmp_path, monkeypatch):
     conf.setdefault("agents", {}).pop("auth", None)
     cfg.save_config(conf)
     assert auth_gate.configured_token() == ""
-    assert auth_gate.token_matches("anything") is True  # open when unset
+    assert auth_gate.token_matches("anything") is False
 
 
 def test_persona_never_do_list_and_mirror(tmp_path, monkeypatch):

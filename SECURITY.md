@@ -34,9 +34,11 @@ We will acknowledge receipt and say whether the report is in scope.
 
 ## What is not a vulnerability
 
-- The Command Deck HTML has **no built-in auth**. This is documented. The
-  supported default is loopback (`127.0.0.1:8643`). Binding `0.0.0.0` without a
-  front door is an operator misconfiguration, not a silent defect.
+- The Command Deck HTML shell (`/` and `/web/*`) is public. **GET and POST
+  control-plane routes require loopback Host integrity or a shared token.**
+  Binding `0.0.0.0` without `PRAXIS_AUTH_TOKEN` mints a token; if minting
+  fails the daemon refuses to start. Loopback clients remain the local
+  operator.
 - Offline mock-LLM behavior
 - Extracted vertical packs (`praxis-legal`, `praxis-medical`, …) — report those
   against their own repositories

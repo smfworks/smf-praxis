@@ -2616,6 +2616,10 @@ class _StatusHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         try:
             parsed = split_url(self.path)
+            public_exact = {"/", "/favicon.ico", "/api/auth/status", "/api/readiness"}
+            if parsed.path not in public_exact and not parsed.path.startswith("/web/"):
+                if not self._require_auth():
+                    return
             if parsed.path == "/api/v1/board/cards":
                 if not self._require_v1_auth():
                     return
@@ -2897,7 +2901,6 @@ class _StatusHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         # An SSE stream is a terminal response; don't let the handler try to
         # parse a pipelined request afterward (which would read a dead socket).
@@ -3739,7 +3742,9 @@ class Daemon:
                     "non-loopback bind: session auth required "
                     f"(token length {len(tok)}; set PRAXIS_AUTH_TOKEN to override)")
         except Exception as exc:
-            self._log("warning", f"auth setup: {exc}")
+            self._log("error", f"auth setup failed; refusing non-loopback start: {exc}")
+            self.running = False
+            return 1
         self._start_status_server()
         self._log("info", f"daemon started on {self.status_host}:{self.status_port}")
         try:

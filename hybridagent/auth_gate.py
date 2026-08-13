@@ -59,7 +59,7 @@ def auth_required(bind_host: str) -> bool:
 def token_matches(provided: str | None) -> bool:
     expected = configured_token()
     if not expected:
-        return True  # auth not configured → open (loopback-safe default)
+        return False
     got = (provided or "").strip()
     if not got:
         return False
@@ -83,7 +83,7 @@ def status_dict(bind_host: str) -> dict:
     tok = configured_token()
     required = auth_required(bind_host)
     return {
-        "required": required and bool(tok),
+        "required": required,
         "configured": bool(tok),
         "bind_host": bind_host,
         "hint": (
