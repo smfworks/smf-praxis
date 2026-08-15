@@ -2617,7 +2617,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
         try:
             parsed = split_url(self.path)
             public_exact = {"/", "/favicon.ico", "/api/auth/status", "/api/readiness"}
-            if parsed.path not in public_exact and not parsed.path.startswith("/web/"):
+            if (
+                parsed.path not in public_exact
+                and not parsed.path.startswith("/web/")
+                and not parsed.path.startswith("/api/v1/")
+            ):
                 if not self._require_auth():
                     return
             if parsed.path == "/api/v1/board/cards":

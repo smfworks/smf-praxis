@@ -32,7 +32,7 @@ VOLUME ["/data"]
 EXPOSE 8643
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8643/status', timeout=4)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8643/api/readiness', timeout=4)" || exit 1
 
 # PRAXIS_HOST=0.0.0.0 makes the dashboard reachable through the mapped port.
 # Until auth ships (roadmap p12), map the port to 127.0.0.1 on the host (see

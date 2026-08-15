@@ -166,7 +166,7 @@ jobs:
         run: |
           docker run -d --name praxis -p 127.0.0.1:8643:8643 praxis-agent:ci
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8643/status >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:8643/api/readiness >/dev/null 2>&1; then
               echo "dashboard is up"; ok=1; break
             fi
             sleep 2

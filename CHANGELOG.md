@@ -3,6 +3,13 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.5 — 2026-08-15
+
+- `/api/v1/*` GET no longer runs the legacy `_require_auth` envelope first, so
+  unauthenticated v1 reads return the structured `{api_version, error}` body.
+- Docker HEALTHCHECK and CI probe `/api/readiness` (public). Host-mapped
+  `/status` is still token/loopback-gated after 0.30.4.
+
 ## 0.30.4 — 2026-08-13
 
 - GET control-plane requires the same Host integrity + token rules as POST.
