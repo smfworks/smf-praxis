@@ -43,7 +43,8 @@ See **[CAPABILITIES.md](CAPABILITIES.md)** for the complete, current capability 
   review/signature gates; and self-verifying, content-addressed release bundles.
 - **Dependency-free core**, model-agnostic (incl. **Azure AI Foundry**), and
   **verified on Linux, macOS, and Windows** in CI (full suite + both installers +
-  Docker, 80% coverage gate) — **40/40** capability/safety evals.
+  Docker, 80% coverage gate) — **30/30** open-core capability/safety evals
+  (installed vertical packages register additional cases).
 
 ## The loop
 
@@ -378,8 +379,10 @@ autonomous vs. dual-approval, egress/injection checks, approval TTL), and a **to
 allowlist** that further narrows what the agent may call — independently of the
 global allowlist, so it survives runtime tool registration.
 
-Packs live in `~/.praxis/packs/<name>/pack.json`; bundled **general** and
-**homeschool** packs ship with Praxis. Activate one and the persona is prepended to
+Packs live in `~/.praxis/packs/<name>/pack.json`. The open-core wheel ships the
+bundled **general** pack. Regulated verticals (law firm, medical office, school
+system, homeschool, forensic) are extracted commercial packages that
+auto-register when installed. Activate a pack and the persona is prepended to
 chat and its governance posture is applied to the broker on every agent build.
 
 ```bash
@@ -420,13 +423,11 @@ a ready-to-activate pack — both human-readable and reproducible by an agent:
    A pack may also pin `"model": "provider/model"` (config defaults still win) and
    `"theme": {...}` tokens surfaced on the dashboard `/status`.
 3. **Tests** — extend `tests/test_pack.py` (templates list, alias resolution, posture).
-4. **Eval pack** (p09) — add one `VerticalSpec` row to `hybridagent/vertical_evals.py`
-   (name, persona keyword, autonomous + held risk classes, compliance mode). The
-   persona + posture cases are generated for you and run under `praxis eval
-   --category vertical`, gating "does activating this vertical still give the
-   promised governance posture?" offline. Bundled `homeschool`, `legal`, `medical`,
-   `forensic`, and `education` each have an eval pack.
-5. Or skip the code path entirely: `praxis pack create mine --vertical homeschool` then
+4. **Eval pack** (p09) — register a `VerticalSpec` with
+   `hybridagent.verticals.registry`. Persona + posture cases are generated and
+   run under `praxis eval --category vertical`. The open-core base ships **zero**
+   vertical evals; extracted packages add their own.
+5. Or skip the code path entirely: `praxis pack create mine --vertical legal` then
    edit the generated `pack.json` by hand.
 
 A minimal `pack.json`:
@@ -795,3 +796,9 @@ print(agent.memory.stats())        # working/episodic/durable/skills
 This is the **single-colleague foundation**. The same governance + memory spine
 scales to many parallel specialized agents in the companion **Clawmes
 Orchestrator** (sub-agent swarm spawning).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for supported versions, how to report a
+vulnerability, and the documented Command Deck loopback-auth posture.
+Do not file public issues for live exploits.

@@ -32,7 +32,7 @@ Grade each module A–D across:
 | MCP (`mcp_client.py`, `mcp_adapter.py`, `mcp_presets.py`) | A | B | A | A | A | stdio + Streamable-HTTP, risk-classified, security-scanned. Leg: the server/client dual role is non-obvious. |
 | Sandbox (`sandbox.py`) | A | A | A | A | A | local/docker/ssh/modal/daytona. Docker: cap-drop ALL, no-new-privileges, --network none, read-only rootfs. Cleanest module. |
 | CLI (`cli.py`, `tui.py`) | A | B | A | A | A | 40+ commands. Leg: command surface is large; a fresh session needs the README table. |
-| Evals & quality (`evals.py`, `eval_history.py`, `benchmark.py`, `vertical_evals.py`) | A | A | A | A | A | 40/40, regression gate, pass@k benchmarking. Best-documented subsystem. |
+| Evals & quality (`evals.py`, `eval_history.py`, `benchmark.py`, `vertical_evals.py`) | A | A | A | A | A | 30/30 base (vertical cases register from installed packs), regression gate, pass@k benchmarking. |
 | Context & compaction (`context.py`) | A | B | A | B | A | Tool-loop-pairing-aware compaction. Bnd: not model-aware (H08 — Sonnet vs Opus compaction policy). |
 | Grounding & verification (`grounding.py`, `verifier.py`, `contradiction.py`) | A | B | A | B | A | Cite-or-abstain + contradiction detection. Bnd: verifier catches false "done" claims; leg: the verification gate's exact predicate could be documented. |
 | Identity & security (`identity.py`, `security_scan.py`, `sandbox.py`) | A | B | A | A | A | HMAC→Ed25519, OSV dep check, skill/MCP scanning. Leg: key rotation story is non-obvious. |

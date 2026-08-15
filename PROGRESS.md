@@ -5,12 +5,18 @@
 
 ## Current Verified State
 
-- **Repository root:** `/home/mikesai1/smf-praxis` (GitHub: `smfworks/smf-praxis`)
-- **Version:** `0.28.32` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
-- **Active branch:** `main`
+- **Repository root:** `/home/mikesai1/projects/grok46-hardening/smf-praxis` (GitHub: `smfworks/smf-praxis`)
+- **Version:** `0.30.5` (`hybridagent/__init__.py`; `pyproject.toml` reads it dynamically)
+- **Active branch:** `harden/smf-praxis` (from tagged `v0.30.0` / `main`)
 - **Standard startup path:** `./install.sh` → `source .venv/bin/activate` → `praxis demo`
 - **Standard verification path:** see `AGENTS.md` → "Verification commands (Definition of Done)"
-- **Current WIP:** HS11 / Homeschool exact-SHA review remediation and release closure.
+- **Current WIP:** none (WIP=0). HS11 / homeschool was extracted from the open-core base in `0.29.0`.
+- **Open-core contract:** bundled pack is `general` only. `praxis eval` on a clean base install is **30/30**. Vertical eval cases register only when a `praxis-<vertical>` package is installed.
+- **Phase 6–10 status:** released in 0.28.x as documented below; vertical *packs* subsequently extracted in `0.29.0`.
+- **Phase 11 status:** implemented in `0.28.32`, then extracted with the other regulated packs in `0.29.0`. Not in this tree.
+- **0.29.1:** fail-open security fixes, pack registration, vertical discovery.
+- **0.30.0:** three-reviewer exact-SHA release-gate CLI.
+- **0.30.2 verification (this host, 2026-08-13):** pytest 1429 passed / 22 skipped; evals 30/30; ruff clean; mypy 149 files; architecture 4/4; demo completes with destructive DENIED; `praxis --version` = 0.30.2.
 - **Phase 6 status:** `0.28.7` — Active Memory Consolidation complete. 6 slices. Released as `v0.28.7`.
 - **Phase 7 status:** `0.28.14` — Forensic Engineering / Law Firm vertical build-out complete. Released as `v0.28.14`.
 - **Phase 8 status:** `0.28.19` — Law Firm pack complete. Released as `v0.28.19`.
@@ -29,7 +35,7 @@
 | Check | Command | Result |
 |---|---|---|
 | Test suite | `python3 -m pytest --ignore=tests/test_fuzz_parsers.py -q` | **926 passed, 16 skipped** in 35s |
-| Capability evals | `python3 -m hybridagent.cli eval` | **40/40 passed** (a2a, approval, browser, context, debate, mcp, orchestration, planning, reasoning, reflexion, retrieval, routing, safety×7, schema, skills, tool_use, verification, vertical×10, voice) |
+| Capability evals | `python3 -m hybridagent.cli eval` | **30/30 passed** on the open-core base (a2a, approval, browser, context, debate, mcp, orchestration, planning, reasoning, reflexion, retrieval, routing, safety×7, schema, skills, tool_use, verification, voice). Vertical cases are **not** in the base. |
 | Coverage | `pytest --cov=hybridagent` | **80%** (12403 stmts, 2463 missing) — CI gate met |
 | Lint | `python3 -m ruff check hybridagent/` | **All checks passed** |
 | Types | `python3 -m mypy hybridagent --ignore-missing-imports` | **Success: no issues in 86 source files** |
@@ -56,7 +62,7 @@ Baseline is **green**. New work must not regress any of these.
 - [x] **Phase 8 / Law Firm Pack** — the bundled, public, MIT-licensed `law_firm` pack assembling the Phase 7 compliance modules into a single one-activation experience covering the 13 states. 5 slices: manifest+persona+knowledge (pack.json with UPL+IOLTA+per-jurisdiction guardrails, regulated risk policy, 13-tool allowlist, 4 skills, knowledge base, navy theme), skills (conflict-check, ad-filing-gate, matter-hold, ce-status — retrieval + body verification), vertical eval suite (VerticalSpec + 5 manual cases: UPL guardrail, NY ad-filing gate, MA WISP attestation, conflict check, CLE status; 17/17 vertical evals), dashboard surfaces (matter-hold badge, credential card, ad-filing tracker, attestation panel via /api/law_firm), 13-state integration test (83 cases proving per-jurisdiction behavior for all 13 states). Bug caught by the integration test: MD cle_required=True but cle_hours=0 — fixed with a placeholder pending verification. Released as `v0.28.19` on 2026-07-16.
 - [x] **Phase 9 / Medical Office Pack** — public MIT-licensed `medical_office` pack covering 13 states. Session 1 (v0.28.20–0.28.24): M1 MEDICAL profile registry, M3 clinical attestation (never-write-to-chart), M2 HIPAA governance, M7 CME mandatory topics, M5 controlled-substance guardrails. Session 2 (v0.28.25–0.28.29): M6 telemedicine cross-state gate (IMLC + FL §456.47 + PA/MA non-Compact), M4 minor-consent record gate, M9 records retention + patient-access workflow, M10 portal triage (clinic hold + admin allowlist), M8 ambient documentation + pack assembly (manifest/persona/knowledge/6 skills) + 13-state integration test + VerticalSpec/5 manual evals. Released as `v0.28.29`.
 - [x] **Phase 10 / School System Pack** — public MIT-licensed institutional K-12 pack released as `v0.28.31`; governed school privacy, SPED, educator attestation, vendor hygiene, records, communications, and academic integrity across the established 13-state set. Kept separate from parent-operated homeschool.
-- [ ] **Phase 11 / Homeschool Pack** — public MIT-licensed, parent-operated household education system across the established 13-state set. Parent-confirmed legal routes drive source-versioned calendars; evidence-backed records prohibit fabricated attendance; child-safe tutor and household privacy enforce parent visibility, sibling isolation, and no profiling/training/advertising; evaluator, collaborator, transcript/diploma, and funding workflows preserve provenance and hold external effects. Includes 12 modules, a governed pack and knowledge bundle, 5 manual vertical evals, 13-state integration tests, and a privacy-minimal Command Deck. Local gates pass; exact-SHA review and publication remain pending.
+- [x] **Phase 11 / Homeschool Pack** — implemented in `0.28.32` and extracted from this repository in `0.29.0` into the private `praxis-homeschool` distribution. The open-core base no longer ships the pack, modules, or homeschool test files.
 
 ## Historical Phase 3 Release Notes
 
@@ -120,18 +126,25 @@ Baseline is **green**. New work must not regress any of these.
 ## Known Issues / Risks
 
 - **Evaluator rubric is un-tuned.** Out of the box, agents identify issues then talk themselves into approving. Needs 3–5 tuning rounds against real agent-contributed PRs before it's reliable (course L11). Do not gate merges on it yet.
-- **Harness simplification is documented but unpracticed.** No monthly component-removal benchmark has been run. H09 tracks this.
-- **Maker-checker at the dev-review layer is aspirational.** The runtime broker enforces separation at execution; the *code-review* layer still allows an agent to grade its own PR. H05.
-- **Model-specific compaction (H08) is open.** `context.py` compacts; it is not yet model-aware (course L5: Sonnet needs resets, Opus tolerates compaction).
-- **Architectural invariants may lack dedicated executable checks.** The dependency-free-core and injection-boundary rules are enforced by tests in aggregate, but H06 asks whether there are *targeted* checks (course L10: "architectural rules must be executable, not paper docs").
+- **Harness simplification is documented but lightly practiced.** `scripts/harness_simplify.py` exists; no monthly production cadence has been run.
+- **Maker-checker at the *code-review* layer is still a process.** The runtime broker enforces separation at execution. `scripts/release-gate.py` (0.30.0) is the release-time gate; it is not a substitute for an independent reviewer actually reading the diff.
+- **Command Deck HTML has no built-in auth.** Loopback is the supported default. LAN bind requires a reverse proxy / VPN / SSH tunnel. See `SECURITY.md` and `docs/DEPLOYMENT.md`.
+- **AGENTS.md inline comments still say 40/40.** The file is a protected agent-instruction surface; this pass could not edit it. The commands themselves are correct. Operator may update the comments in the GitHub UI.
 
 ## Next Steps (priority order)
 
-1. Freeze the Phase 5 implementation candidate and obtain three independent PASS reviews bound to its exact SHA.
-2. Promote PP50 to `passing` only after all reviewers attest the same candidate and final status checks pass.
-3. Push `feat/professional-platform-phase-5` once and verify the remote SHA and GitHub-visible documentation.
+1. Merge `harden/smf-praxis` after independent review (Aiona).
+2. Optionally edit `AGENTS.md` comments from 40/40 → 30/30 (protected file).
+3. Dashboard built-in auth remains a documented follow-up, not this PR.
 
 ## Session Record
+
+### 2026-08-13 — Production-honesty hardening (0.30.1)
+- **Goal:** Make the open-core tree production-ready: verification green, docs match 0.29+/0.30 reality, harness state honest, PR on `harden/smf-praxis`.
+- **Completed:** Audited `v0.30.0`. Suite 1423 passed / 22 skipped; evals **30/30**; ruff/mypy/architecture/demo green. Closed HS11 (extracted). Updated operator docs, release-gate prompts, SECURITY.md, CHANGELOG.md, and contract tests. Version 0.30.1.
+- **Verification run:** recorded in this file's current-state block after the candidate commit.
+- **Known risks:** AGENTS.md comments still say 40/40 (write blocked). Dashboard remains loopback-unauthenticated by design.
+- **Next best action:** independent review, then merge.
 
 ### 2026-07-11 — Harness engineering implementation
 - **Goal:** Implement the 10 key takeaways from the Learn Harness Engineering course as Praxis harness artifacts.

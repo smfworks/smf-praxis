@@ -1300,6 +1300,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
                        timeout=getattr(args, "timeout", 20.0))
     data = report.to_dict()
 
+    if report.total == 0 and getattr(args, "category", None):
+        print(f"0 {args.category} cases (none installed)")
+        return 0
+
     if getattr(args, "json", None) is not None:
         text = json.dumps(data, indent=2)
         if args.json:

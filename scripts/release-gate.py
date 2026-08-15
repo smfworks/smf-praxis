@@ -54,7 +54,8 @@ REVIEWER_DOMAINS = {
             "Review ONLY for learning-safety, eval correctness, and vertical "
             "eval concerns. Check: child-safe tutoring, responsible-adult "
             "review, no fabrication of attendance/work/assessments, "
-            "eval correctness (40/40, 36/36 vertical), safety guardrails, "
+            "eval correctness (30/30 open-core base; vertical cases only "
+            "when a vertical package is installed), safety guardrails, "
             "authorship binding, and evidence replay. Return JSON only."
         ),
     },
@@ -62,7 +63,7 @@ REVIEWER_DOMAINS = {
         "title": "Release / Integration Reviewer",
         "focus": (
             "Review ONLY for release-integration concerns. Check: test suite "
-            "green (pytest, evals 40/40, Ruff, mypy), coverage gate >=80%, "
+            "green (pytest, evals 30/30 on the open-core base, Ruff, mypy), coverage gate >=80%, "
             "architecture 4/4, wheel/sdist + Twine checks, clean-wheel "
             "installation, version bump in __init__.py + pyproject.toml, "
             "no stale artifacts, standard startup path works, and "

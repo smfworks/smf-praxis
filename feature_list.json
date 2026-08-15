@@ -14,7 +14,7 @@
       "Status transitions: not_started -> in_progress -> passing (via verification) | blocked (documented blocker).",
       "Every feature has the triple: behavior + verification + state."
     ],
-    "last_updated": "2026-07-18"
+    "last_updated": "2026-08-13"
   },
   "features": [
     {
@@ -193,9 +193,10 @@
       "area": "vertical-homeschool",
       "title": "Phase 11 governed Homeschool pack",
       "user_visible_behavior": "A parent can operate a state- and legal-route-aware home education program across 13 states with governed compliance, child-safe tutoring, evidence-backed portfolios, scoped collaboration, honest transcripts, and optional funding audit support.",
-      "verification": ".venv/bin/python -m pytest tests/test_homeschool_session1.py tests/test_homeschool_session2.py tests/test_homeschool_session3.py tests/test_homeschool_pack_integration.py tests/test_vertical_evals.py -q && .venv/bin/python scripts/check_architecture.py",
-      "status": "in_progress",
-      "evidence": "Research: 110 use cases, 20 never-autonomous rules, national needs/trends analysis, and source-confidence-labeled 13-state regulatory matrix. Remediated v0.28.32 tree: 2,316 tests collected; 2,303 passed with 13 expected skips at 84.90% coverage; targeted reviewer regressions green; 66/66 evals including 36/36 vertical; whole-tree Ruff; mypy across 183 source files; architecture 4/4; compilation, JavaScript syntax, and deterministic Office rendering across clock ticks; offline demo; wheel/sdist and Twine checks; 39-asset wheel audit; installed version equality; installed Homeschool manifest/knowledge validation; and clean-wheel installation all passed on 2026-07-18. Live synthetic-only `gpt-oss:20b` dogfood confirmed all deterministic FL onboarding and PA annual-closeout findings with responsible-adult review and no guard violations. Household and external access is household/learner/field/purpose-bound; remote browser access rejects malformed authorities and fails closed against DNS rebinding; route context uses exception-safe atomic transactions including route clearing, commencement is mandatory, and parent-selected dates are constrained to an anniversary-correct school year; non-source deadlines are parent-selected or labeled planning targets; filings bind household, authorized parent, route decision, and source version; the browser Command Deck constructs DOM nodes and assigns dynamic text through textContent; the primary tutoring path invokes conservative direct-harm escalation independent of enumerated household titles; authorship binds exact draft bytes and learner/session/submission IDs through an immutable trusted ledger; support inquiries require matching household and authorized-parent evidence authority while support attestations bind representable trusted time; assessment clocks reject non-representable timestamps; evaluator/collaborator authorization uses authoritative ledgers, trusted clocks, half-open expiry, and overlapping-access prevention; transcript/diploma values re-enforce learner, course, evidence, aggregate, and policy invariants from immutable manifests; funding amounts reject sub-cent values and reimbursement packets bind learner, account, eligibility determination, source-versioned policy, full expense/receipt/invoice manifest, total, parent, and canonical packet hash before lifecycle transitions. Three-domain independent exact-SHA PASS remains mandatory before release."
+      "verification": "python3 -c \"from hybridagent.pack import bundled_packs_dir; assert {p.name for p in bundled_packs_dir().iterdir() if p.is_dir()} == {'general'}\"",
+      "status": "passing",
+      "evidence": "Extracted from the open-core base in v0.29.0 into the private praxis-homeschool distribution. 0.30.1 production-honesty pass closed the leftover in_progress marker and the dead verification command that pointed at deleted test_homeschool_session*.py files. Base now ships only hybridagent/packs/general/.",
+      "notes": "Do not re-open HS11 in this repo. Homeschool work lives in smfworks/smf-praxis-homeschool."
     }
   ]
 }
