@@ -5,6 +5,10 @@ here. The version is single-sourced from `hybridagent.__version__`.
 
 ## 0.30.7 — 2026-08-16
 
+- **Security (PRA-005):** Token auto-mint now warns the operator and applies
+  `secure_file()` (0600 / ACL-restricted) to `praxis.json` after writing the
+  minted token, matching the API-key path. Refuses to leave a live auth token
+  world-readable.
 - **Security (PRA-008):** Inject security headers on all HTTP responses —
   `Content-Security-Policy` (strict, no inline handlers), `X-Content-Type-Options:
   nosniff`, `X-Frame-Options: DENY` / `frame-ancestors 'none'`, `Referrer-Policy`,
