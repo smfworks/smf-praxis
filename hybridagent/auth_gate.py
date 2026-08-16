@@ -4,10 +4,18 @@ When the daemon is reachable beyond loopback, mutating API calls require a
 shared token (``PRAXIS_AUTH_TOKEN`` env, or ``agents.auth.token`` in config).
 Loopback clients skip the check so local single-user use stays frictionless.
 
+Auth is decided per-request by the HTTP handler (see ``daemon.py``):
+``_enforce_host_integrity`` validates the Host header on every request to
+block DNS-rebinding, and ``_require_auth`` gates routes on ``token_matches``
+when the peer is not a loopback Host. The bind address (``auth_required``)
+is used only for startup token auto-minting and status reporting — never as
+the sole auth decision.
+
 The browser stores the token in ``sessionStorage`` after a one-time login form;
-every subsequent ``fetch`` sends ``Authorization: Bearer <token>`` or
+every subsequent ``fetch`` sends an ``Authorization: Bearer`` header or
 ``X-Praxis-Token``.
 """
+
 from __future__ import annotations
 
 import hmac
@@ -96,10 +104,12 @@ def token_matches(provided: str | None) -> bool:
 
 def extract_token(headers: dict | object) -> str:
     """Pull a bearer / X-Praxis-Token from a headers mapping or BaseHTTP headers."""
+
     def _get(name: str) -> str:
         if hasattr(headers, "get"):
             return str(headers.get(name) or headers.get(name.lower()) or "")
         return ""
+
     auth = _get("Authorization") or _get("authorization")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
@@ -116,7 +126,7 @@ def status_dict(bind_host: str) -> dict:
         "hint": (
             "Send Authorization: Bearer <token> or X-Praxis-Token. "
             "Token from PRAXIS_AUTH_TOKEN or agents.auth.token."
-            if tok else
-            "No token configured; non-loopback binds should set PRAXIS_AUTH_TOKEN."
+            if tok
+            else "No token configured; non-loopback binds should set PRAXIS_AUTH_TOKEN."
         ),
     }

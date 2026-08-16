@@ -16,6 +16,7 @@ from hybridagent.daemon import (
     _DASHBOARD_HTML,
     Daemon,
     DaemonState,
+    _dashboard_csp,
     _find_port,
     _parse_multipart_stream,
     _read_state,
@@ -1041,3 +1042,156 @@ def test_openai_upstream_translates_events(mock_agent):
     assert types[0] == "delta"
     assert "tool_call" in types and "approval" in types
     assert types[-1] == "done"
+
+
+# ---------------------------------------------------------------------------
+# PRA-008: security response headers (CSP / X-Frame-Options / nosniff / HSTS)
+# ---------------------------------------------------------------------------
+
+def _headers_daemon(tmp_path, host="127.0.0.1"):
+    port = _find_port(host, 30000, 30100)
+    d = Daemon(llm=LLMClient(mode="mock"), status_host=host, status_port=port,
+               work_dir=str(tmp_path))
+    d._start_status_server()
+    return d, port
+
+
+def _get(port, path, method="GET", headers=None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request(method, path, headers=headers or {})
+    resp = conn.getresponse()
+    body = resp.read()
+    hdrs = {k.lower(): v for k, v in resp.getheaders()}
+    conn.close()
+    return resp.status, hdrs, body
+
+
+def test_dashboard_csp_is_enforcing_and_covers_inline_content():
+    """The CSP must whitelist the dashboard's real inline scripts/handlers/
+    styles by hash, deny framing, and contain no unsafe-inline/unsafe-eval."""
+    csp = _dashboard_csp()
+    # Required structural directives.
+    for frag in ("default-src 'self'", "frame-ancestors 'none'",
+                 "base-uri 'self'", "form-action 'self'",
+                 "img-src 'self' data:", "connect-src 'self'"):
+        assert frag in csp, f"missing directive: {frag}"
+    # No escape hatches — fail-closed against injected inline content.
+    assert "unsafe-inline" not in csp
+    assert "unsafe-eval" not in csp
+    # Every inline <script> block, inline on* handler, inline <style> block,
+    # and inline style= attribute in the dashboard must have its hash present.
+    import base64
+    import hashlib
+    import re
+
+    def sha(text):
+        return "'sha256-" + base64.b64encode(
+            hashlib.sha256(text.encode("utf-8")).digest()).decode() + "'"
+
+    for block in re.findall(r"<script>(.*?)</script>", _DASHBOARD_HTML, re.S):
+        assert sha(block) in csp, "inline script hash missing from CSP"
+    for value in set(re.findall(r'\son\w+\s*=\s*"([^"]*)"', _DASHBOARD_HTML)):
+        assert sha(value) in csp, f"inline handler hash missing: {value}"
+    for block in re.findall(r"<style>(.*?)</style>", _DASHBOARD_HTML, re.S):
+        assert sha(block) in csp, "inline style block hash missing from CSP"
+    for value in set(re.findall(r'\bstyle\s*=\s*"([^"]*)"', _DASHBOARD_HTML)):
+        assert sha(value) in csp, f"inline style= hash missing: {value}"
+
+
+def test_security_headers_on_dashboard_html(tmp_path):
+    """PRA-008: the dashboard HTML response carries CSP, X-Frame-Options,
+    X-Content-Type-Options, and omits HSTS over plain HTTP."""
+    daemon, port = _headers_daemon(tmp_path)
+    try:
+        status, hdrs, body = _get(port, "/")
+        assert status == 200
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+        assert hdrs["x-content-type-options"] == "nosniff"
+        # HSTS only on TLS; plain loopback HTTP must not pin the transport.
+        assert "strict-transport-security" not in hdrs
+        assert b"<!doctype html>" in body
+    finally:
+        daemon._stop_status_server()
+
+
+def test_security_headers_on_json_api(tmp_path):
+    """PRA-008: JSON API responses carry the security headers."""
+    daemon, port = _headers_daemon(tmp_path)
+    try:
+        status, hdrs, _ = _get(port, "/status")
+        assert status == 200
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+        assert hdrs["x-content-type-options"] == "nosniff"
+    finally:
+        daemon._stop_status_server()
+
+
+def test_security_headers_on_public_endpoint(tmp_path):
+    """PRA-008: intentionally-public endpoints (no auth) still get headers."""
+    daemon, port = _headers_daemon(tmp_path)
+    try:
+        status, hdrs, _ = _get(port, "/api/auth/status")
+        assert status == 200
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+    finally:
+        daemon._stop_status_server()
+
+
+def test_security_headers_on_static_asset(tmp_path):
+    """PRA-008: static /web/ assets carry the headers."""
+    daemon, port = _headers_daemon(tmp_path)
+    try:
+        status, hdrs, body = _get(port, "/web/icon.svg")
+        assert status == 200
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+        assert hdrs["x-content-type-options"] == "nosniff"
+    finally:
+        daemon._stop_status_server()
+
+
+def test_security_headers_on_404(tmp_path):
+    """PRA-008: error responses (404) carry the headers."""
+    daemon, port = _headers_daemon(tmp_path)
+    try:
+        status, hdrs, _ = _get(port, "/does-not-exist")
+        assert status == 404
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+    finally:
+        daemon._stop_status_server()
+
+
+def test_security_headers_on_204_favicon(tmp_path):
+    """PRA-008: the 204 favicon response carries the headers."""
+    daemon, port = _headers_daemon(tmp_path)
+    try:
+        status, hdrs, _ = _get(port, "/favicon.ico")
+        assert status == 204
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+    finally:
+        daemon._stop_status_server()
+
+
+def test_security_headers_on_sse_stream(tmp_path):
+    """PRA-008: the SSE /events stream carries the headers on the initial
+    response (before the stream body begins)."""
+    daemon, port = _headers_daemon(tmp_path)
+    conn = None
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        conn.request("GET", "/events")
+        resp = conn.getresponse()
+        hdrs = {k.lower(): v for k, v in resp.getheaders()}
+        assert resp.status == 200
+        assert "content-security-policy" in hdrs
+        assert hdrs["x-frame-options"] == "DENY"
+        assert hdrs["x-content-type-options"] == "nosniff"
+    finally:
+        if conn is not None:
+            conn.close()
+        daemon._stop_status_server()

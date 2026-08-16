@@ -14,6 +14,9 @@ worker that:
 """
 from __future__ import annotations
 
+import base64
+import functools
+import hashlib
 import io
 import ipaddress
 import json
@@ -1845,6 +1848,78 @@ setInterval(refresh, 4000);
 """
 
 
+# ---------------------------------------------------------------------------
+# Security response headers (PRA-008)
+#
+# The HTTP control plane emitted no Content-Security-Policy, X-Frame-Options,
+# X-Content-Type-Options, or HSTS headers on any response, leaving the
+# dashboard open to clickjacking, MIME-type confusion, and reflected/stored
+# XSS that could exfiltrate the session token (PRA-006). The headers below are
+# applied universally by the ``_StatusHandler.end_headers`` override so every
+# response — JSON, HTML, static assets, SSE, the WebSocket upgrade, audio, and
+# every error path — carries them from a single control point.
+#
+# The dashboard ships as a self-hosted single-page app: scripts, styles, and
+# images are all same-origin (``/web/...``), with three inline ``<script>``
+# blocks, one inline ``<style>`` block, inline ``on*`` event handlers, and a
+# couple of inline ``style=`` attributes. A naive ``script-src 'self'`` would
+# break that inline content, so instead we emit an *enforcing* CSP that
+# whitelists the exact inline sources by SHA-256 hash. The hashes are derived
+# at import time directly from ``_DASHBOARD_HTML``, so they track the real
+# content — any new inline script/handler/style the dashboard gains must be
+# added here or it will be blocked (fail-closed against injected content).
+_HSTS_HEADER = "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+
+
+def _sha256_source(text: str) -> str:
+    """Return the CSP ``'sha256-...'`` source token for ``text``."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return "'sha256-" + base64.b64encode(digest).decode() + "'"
+
+
+@functools.lru_cache(maxsize=1)
+def _dashboard_csp() -> str:
+    """Build an enforcing Content-Security-Policy for the dashboard.
+
+    The policy locks every fetch to same-origin, denies all framing
+    (``frame-ancestors 'none'`` — stronger than and complementary to
+    ``X-Frame-Options: DENY``), pins ``base-uri``/``form-action`` to ``self``,
+    and permits the dashboard's existing inline scripts, inline handlers,
+    inline ``<style>`` block, and inline ``style=`` attributes by exact
+    SHA-256 hash. ``img-src`` additionally allows ``data:`` because the
+    dashboard embeds small inline SVG/data icons.
+    """
+    script_hashes = sorted(
+        _sha256_source(block)
+        for block in re.findall(r"<script>(.*?)</script>", _DASHBOARD_HTML, re.S)
+    )
+    # Inline event-handler attribute values (onclick="...", onsubmit="...").
+    handler_hashes = sorted(
+        _sha256_source(value)
+        for value in set(re.findall(r'\son\w+\s*=\s*"([^"]*)"', _DASHBOARD_HTML))
+    )
+    style_hashes = sorted(
+        _sha256_source(block)
+        for block in re.findall(r"<style>(.*?)</style>", _DASHBOARD_HTML, re.S)
+    )
+    inline_style_attr_hashes = sorted(
+        _sha256_source(value)
+        for value in set(re.findall(r'\bstyle\s*=\s*"([^"]*)"', _DASHBOARD_HTML))
+    )
+    script_src = " ".join(["'self'", *script_hashes, *handler_hashes])
+    style_src = " ".join(["'self'", *style_hashes, *inline_style_attr_hashes])
+    return (
+        "default-src 'self'; "
+        f"script-src {script_src}; "
+        f"style-src {style_src}; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+
 class _UploadError(Exception):
     """Raised when a multipart/form-data body is malformed or truncated."""
 
@@ -1985,6 +2060,46 @@ class _StatusHandler(BaseHTTPRequestHandler):
         self.daemon = daemon
         super().__init__(*args, **kwargs)
 
+    def end_headers(self) -> None:
+        """Inject security headers on every response (PRA-008).
+
+        Overriding ``end_headers`` is the single chokepoint through which all
+        responses pass — ``send_response`` + ``send_header``* + ``end_headers``
+        — so the four security headers land on JSON, HTML, static assets, SSE,
+        the WebSocket upgrade (101), audio, 304/404/500, and vertical routes
+        alike, without touching every individual call site. HSTS is emitted
+        only when the request arrived over TLS (``https``) so a plain-HTTP
+        loopback dev instance is not pinned to a transport it isn't using.
+        """
+        self.send_header("Content-Security-Policy", _dashboard_csp())
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if self._is_tls_request():
+            self.send_header("Strict-Transport-Security",
+                             "max-age=31536000; includeSubDomains")
+        super().end_headers()
+
+    def _is_tls_request(self) -> bool:
+        """True when the underlying transport is TLS.
+
+        ``BaseHTTPRequestHandler`` exposes the raw socket on ``self.connection``
+        and (for TLS) a wrapping SSLSocket whose ``ssl`` context is importable
+        without adding a dependency — the daemon core stays stdlib-only. A
+        plain loopback bind has no TLS socket, so HSTS is correctly omitted.
+        """
+        conn = getattr(self, "connection", None)
+        if conn is None:
+            return False
+        # An SSLSocket carries an ``ssl_context`` / is an instance of ssl.SSLSocket.
+        # Avoid importing ssl at module load; check the type name to stay stdlib-light.
+        cls = type(conn).__name__
+        if cls == "SSLSocket":
+            return True
+        # ``self.request`` is the socket for BaseHTTPRequestHandler setups; some
+        # WSGI/wrapped deployments present the TLS socket there instead.
+        request = getattr(self, "request", None)
+        return request is not conn and type(request).__name__ == "SSLSocket"
+
     def _read_body(self, max_bytes: int = 16 * 1024 * 1024) -> bytes:
         """Read the request body, clamped to ``max_bytes``, so an inflated
         Content-Length can't drive an unbounded allocation. Reads exactly the
@@ -2083,6 +2198,33 @@ class _StatusHandler(BaseHTTPRequestHandler):
             if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != host:
                 self._json_response({"error": "cross-origin mutation denied"}, status=403)
                 return False
+        return True
+
+    def _enforce_same_origin(self) -> bool:
+        """Reject cross-origin browser requests when an Origin header is present.
+
+        PRA-001 (Origin component): browsers send an ``Origin`` header on
+        cross-origin and same-origin requests alike. When present, it must
+        match the request Host — otherwise the request came from a different
+        site (the CSRF / DNS-rebinding browser vector). CLI clients and
+        curl do not send Origin, so they are unaffected. This complements the
+        Host-integrity gate: Host blocks the rebound destination, Origin
+        blocks the foreign source.
+        """
+        origin = (self.headers.get("Origin", "") or "").strip()
+        if not origin:
+            return True  # not a browser request; CLI clients are allowed
+        parsed = split_url(origin)
+        if parsed.scheme not in {"http", "https"}:
+            self._json_response({"error": "cross-origin denied"}, status=403)
+            return False
+        host = (self.headers.get("Host", "") or "").strip().lower()
+        if parsed.netloc.lower() != host:
+            self._json_response(
+                {"error": "cross-origin denied",
+                 "hint": "Origin must match the request Host"},
+                status=403)
+            return False
         return True
 
     def _require_v1_auth(self, *, mutation: bool = False) -> bool:
@@ -2211,6 +2353,17 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
+            if not self._enforce_host_integrity():
+                return
+            # PRA-001 (Origin): reject cross-origin browser POSTs. Browsers
+            # always send Origin; CLI clients and server-to-server webhooks
+            # (Telegram/Slack) do not, so legitimate non-browser callers are
+            # unaffected. /api/auth/login is exempt because it IS the token
+            # acquisition endpoint and must accept the browser form post.
+            _public_post = ("/api/auth/login", "/api/channels/telegram/webhook",
+                            "/api/channels/slack/events", "/api/voice/realtime")
+            if self.path not in _public_post and not self._enforce_same_origin():
+                return
             if self.path == "/stop":
                 if not self._require_auth():
                     return
@@ -2615,6 +2768,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
+            if not self._enforce_host_integrity():
+                return
             parsed = split_url(self.path)
             public_exact = {"/", "/favicon.ico", "/api/auth/status", "/api/readiness"}
             if (
@@ -2650,6 +2805,19 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 if scope is None:
                     return
                 self._handle_v1_timeline_list(*scope)
+                return
+            # Auth gate for all non-v1 /api/ GET routes (PRA-002). Every read
+            # endpoint — knowledge base, pending approvals, task history, audit
+            # log, secrets status, daemon state — must honor the shared token
+            # when the daemon is bound beyond loopback, just like mutations do.
+            # /api/auth/status stays public so the browser can render the login
+            # form and discover whether a token is required before authenticating.
+            # /api/readiness stays public for container healthchecks (Dockerfile
+            # HEALTHCHECK + CI docker smoke test probe it on a 0.0.0.0 bind).
+            _public_api_get = {"/api/auth/status", "/api/readiness"}
+            if (parsed.path.startswith("/api/")
+                    and parsed.path not in _public_api_get
+                    and not self._require_auth()):
                 return
             if self.path == "/status":
                 mgr = self.daemon.manager
@@ -2864,6 +3032,79 @@ class _StatusHandler(BaseHTTPRequestHandler):
         host = self.client_address[0] if self.client_address else ""
         return (host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
                 or host.startswith("127."))
+
+    def _enforce_host_integrity(self) -> bool:
+        """Reject DNS-rebinding on every request, including public endpoints.
+
+        PRA-001: the per-route ``_require_auth`` gate already validates the
+        Host header for authenticated routes, but public endpoints
+        (``/api/auth/status``, ``/api/readiness``, ``/``, ``/favicon.ico``)
+        skipped it entirely. A malicious website can use DNS rebinding to make
+        a browser send a request to 127.0.0.1 with a foreign Host, reaching
+        those public routes and leaking auth/readiness state. This universal
+        gate runs before any routing so no path — public or otherwise —
+        answers a rebound Host.
+
+        Rules:
+        - Loopback peer + loopback Host (localhost / 127.x / ::1) → pass
+          without a token (frictionless local single-user use).
+        - Loopback peer + non-loopback Host → DNS-rebinding signature → 403.
+        - Remote peer → the Host must match the configured bind host (or be
+          absent, tolerated for CLI clients); the per-route token gate still
+          applies downstream.
+        """
+        host_header = (self.headers.get("Host", "") or "").strip()
+        if not host_header:
+            # Some CLI clients omit Host entirely. Allow for loopback peers
+            # (curl 127.0.0.1:port) and for remote peers that the per-route
+            # token gate will authenticate anyway.
+            return True
+        if self._is_loopback():
+            if not self._request_host_is_loopback():
+                self._json_response({"error": "untrusted host"}, status=403)
+                return False
+            return True
+        # Remote peer: accept if the Host hostname matches the bind host or is
+        # a loopback value (some proxies rewrite Host to localhost). A foreign
+        # hostname is rejected as a cross-host request.
+        if self._host_matches_bind(host_header):
+            return True
+        self._json_response({"error": "untrusted host"}, status=403)
+        return False
+
+    def _host_matches_bind(self, host_header: str) -> bool:
+        """True when the Host header hostname matches the daemon bind host.
+
+        Strips the port and compares case-insensitively against the configured
+        ``status_host`` and the loopback aliases, so a remote browser pointed
+        at ``http://10.0.0.32:8643`` (Host: 10.0.0.32:8643) is accepted when
+        the daemon binds 0.0.0.0 or 10.0.0.32. A foreign domain name
+        (``evil.example``) is never accepted — that is the DNS-rebinding
+        signature regardless of bind.
+        """
+        hostname = host_header.lower()
+        if hostname.startswith("["):
+            close = hostname.find("]")
+            hostname = hostname[1:close] if close > 0 else hostname
+        else:
+            hostname = hostname.rsplit(":", 1)[0] if ":" in hostname else hostname
+        bind = (self.daemon.status_host or "").strip().lower()
+        # Loopback Host aliases are always acceptable for any bind.
+        if hostname in ("127.0.0.1", "::1", "localhost"):
+            return True
+        # Exact match against the explicit bind host.
+        if bind and bind not in ("0.0.0.0", "::") and hostname == bind:
+            return True
+        # 0.0.0.0 / :: bind: accept any *IP address* Host (the operator is
+        # reaching the dashboard via some LAN IP). A non-IP domain is rejected
+        # — only loopback aliases (handled above) are allowed as domains.
+        if bind in ("0.0.0.0", "::"):
+            try:
+                ipaddress.ip_address(hostname)
+                return True
+            except ValueError:
+                return False
+        return False
 
     def _serve_static(self, rel: str) -> None:
         """Serve a static asset from the base or an installed vertical bundle."""
