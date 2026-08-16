@@ -2085,6 +2085,33 @@ class _StatusHandler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def _enforce_same_origin(self) -> bool:
+        """Reject cross-origin browser requests when an Origin header is present.
+
+        PRA-001 (Origin component): browsers send an ``Origin`` header on
+        cross-origin and same-origin requests alike. When present, it must
+        match the request Host — otherwise the request came from a different
+        site (the CSRF / DNS-rebinding browser vector). CLI clients and
+        curl do not send Origin, so they are unaffected. This complements the
+        Host-integrity gate: Host blocks the rebound destination, Origin
+        blocks the foreign source.
+        """
+        origin = (self.headers.get("Origin", "") or "").strip()
+        if not origin:
+            return True  # not a browser request; CLI clients are allowed
+        parsed = split_url(origin)
+        if parsed.scheme not in {"http", "https"}:
+            self._json_response({"error": "cross-origin denied"}, status=403)
+            return False
+        host = (self.headers.get("Host", "") or "").strip().lower()
+        if parsed.netloc.lower() != host:
+            self._json_response(
+                {"error": "cross-origin denied",
+                 "hint": "Origin must match the request Host"},
+                status=403)
+            return False
+        return True
+
     def _require_v1_auth(self, *, mutation: bool = False) -> bool:
         """Accept a professional session or the legacy deployment token."""
         from . import auth_gate
@@ -2211,6 +2238,17 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
+            if not self._enforce_host_integrity():
+                return
+            # PRA-001 (Origin): reject cross-origin browser POSTs. Browsers
+            # always send Origin; CLI clients and server-to-server webhooks
+            # (Telegram/Slack) do not, so legitimate non-browser callers are
+            # unaffected. /api/auth/login is exempt because it IS the token
+            # acquisition endpoint and must accept the browser form post.
+            _public_post = ("/api/auth/login", "/api/channels/telegram/webhook",
+                            "/api/channels/slack/events", "/api/voice/realtime")
+            if self.path not in _public_post and not self._enforce_same_origin():
+                return
             if self.path == "/stop":
                 if not self._require_auth():
                     return
@@ -2615,6 +2653,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
+            if not self._enforce_host_integrity():
+                return
             parsed = split_url(self.path)
             public_exact = {"/", "/favicon.ico", "/api/auth/status", "/api/readiness"}
             if (
@@ -2864,6 +2904,79 @@ class _StatusHandler(BaseHTTPRequestHandler):
         host = self.client_address[0] if self.client_address else ""
         return (host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
                 or host.startswith("127."))
+
+    def _enforce_host_integrity(self) -> bool:
+        """Reject DNS-rebinding on every request, including public endpoints.
+
+        PRA-001: the per-route ``_require_auth`` gate already validates the
+        Host header for authenticated routes, but public endpoints
+        (``/api/auth/status``, ``/api/readiness``, ``/``, ``/favicon.ico``)
+        skipped it entirely. A malicious website can use DNS rebinding to make
+        a browser send a request to 127.0.0.1 with a foreign Host, reaching
+        those public routes and leaking auth/readiness state. This universal
+        gate runs before any routing so no path — public or otherwise —
+        answers a rebound Host.
+
+        Rules:
+        - Loopback peer + loopback Host (localhost / 127.x / ::1) → pass
+          without a token (frictionless local single-user use).
+        - Loopback peer + non-loopback Host → DNS-rebinding signature → 403.
+        - Remote peer → the Host must match the configured bind host (or be
+          absent, tolerated for CLI clients); the per-route token gate still
+          applies downstream.
+        """
+        host_header = (self.headers.get("Host", "") or "").strip()
+        if not host_header:
+            # Some CLI clients omit Host entirely. Allow for loopback peers
+            # (curl 127.0.0.1:port) and for remote peers that the per-route
+            # token gate will authenticate anyway.
+            return True
+        if self._is_loopback():
+            if not self._request_host_is_loopback():
+                self._json_response({"error": "untrusted host"}, status=403)
+                return False
+            return True
+        # Remote peer: accept if the Host hostname matches the bind host or is
+        # a loopback value (some proxies rewrite Host to localhost). A foreign
+        # hostname is rejected as a cross-host request.
+        if self._host_matches_bind(host_header):
+            return True
+        self._json_response({"error": "untrusted host"}, status=403)
+        return False
+
+    def _host_matches_bind(self, host_header: str) -> bool:
+        """True when the Host header hostname matches the daemon bind host.
+
+        Strips the port and compares case-insensitively against the configured
+        ``status_host`` and the loopback aliases, so a remote browser pointed
+        at ``http://10.0.0.32:8643`` (Host: 10.0.0.32:8643) is accepted when
+        the daemon binds 0.0.0.0 or 10.0.0.32. A foreign domain name
+        (``evil.example``) is never accepted — that is the DNS-rebinding
+        signature regardless of bind.
+        """
+        hostname = host_header.lower()
+        if hostname.startswith("["):
+            close = hostname.find("]")
+            hostname = hostname[1:close] if close > 0 else hostname
+        else:
+            hostname = hostname.rsplit(":", 1)[0] if ":" in hostname else hostname
+        bind = (self.daemon.status_host or "").strip().lower()
+        # Loopback Host aliases are always acceptable for any bind.
+        if hostname in ("127.0.0.1", "::1", "localhost"):
+            return True
+        # Exact match against the explicit bind host.
+        if bind and bind not in ("0.0.0.0", "::") and hostname == bind:
+            return True
+        # 0.0.0.0 / :: bind: accept any *IP address* Host (the operator is
+        # reaching the dashboard via some LAN IP). A non-IP domain is rejected
+        # — only loopback aliases (handled above) are allowed as domains.
+        if bind in ("0.0.0.0", "::"):
+            try:
+                ipaddress.ip_address(hostname)
+                return True
+            except ValueError:
+                return False
+        return False
 
     def _serve_static(self, rel: str) -> None:
         """Serve a static asset from the base or an installed vertical bundle."""
