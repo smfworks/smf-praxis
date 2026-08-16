@@ -6,11 +6,14 @@ Praxis runs the same code in three shapes. Pick by **who reaches the dashboard**
 |---|---|---|---|
 | **Local** (default) | just you, this machine | `127.0.0.1:8643` | n/a (loopback) |
 | **Docker** | just you, via container | `127.0.0.1:8643` (loopback-mapped) | n/a |
-| **Shared / LAN** | a team, over the network | `0.0.0.0:8643` | ⚠️ **you must add it** |
+| **Shared / LAN** | a team, over the network | `0.0.0.0:8643` | shared token (auto-minted if unset) |
 
-> ⚠️ **The dashboard ships with no built-in auth.** Loopback (local/Docker) is safe.
-> The moment you bind a routable address you are exposing an ungoverned control
-> plane — always front it with a reverse proxy, VPN, or SSH tunnel (see §3).
+> **The dashboard requires a shared token on every API route when bound beyond
+> loopback**. If you bind `0.0.0.0` without setting `PRAXIS_AUTH_TOKEN` or
+> `agents.auth.token`, Praxis auto-generates a token, writes it to `praxis.json`
+> (restricted to `0600`), and prints a prominent stderr warning. Loopback binds
+> (local/Docker) skip the token. Always front a LAN bind with a reverse proxy,
+> VPN, or SSH tunnel (see §3).
 
 ---
 
@@ -48,6 +51,12 @@ Two parts: **bind a routable address**, then **put auth in front**.
 praxis daemon start --host 0.0.0.0 --port 8643   # or set PRAXIS_HOST=0.0.0.0
 ```
 
+> **PRA-005 — auto-minted token:** If you bind beyond loopback without setting
+> `PRAXIS_AUTH_TOKEN` or `agents.auth.token`, Praxis generates a random token,
+> writes it to `praxis.json`, restricts the file to `0600`, and prints a
+> prominent stderr warning. Retrieve it with `praxis config get agents.auth.token`
+> or set your own with `PRAXIS_AUTH_TOKEN=<your-token>` before starting.
+
 Compose: change the map to `8643:8643` (drop the `127.0.0.1:` prefix). **Do not stop
 there** — add a front door:
 
@@ -71,8 +80,10 @@ Keep `--host 127.0.0.1` and let only the proxy reach it. Lighter options: a
 ## 4. Checklist & verify
 
 - [ ] Loopback for local/Docker; reverse-proxy + TLS + auth before any LAN bind
+- [ ] If LAN-bound: set `PRAXIS_AUTH_TOKEN` (or note the auto-minted token in `praxis.json`)
 - [ ] `PRAXIS_HOME` set for shared/persistent data; back it up
 - [ ] Keys via env/keychain, never committed
 - [ ] `curl -s localhost:8643/status` returns JSON; `praxis update` to upgrade
 
-Roadmap: built-in dashboard auth (post-p12) will fold §3's front door inward.
+Roadmap: nonce-based CSP and HttpOnly-cookie session tokens to replace
+sessionStorage (post-p12).

@@ -33,6 +33,12 @@ def ensure_token() -> str:
 
     Called when binding beyond loopback so operators are never left open by
     accident. The minted token is written to config (not env).
+
+    PRA-005: auto-minting is a surprising side effect — an operator who binds
+    0.0.0.0 may not realize a token was silently generated and written to
+    praxis.json. We restrict the config file to 0600 now that it contains a
+    credential and emit a prominent stderr WARNING so the operator is never
+    unaware that a shared secret was minted on their behalf.
     """
     existing = configured_token()
     if existing:
@@ -44,6 +50,27 @@ def ensure_token() -> str:
     auth["token"] = token
     auth["minted"] = True
     cfg.save_config(conf)
+    # PRA-005: restrict the config file now that it holds a credential, and
+    # warn loudly. Never block startup on a perms failure.
+    try:
+        cfg.secure_file(cfg.config_path())
+    except Exception:  # noqa: BLE001 - perms best-effort
+        pass
+    import sys
+    print(
+        "\n" + "=" * 72 + "\n"
+        "\u26a0\ufe0f  PRAXIS SECURITY: auto-generated auth token\n"
+        "=" * 72 + "\n"
+        "You bound beyond loopback with no PRAXIS_AUTH_TOKEN or agents.auth.token\n"
+        "configured. A shared token was generated and written to praxis.json:\n"
+        f"  {cfg.config_path()}\n\n"
+        "The dashboard now requires this token on every request. To see it:\n"
+        "  praxis config get agents.auth.token\n"
+        "To use your own token instead, set PRAXIS_AUTH_TOKEN before starting.\n"
+        "=" * 72 + "\n",
+        file=sys.stderr,
+        flush=True,
+    )
     return token
 
 
