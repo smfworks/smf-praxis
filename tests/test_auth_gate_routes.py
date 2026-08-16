@@ -53,7 +53,7 @@ def remote_daemon(tmp_path, monkeypatch):
     client reaching the read APIs without a token.
     """
     monkeypatch.setenv(cfg.ENV_HOME, str(tmp_path / ".praxis"))
-    monkeypatch.setenv("PRAXIS_AUTH_TOKEN", "s3cret-token-xyz")
+    monkeypatch.setenv("PRAXIS_AUTH_TOKEN", "test-fixture-token-xyz")
     # Simulate a non-loopback client on every request handled by this server.
     monkeypatch.setattr(_StatusHandler, "_is_loopback", lambda self: False)
 
@@ -116,7 +116,7 @@ def test_get_api_route_accepts_bearer_token(remote_daemon):
     base, _ = remote_daemon
     status, data = _get(
         f"{base}/api/audit",
-        headers={"Authorization": "Bearer s3cret-token-xyz"},
+        headers={"Authorization": "Bearer test-fixture-token-xyz"},
     )
     assert status == 200
     assert isinstance(data, dict)
@@ -126,7 +126,7 @@ def test_get_api_route_accepts_x_praxis_token(remote_daemon):
     base, _ = remote_daemon
     status, _ = _get(
         f"{base}/api/tasks",
-        headers={"X-Praxis-Token": "s3cret-token-xyz"},
+        headers={"X-Praxis-Token": "test-fixture-token-xyz"},
     )
     assert status == 200
 
