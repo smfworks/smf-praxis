@@ -2697,8 +2697,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
             # when the daemon is bound beyond loopback, just like mutations do.
             # /api/auth/status stays public so the browser can render the login
             # form and discover whether a token is required before authenticating.
+            # /api/readiness stays public for container healthchecks (Dockerfile
+            # HEALTHCHECK + CI docker smoke test probe it on a 0.0.0.0 bind).
+            _public_api_get = {"/api/auth/status", "/api/readiness"}
             if (parsed.path.startswith("/api/")
-                    and parsed.path != "/api/auth/status"
+                    and parsed.path not in _public_api_get
                     and not self._require_auth()):
                 return
             if self.path == "/status":

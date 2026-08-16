@@ -89,7 +89,6 @@ def remote_daemon(tmp_path, monkeypatch):
         "/api/cron",
         "/api/killswitch",
         "/api/compliance",
-        "/api/readiness",
         "/api/board",
         "/api/traces",
         "/api/persona",
