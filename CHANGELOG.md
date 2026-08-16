@@ -3,6 +3,14 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.7 — 2026-08-16
+
+- **Security (PRA-008):** Inject security headers on all HTTP responses —
+  `Content-Security-Policy` (strict, no inline handlers), `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY` / `frame-ancestors 'none'`, `Referrer-Policy`,
+  and `Permissions-Policy`. Hardens the Command Deck SPA against XSS-driven token
+  theft and clickjacking of approval controls.
+
 ## 0.30.6 — 2026-08-16
 
 - **Security (PRA-001):** Universal Host-integrity gate on every HTTP request.

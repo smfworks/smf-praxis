@@ -14,6 +14,9 @@ worker that:
 """
 from __future__ import annotations
 
+import base64
+import functools
+import hashlib
 import io
 import ipaddress
 import json
@@ -1845,6 +1848,78 @@ setInterval(refresh, 4000);
 """
 
 
+# ---------------------------------------------------------------------------
+# Security response headers (PRA-008)
+#
+# The HTTP control plane emitted no Content-Security-Policy, X-Frame-Options,
+# X-Content-Type-Options, or HSTS headers on any response, leaving the
+# dashboard open to clickjacking, MIME-type confusion, and reflected/stored
+# XSS that could exfiltrate the session token (PRA-006). The headers below are
+# applied universally by the ``_StatusHandler.end_headers`` override so every
+# response — JSON, HTML, static assets, SSE, the WebSocket upgrade, audio, and
+# every error path — carries them from a single control point.
+#
+# The dashboard ships as a self-hosted single-page app: scripts, styles, and
+# images are all same-origin (``/web/...``), with three inline ``<script>``
+# blocks, one inline ``<style>`` block, inline ``on*`` event handlers, and a
+# couple of inline ``style=`` attributes. A naive ``script-src 'self'`` would
+# break that inline content, so instead we emit an *enforcing* CSP that
+# whitelists the exact inline sources by SHA-256 hash. The hashes are derived
+# at import time directly from ``_DASHBOARD_HTML``, so they track the real
+# content — any new inline script/handler/style the dashboard gains must be
+# added here or it will be blocked (fail-closed against injected content).
+_HSTS_HEADER = "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+
+
+def _sha256_source(text: str) -> str:
+    """Return the CSP ``'sha256-...'`` source token for ``text``."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return "'sha256-" + base64.b64encode(digest).decode() + "'"
+
+
+@functools.lru_cache(maxsize=1)
+def _dashboard_csp() -> str:
+    """Build an enforcing Content-Security-Policy for the dashboard.
+
+    The policy locks every fetch to same-origin, denies all framing
+    (``frame-ancestors 'none'`` — stronger than and complementary to
+    ``X-Frame-Options: DENY``), pins ``base-uri``/``form-action`` to ``self``,
+    and permits the dashboard's existing inline scripts, inline handlers,
+    inline ``<style>`` block, and inline ``style=`` attributes by exact
+    SHA-256 hash. ``img-src`` additionally allows ``data:`` because the
+    dashboard embeds small inline SVG/data icons.
+    """
+    script_hashes = sorted(
+        _sha256_source(block)
+        for block in re.findall(r"<script>(.*?)</script>", _DASHBOARD_HTML, re.S)
+    )
+    # Inline event-handler attribute values (onclick="...", onsubmit="...").
+    handler_hashes = sorted(
+        _sha256_source(value)
+        for value in set(re.findall(r'\son\w+\s*=\s*"([^"]*)"', _DASHBOARD_HTML))
+    )
+    style_hashes = sorted(
+        _sha256_source(block)
+        for block in re.findall(r"<style>(.*?)</style>", _DASHBOARD_HTML, re.S)
+    )
+    inline_style_attr_hashes = sorted(
+        _sha256_source(value)
+        for value in set(re.findall(r'\bstyle\s*=\s*"([^"]*)"', _DASHBOARD_HTML))
+    )
+    script_src = " ".join(["'self'", *script_hashes, *handler_hashes])
+    style_src = " ".join(["'self'", *style_hashes, *inline_style_attr_hashes])
+    return (
+        "default-src 'self'; "
+        f"script-src {script_src}; "
+        f"style-src {style_src}; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+
 class _UploadError(Exception):
     """Raised when a multipart/form-data body is malformed or truncated."""
 
@@ -1984,6 +2059,46 @@ class _StatusHandler(BaseHTTPRequestHandler):
     def __init__(self, daemon: "Daemon", *args, **kwargs) -> None:
         self.daemon = daemon
         super().__init__(*args, **kwargs)
+
+    def end_headers(self) -> None:
+        """Inject security headers on every response (PRA-008).
+
+        Overriding ``end_headers`` is the single chokepoint through which all
+        responses pass — ``send_response`` + ``send_header``* + ``end_headers``
+        — so the four security headers land on JSON, HTML, static assets, SSE,
+        the WebSocket upgrade (101), audio, 304/404/500, and vertical routes
+        alike, without touching every individual call site. HSTS is emitted
+        only when the request arrived over TLS (``https``) so a plain-HTTP
+        loopback dev instance is not pinned to a transport it isn't using.
+        """
+        self.send_header("Content-Security-Policy", _dashboard_csp())
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if self._is_tls_request():
+            self.send_header("Strict-Transport-Security",
+                             "max-age=31536000; includeSubDomains")
+        super().end_headers()
+
+    def _is_tls_request(self) -> bool:
+        """True when the underlying transport is TLS.
+
+        ``BaseHTTPRequestHandler`` exposes the raw socket on ``self.connection``
+        and (for TLS) a wrapping SSLSocket whose ``ssl`` context is importable
+        without adding a dependency — the daemon core stays stdlib-only. A
+        plain loopback bind has no TLS socket, so HSTS is correctly omitted.
+        """
+        conn = getattr(self, "connection", None)
+        if conn is None:
+            return False
+        # An SSLSocket carries an ``ssl_context`` / is an instance of ssl.SSLSocket.
+        # Avoid importing ssl at module load; check the type name to stay stdlib-light.
+        cls = type(conn).__name__
+        if cls == "SSLSocket":
+            return True
+        # ``self.request`` is the socket for BaseHTTPRequestHandler setups; some
+        # WSGI/wrapped deployments present the TLS socket there instead.
+        request = getattr(self, "request", None)
+        return request is not conn and type(request).__name__ == "SSLSocket"
 
     def _read_body(self, max_bytes: int = 16 * 1024 * 1024) -> bytes:
         """Read the request body, clamped to ``max_bytes``, so an inflated
