@@ -34,11 +34,16 @@ We will acknowledge receipt and say whether the report is in scope.
 
 ## What is not a vulnerability
 
-- The Command Deck HTML shell (`/` and `/web/*`) is public. **GET and POST
-  control-plane routes require loopback Host integrity or a shared token.**
-  Binding `0.0.0.0` without `PRAXIS_AUTH_TOKEN` mints a token; if minting
-  fails the daemon refuses to start. Loopback clients remain the local
-  operator.
+- The Command Deck HTML shell (`/` and `/web/*`) is public. **Every HTTP
+  request — including public endpoints — is validated against DNS-rebinding:
+  the Host header must be loopback (localhost / 127.x / ::1) for loopback
+  peers, or match the configured bind host for remote peers. GET and POST
+  control-plane routes additionally require a shared token when the peer is
+  not a loopback Host. Browser-sent POSTs with an `Origin` header must match
+  the request Host (same-origin); CLI clients without `Origin` are
+  unaffected.** Binding `0.0.0.0` without `PRAXIS_AUTH_TOKEN` mints a token;
+  if minting fails the daemon refuses to start. Loopback clients remain the
+  local operator.
 - Offline mock-LLM behavior
 - Extracted vertical packs (`praxis-legal`, `praxis-medical`, …) — report those
   against their own repositories

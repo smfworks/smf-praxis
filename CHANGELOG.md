@@ -3,6 +3,23 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.6 — 2026-08-16
+
+- **Security (PRA-001):** Universal Host-integrity gate on every HTTP request.
+  Public endpoints (`/api/auth/status`, `/api/readiness`, `/`, `/favicon.ico`)
+  previously skipped Host validation, allowing a DNS-rebinding browser to reach
+  them with a foreign Host and leak auth/readiness state. `_enforce_host_integrity`
+  now runs before all routing in `do_GET`/`do_POST`: loopback peers must send a
+  loopback Host; remote peers must send a Host matching the bind host (or an IP
+  when bound `0.0.0.0`). Foreign domain Hosts are rejected with 403.
+- **Security (PRA-001):** Origin header check for browser-sent POSTs.
+  `_enforce_same_origin` rejects POSTs whose `Origin` does not match the request
+  Host (the CSRF / cross-site browser vector). CLI clients and server-to-server
+  webhooks (Telegram/Slack) that omit `Origin` are unaffected. `/api/auth/login`
+  and webhook endpoints are exempt.
+- `auth_gate.py` docstring corrected: auth is decided per-request by the HTTP
+  handler (Host integrity + token), not solely by the bind address.
+
 ## 0.30.5 — 2026-08-15
 
 - `/api/v1/*` GET no longer runs the legacy `_require_auth` envelope first, so
