@@ -3,6 +3,16 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.6 — 2026-08-16
+
+- **Security (PRA-001):** Validate the `Host` header on *every* HTTP request,
+  including public endpoints (`/`, `/api/auth/status`, `/api/readiness`,
+  `/web/*`) that previously skipped `_require_auth()` and were reachable via
+  DNS rebinding (loopback client + attacker-controlled `Host`). A loopback
+  client with a non-loopback `Host` now receives `403 untrusted host` before
+  any route dispatch in both `do_GET` and `do_POST`. Remote clients are
+  Host-exempt and authenticate via the shared token as before.
+
 ## 0.30.5 — 2026-08-15
 
 - `/api/v1/*` GET no longer runs the legacy `_require_auth` envelope first, so

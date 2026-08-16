@@ -1997,6 +1997,28 @@ class _StatusHandler(BaseHTTPRequestHandler):
             return b""
         return self.rfile.read(min(length, max_bytes))
 
+    def _require_trusted_host(self) -> bool:
+        """Validate the Host header on every request (PRA-001).
+
+        DNS rebinding lets a malicious website make a browser send requests to
+        127.0.0.1:port with an attacker-controlled ``Host`` header. Public
+        endpoints (``/``, ``/api/auth/status``, ``/api/readiness``, ``/web/*``)
+        that skip ``_require_auth()`` would otherwise render the dashboard or
+        leak daemon state to the rebinding origin. This gate runs *before* any
+        route dispatch so every request — public or authenticated — must carry
+        a Host that is loopback or matches the configured bind address.
+
+        Remote (non-loopback) clients are not Host-checked here; they are
+        gated by the shared token in ``_require_auth`` / ``_require_v1_auth``.
+        """
+        if not self._is_loopback():
+            return True  # remote clients authenticate via token, not Host
+        if self._request_host_is_loopback():
+            return True
+        # Loopback client + non-loopback Host => DNS-rebinding attempt.
+        self._json_response({"error": "untrusted host"}, status=403)
+        return False
+
     def _require_auth(self) -> bool:
         """Require loopback Host integrity or an explicit remote shared token."""
         from . import auth_gate
@@ -2211,6 +2233,11 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
+            # PRA-001: validate Host on every request before any dispatch,
+            # closing the DNS-rebinding path on public POST routes (e.g.
+            # /api/auth/login) and as defense-in-depth on gated routes.
+            if not self._require_trusted_host():
+                return
             if self.path == "/stop":
                 if not self._require_auth():
                     return
@@ -2615,6 +2642,12 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
+            # PRA-001: validate Host on every request, including public
+            # endpoints (/, /api/auth/status, /api/readiness, /web/*) that
+            # otherwise skip _require_auth() and would be reachable via DNS
+            # rebinding with an attacker-controlled Host header.
+            if not self._require_trusted_host():
+                return
             parsed = split_url(self.path)
             public_exact = {"/", "/favicon.ico", "/api/auth/status", "/api/readiness"}
             if (
