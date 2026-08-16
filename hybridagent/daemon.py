@@ -2691,6 +2691,19 @@ class _StatusHandler(BaseHTTPRequestHandler):
                     return
                 self._handle_v1_timeline_list(*scope)
                 return
+            # Auth gate for all non-v1 /api/ GET routes (PRA-002). Every read
+            # endpoint — knowledge base, pending approvals, task history, audit
+            # log, secrets status, daemon state — must honor the shared token
+            # when the daemon is bound beyond loopback, just like mutations do.
+            # /api/auth/status stays public so the browser can render the login
+            # form and discover whether a token is required before authenticating.
+            # /api/readiness stays public for container healthchecks (Dockerfile
+            # HEALTHCHECK + CI docker smoke test probe it on a 0.0.0.0 bind).
+            _public_api_get = {"/api/auth/status", "/api/readiness"}
+            if (parsed.path.startswith("/api/")
+                    and parsed.path not in _public_api_get
+                    and not self._require_auth()):
+                return
             if self.path == "/status":
                 mgr = self.daemon.manager
                 from . import pack as _pack

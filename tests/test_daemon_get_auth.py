@@ -235,6 +235,10 @@ def test_remote_client_get_approvals_requires_token(tmp_path, monkeypatch):
         assert resp.status == 200, resp.read()
         conn.close()
 
+        # PRA-002: /api/readiness is a PUBLIC health-check endpoint — it must
+        # stay accessible without a token even on a non-loopback bind, so the
+        # Dockerfile HEALTHCHECK and CI docker smoke test can probe it on a
+        # 0.0.0.0 bind. It is explicitly exempted from the /api/ GET auth gate.
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn.request("GET", "/api/readiness", headers={"Host": f"10.0.0.32:{port}"})
         resp = conn.getresponse()
