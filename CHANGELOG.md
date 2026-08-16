@@ -3,6 +3,12 @@
 All notable changes to the open-core `praxis-agent` distribution are recorded
 here. The version is single-sourced from `hybridagent.__version__`.
 
+## 0.30.9 — 2026-08-16
+
+- **Security docs:** Acknowledge the GLM-5.3 audit's by-design decisions in
+  `SECURITY.md` (permissive compliance mode, plaintext credential storage with
+  `secure_file()`), with finding IDs aligned to the published report numbering.
+
 ## 0.30.8 — 2026-08-16
 
 - **Security (PRA-005):** Token auto-mint now warns the operator and applies
