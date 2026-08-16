@@ -58,3 +58,31 @@ We will acknowledge receipt and say whether the report is in scope.
 Every tool — native, MCP, plugin, or A2A — is risk-classified and authorized by
 one broker. Do not propose patches that execute `SEND`/`DESTRUCTIVE` inline,
 skip dual-approval, or treat retrieved content as instructions.
+
+## GLM-5.3 security audit — acknowledged by-design decisions
+
+A one-shot static security audit (GLM-5.3, 2026-08-18) reviewed 12 key files and
+recorded 19 findings. The full interactive report is at
+<https://www.smfclearinghouse.com/demos/glm-5.3-security-report/>. The following
+findings are acknowledged as **by-design** and will not be "fixed" without an
+explicit design discussion — they are intentional trade-offs documented here so
+future reviewers do not re-flag them:
+
+- **PRA-007 — Plaintext credential storage (`config.py`).**
+  `~/.praxis/auth-profiles.json` stores API keys in plaintext. Encrypting at
+  rest would require a crypto dependency, violating the dependency-free core
+  constraint (AGENTS.md). The file is restricted to the current user via
+  `config.secure_file` (`chmod 0600` on POSIX, `icacls /inheritance:r` on
+  Windows). This risk is acceptable for a local-first agent. Do **not** add
+  encryption dependencies to the core.
+
+- **PRA-008 — Permissive compliance mode (`broker.py`).**
+  The three-mode system (`enforced` / `autonomous` / `permissive`) is a
+  deliberate feature. The default is `enforced`. `permissive` is an explicit
+  operator opt-in for trusted or sandboxed environments (e.g. an isolated
+  coding workspace) where the egress firewall and injection detection are
+  intentionally relaxed but the kill-switch remains active. Do **not** remove
+  or restrict `permissive` mode.
+
+P0/P1 findings from the same audit are addressed in dedicated PRs (PRA-001, -002,
+-005, -008, -015). P3 informational findings are tracked as GitHub issues.

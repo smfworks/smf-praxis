@@ -50,6 +50,12 @@ class ComplianceMode(str, Enum):
     * ``permissive`` — consequential actions run without approval and the egress
       firewall + injection detection are off; only the kill-switch remains. For
       trusted or sandboxed environments (e.g. an isolated coding workspace).
+
+    PRA-008 (BY DESIGN): the three-mode system is a deliberate feature, not a
+    weakness. The default is ``enforced``. ``permissive`` exists for trusted
+    sandboxes and is an explicit operator opt-in — it should not be removed
+    or restricted. A policy hook may tighten the broker; it may never weaken
+    the kill-switch (which stays active even in permissive mode).
     """
 
     ENFORCED = "enforced"

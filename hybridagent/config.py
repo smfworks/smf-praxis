@@ -55,6 +55,11 @@ def config_path() -> Path:
 
 
 def auth_path() -> Path:
+    # PRA-007 (BY DESIGN): auth-profiles.json stores API keys in plaintext.
+    # Encrypting at rest would require a crypto dependency, violating the
+    # dependency-free core constraint (AGENTS.md). The file is restricted to
+    # 0600 (POSIX) or ACL-locked (Windows) via secure_file(). Risk is
+    # acceptable for a local-first agent — do NOT add encryption dependencies.
     return home_dir() / "auth-profiles.json"
 
 
